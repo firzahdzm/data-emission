@@ -59,6 +59,7 @@ class AppConfig(BaseModel):
 
     @classmethod
     def load(cls, yaml_path: Path, env_path: Path | None = None) -> "AppConfig":
+        """Load config from YAML + .env. Raises ValueError if api key missing or YAML malformed."""
         yaml_path = Path(yaml_path)
         raw = yaml.safe_load(yaml_path.read_text())
         if not isinstance(raw, dict):
@@ -74,12 +75,19 @@ class AppConfig(BaseModel):
 
 
 def _read_env_key(env_path: Path | None, key: str) -> str | None:
+    """Read KEY=value from env_path file. Falls back to os.environ if not found there."""
     if env_path is not None and Path(env_path).exists():
         for line in Path(env_path).read_text().splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             k, _, v = line.partition("=")
-            if k.strip() == key:
-                return v.strip().strip('"').strip("'")
+            k = k.strip()
+            if k.startswith("export "):
+                k = k[len("export "):].strip()
+            if k == key:
+                v = v.strip()
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"):
+                    v = v[1:-1]
+                return v
     return os.environ.get(key)

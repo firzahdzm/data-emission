@@ -1,5 +1,8 @@
+import os
 import re
+from pathlib import Path
 
+import yaml
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
 SS58_REGEX = re.compile(r"^5[1-9A-HJ-NP-Za-km-z]{46,47}$")
@@ -53,3 +56,30 @@ class AppConfig(BaseModel):
         if len(all_hotkeys) != len(set(all_hotkeys)):
             raise ValueError("Duplicate hotkey across persons")
         return self
+
+    @classmethod
+    def load(cls, yaml_path: Path, env_path: Path | None = None) -> "AppConfig":
+        yaml_path = Path(yaml_path)
+        raw = yaml.safe_load(yaml_path.read_text())
+        if not isinstance(raw, dict):
+            raise ValueError(f"{yaml_path} must contain a YAML mapping")
+
+        api_key = _read_env_key(env_path, "TAOSTATS_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "TAOSTATS_API_KEY is missing. Set it in .env or environment."
+            )
+        raw["taostats_api_key"] = api_key
+        return cls(**raw)
+
+
+def _read_env_key(env_path: Path | None, key: str) -> str | None:
+    if env_path is not None and Path(env_path).exists():
+        for line in Path(env_path).read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            if k.strip() == key:
+                return v.strip().strip('"').strip("'")
+    return os.environ.get(key)

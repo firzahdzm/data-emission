@@ -2,7 +2,7 @@ import sqlite3
 
 import pytest
 
-from emission_tracker.config import DatabaseConfig, PersonConfig
+from emission_tracker.config import PersonConfig
 from emission_tracker.db import connect, init_schema, sync_team
 
 
@@ -89,3 +89,31 @@ def test_sync_team_preserves_removed_hotkeys(memory_db: sqlite3.Connection):
     )
     rows = memory_db.execute("SELECT ss58 FROM hotkeys ORDER BY ss58").fetchall()
     assert len(rows) == 2  # both old and new preserved
+
+
+def test_snapshots_status_rejects_invalid_value(memory_db: sqlite3.Connection):
+    init_schema(memory_db)
+    with pytest.raises(sqlite3.IntegrityError):
+        memory_db.execute(
+            "INSERT INTO snapshots (taken_at, status) VALUES (CURRENT_TIMESTAMP, 'in-progress')"
+        )
+
+
+def test_neuron_snapshots_is_registered_rejects_non_boolean(memory_db: sqlite3.Connection):
+    init_schema(memory_db)
+    # need a snapshot + hotkey first to satisfy FKs
+    memory_db.execute(
+        "INSERT INTO persons (name) VALUES ('A')"
+    )
+    memory_db.execute(
+        "INSERT INTO hotkeys (ss58, person_id, subnet_id) VALUES "
+        "('5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1', 1, 56)"
+    )
+    memory_db.execute(
+        "INSERT INTO snapshots (id, taken_at, status) VALUES (1, CURRENT_TIMESTAMP, 'ok')"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        memory_db.execute(
+            "INSERT INTO neuron_snapshots (snapshot_id, hotkey_ss58, is_registered) "
+            "VALUES (1, '5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1', 2)"
+        )

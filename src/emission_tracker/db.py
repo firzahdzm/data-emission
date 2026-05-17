@@ -23,7 +23,7 @@ SCHEMA_STATEMENTS = [
         id            INTEGER PRIMARY KEY,
         taken_at      TIMESTAMP NOT NULL,
         block_number  INTEGER,
-        status        TEXT NOT NULL
+        status        TEXT NOT NULL CHECK (status IN ('in_progress','ok','partial','failed'))
     )
     """,
     """
@@ -32,7 +32,7 @@ SCHEMA_STATEMENTS = [
         hotkey_ss58    TEXT    NOT NULL REFERENCES hotkeys(ss58),
         uid            INTEGER,
         emission       REAL,
-        is_registered  INTEGER NOT NULL,
+        is_registered  INTEGER NOT NULL CHECK (is_registered IN (0, 1)),
         PRIMARY KEY (snapshot_id, hotkey_ss58)
     )
     """,

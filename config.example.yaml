@@ -1,0 +1,19 @@
+subnet_id: 56
+
+polling:
+  interval_minutes: 72
+  request_interval_seconds: 15
+  run_on_startup: true
+
+database:
+  path: data/emissions.db
+
+web:
+  host: 127.0.0.1
+  port: 8000
+
+team:
+  - name: ExamplePerson
+    hotkeys:
+      - 5BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB1
+      - 5BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB2

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}Emission Tracker{% endblock %}</title>
+    <meta http-equiv="refresh" content="300">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<main>
+    <header>
+        <h1>Gradient Emission Tracker</h1>
+        {% if latest %}
+        <p>Last snapshot: {{ latest.taken_at }} (#{{ latest.id }}, {{ latest.status }})</p>
+        {% else %}
+        <p>No snapshots yet.</p>
+        {% endif %}
+    </header>
+    {% block content %}{% endblock %}
+</main>
+</body>
+</html>

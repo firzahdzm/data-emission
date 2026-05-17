@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+
+<p><a href="/?range={{ active_range }}">← Back to dashboard</a></p>
+
+<h2>{{ name }}</h2>
+<p>Akumulasi ({{ active_range }}): {{ "%.4f"|format(total_cumulative) }} alpha</p>
+
+<canvas id="cumChart" width="800" height="300"></canvas>
+<canvas id="perSnapChart" width="800" height="300"></canvas>
+
+<h3>Hotkey breakdown</h3>
+<ul>
+    {% for hk in hotkeys %}
+    <li>{{ hk }}</li>
+    {% endfor %}
+</ul>
+
+<script>
+const labels = {{ chart_labels|tojson }};
+const cumulative = {{ chart_cumulative|tojson }};
+const perSnap = {{ chart_per_snap|tojson }};
+
+new Chart(document.getElementById('cumChart'), {
+    type: 'line',
+    data: { labels, datasets: [{ label: 'Cumulative', data: cumulative, fill: false }] },
+});
+
+new Chart(document.getElementById('perSnapChart'), {
+    type: 'bar',
+    data: { labels, datasets: [{ label: 'Per snapshot', data: perSnap }] },
+});
+</script>
+
+{% endblock %}

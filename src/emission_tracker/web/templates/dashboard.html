@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+
+<section>
+    <form method="get" action="/">
+        <label>
+            Range:
+            <select name="range" onchange="this.form.submit()">
+                <option value="all" {% if active_range == "all" %}selected{% endif %}>All time</option>
+                <option value="today" {% if active_range == "today" %}selected{% endif %}>Today</option>
+                <option value="24h" {% if active_range == "24h" %}selected{% endif %}>Last 24h</option>
+                <option value="7d" {% if active_range == "7d" %}selected{% endif %}>Last 7 days</option>
+                <option value="30d" {% if active_range == "30d" %}selected{% endif %}>Last 30 days</option>
+                <option value="mtd" {% if active_range == "mtd" %}selected{% endif %}>Month to date</option>
+            </select>
+        </label>
+    </form>
+    <p>Period: {{ from_dt.isoformat() }} → {{ to_dt.isoformat() }}</p>
+</section>
+
+<section>
+    <h2>Akumulasi ({{ active_range }}): {{ "%.4f"|format(total_cumulative) }} alpha</h2>
+</section>
+
+<table>
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Akumulasi</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for p in persons %}
+        <tr>
+            <td><a href="/person/{{ p.name }}?range={{ active_range }}">{{ p.name }}</a></td>
+            <td>{{ "%.4f"|format(p.cumulative) }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% endblock %}

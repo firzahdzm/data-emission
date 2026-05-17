@@ -5,9 +5,9 @@ import respx
 from emission_tracker.taostats_client import NeuronInfo, TaoStatsClient
 
 
-# Adjust to match the verified endpoint from Task 0
+# Verified against live TaoStats API on 2026-05-17
 BASE_URL = "https://api.taostats.io"
-NEURON_PATH = "/api/dtao/neuron/v1"
+NEURON_PATH = "/api/neuron/latest/v1"
 HOTKEY = "5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1"
 
 

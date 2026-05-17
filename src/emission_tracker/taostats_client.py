@@ -4,9 +4,11 @@ from dataclasses import dataclass
 import httpx
 
 
-# These should match Task 0 verified values (defaults are placeholders to be verified at smoke test)
+# Verified against live TaoStats API on 2026-05-17. Response shape:
+#   {"pagination": {...}, "data": [{"uid", "emission" (string), "block_number", ...}]}
+# Emission is returned as a string; _parse_neuron converts to float.
 DEFAULT_BASE_URL = "https://api.taostats.io"
-NEURON_PATH = "/api/dtao/neuron/v1"
+NEURON_PATH = "/api/neuron/latest/v1"
 AUTH_HEADER = "Authorization"
 
 

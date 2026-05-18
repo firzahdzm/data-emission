@@ -1,0 +1,38 @@
+[Unit]
+Description=Gradient Emission Tracker (Bittensor subnet 56)
+Documentation=file:///opt/emission-tracker/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# Adjust these to match your install
+User=emission
+Group=emission
+WorkingDirectory=/opt/emission-tracker
+EnvironmentFile=/opt/emission-tracker/.env
+
+# Bind to localhost only; expose via nginx reverse proxy + auth
+ExecStart=/opt/emission-tracker/.venv/bin/uvicorn \
+    emission_tracker.main:create_app \
+    --factory \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --log-level info
+
+# Restart on failure, but back off so we don't hammer if config is broken
+Restart=on-failure
+RestartSec=10
+StartLimitInterval=120
+StartLimitBurst=3
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/emission-tracker/data /opt/emission-tracker/logs
+
+[Install]
+WantedBy=multi-user.target

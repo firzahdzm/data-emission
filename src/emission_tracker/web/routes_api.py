@@ -68,3 +68,17 @@ def get_latest_snapshot(request: Request):
     if snap is None:
         raise HTTPException(status_code=404, detail="No snapshots yet")
     return snap
+
+
+@router.get("/snapshots")
+def list_snapshots(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=200),
+):
+    """Recent snapshots (all statuses), newest first."""
+    cursor = _db(request).execute(
+        "SELECT id, CAST(taken_at AS TEXT) AS taken_at, block_number, status "
+        "FROM snapshots ORDER BY id DESC LIMIT ?",
+        (limit,),
+    )
+    return {"snapshots": [dict(r) for r in cursor.fetchall()], "limit": limit}

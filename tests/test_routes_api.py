@@ -92,3 +92,33 @@ def test_healthz(app_with_db):
     resp = client.get("/api/healthz")
     assert resp.status_code == 200
     assert resp.text.strip('"') == "ok"
+
+
+def test_list_snapshots(app_with_db):
+    client = TestClient(app_with_db)
+    resp = client.get("/api/snapshots")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["limit"] == 20
+    # Fixture seeds exactly 1 snapshot (id=1, status='ok', block_number=1000)
+    assert len(data["snapshots"]) == 1
+    s = data["snapshots"][0]
+    assert s["id"] == 1
+    assert s["status"] == "ok"
+    assert s["block_number"] == 1000
+
+
+def test_list_snapshots_respects_limit(app_with_db):
+    client = TestClient(app_with_db)
+    resp = client.get("/api/snapshots?limit=5")
+    assert resp.status_code == 200
+    assert resp.json()["limit"] == 5
+
+
+def test_list_snapshots_rejects_invalid_limit(app_with_db):
+    client = TestClient(app_with_db)
+    # FastAPI returns 422 for query param validation failures
+    resp = client.get("/api/snapshots?limit=0")
+    assert resp.status_code == 422
+    resp = client.get("/api/snapshots?limit=999")
+    assert resp.status_code == 422

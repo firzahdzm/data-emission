@@ -59,6 +59,27 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def cleanup_orphaned_snapshots(conn: sqlite3.Connection) -> int:
+    """Mark any snapshot still flagged 'in_progress' as 'failed'.
+
+    Called once at app startup. The only legitimate writer is the snapshot
+    worker, which transitions in_progress → ok/partial/failed at the end
+    of its run. Any in_progress row found at startup therefore belongs to
+    a worker that died mid-flight (process killed, OS suspend, etc.) and
+    will never be completed. Marking it failed:
+      - lets web queries (status IN ('ok','partial')) ignore it correctly
+      - preserves the historical fact that an attempt was made and lost
+      - makes the captures/dashboard histograms readable
+
+    Returns the number of rows updated, so the caller can log it.
+    """
+    cursor = conn.execute(
+        "UPDATE snapshots SET status = 'failed' WHERE status = 'in_progress'"
+    )
+    conn.commit()
+    return cursor.rowcount
+
+
 def sync_team(
     conn: sqlite3.Connection,
     team: list[PersonConfig],

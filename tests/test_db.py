@@ -3,7 +3,12 @@ import sqlite3
 import pytest
 
 from emission_tracker.config import PersonConfig
-from emission_tracker.db import connect, init_schema, sync_team
+from emission_tracker.db import (
+    cleanup_orphaned_snapshots,
+    connect,
+    init_schema,
+    sync_team,
+)
 
 
 def test_init_schema_creates_all_tables(memory_db: sqlite3.Connection):
@@ -117,3 +122,53 @@ def test_neuron_snapshots_is_registered_rejects_non_boolean(memory_db: sqlite3.C
             "INSERT INTO neuron_snapshots (snapshot_id, hotkey_ss58, is_registered) "
             "VALUES (1, '5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1', 2)"
         )
+
+
+def test_cleanup_orphaned_snapshots_marks_in_progress_failed(
+    memory_db: sqlite3.Connection,
+):
+    init_schema(memory_db)
+    memory_db.execute(
+        "INSERT INTO snapshots (id, taken_at, status) "
+        "VALUES (1, CURRENT_TIMESTAMP, 'in_progress'),"
+        "       (2, CURRENT_TIMESTAMP, 'ok'),"
+        "       (3, CURRENT_TIMESTAMP, 'in_progress'),"
+        "       (4, CURRENT_TIMESTAMP, 'partial'),"
+        "       (5, CURRENT_TIMESTAMP, 'failed')"
+    )
+    memory_db.commit()
+
+    rowcount = cleanup_orphaned_snapshots(memory_db)
+    assert rowcount == 2
+
+    statuses = [
+        r["status"]
+        for r in memory_db.execute(
+            "SELECT status FROM snapshots ORDER BY id"
+        ).fetchall()
+    ]
+    assert statuses == ["failed", "ok", "failed", "partial", "failed"]
+
+
+def test_cleanup_orphaned_snapshots_returns_zero_when_none(
+    memory_db: sqlite3.Connection,
+):
+    init_schema(memory_db)
+    memory_db.execute(
+        "INSERT INTO snapshots (taken_at, status) VALUES "
+        "(CURRENT_TIMESTAMP, 'ok'), (CURRENT_TIMESTAMP, 'failed')"
+    )
+    memory_db.commit()
+    assert cleanup_orphaned_snapshots(memory_db) == 0
+
+
+def test_cleanup_orphaned_snapshots_is_idempotent(memory_db: sqlite3.Connection):
+    init_schema(memory_db)
+    memory_db.execute(
+        "INSERT INTO snapshots (taken_at, status) VALUES "
+        "(CURRENT_TIMESTAMP, 'in_progress')"
+    )
+    memory_db.commit()
+    assert cleanup_orphaned_snapshots(memory_db) == 1
+    # Second call: nothing left in_progress
+    assert cleanup_orphaned_snapshots(memory_db) == 0

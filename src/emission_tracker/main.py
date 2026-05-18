@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from emission_tracker.bot.scheduler import build_scheduler
 from emission_tracker.bot.snapshot import take_snapshot
 from emission_tracker.config import AppConfig
-from emission_tracker.db import init_schema, sync_team
+from emission_tracker.db import cleanup_orphaned_snapshots, init_schema, sync_team
 from emission_tracker.rate_limiter import TokenBucket
 from emission_tracker.taostats_client import TaoStatsClient
 from emission_tracker.web.routes_api import router as api_router
@@ -51,6 +51,9 @@ def create_app(
         long_lived_conn.row_factory = sqlite3.Row
         long_lived_conn.execute("PRAGMA foreign_keys = ON")
         init_schema(long_lived_conn)
+        cleaned = cleanup_orphaned_snapshots(long_lived_conn)
+        if cleaned:
+            log.info("marked %d orphaned in_progress snapshot(s) as failed", cleaned)
         sync_team(long_lived_conn, config.team, subnet_id=config.subnet_id)
         app.state.db_conn = long_lived_conn
 

@@ -200,8 +200,8 @@ def test_dashboard_hotkey_summary_all_time(seeded_db: sqlite3.Connection):
     assert rows[2]["hotkey"] == HK_I1   # 0.6
 
     # last_refresh: all hotkeys were in snapshot 3 → taken_at of snapshot 3
-    expected_last = "2026-05-17 14:24:00+00:00"  # base + 144 min
-    assert rows[0]["last_refresh"].startswith("2026-05-17 14:24:")
+    # (base + 144 min = 2026-05-17 14:24, ISO 8601 with T separator)
+    assert rows[0]["last_refresh"].startswith("2026-05-17T14:24:")
 
 
 def test_dashboard_hotkey_summary_range_filter(seeded_db: sqlite3.Connection):

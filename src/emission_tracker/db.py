@@ -1,8 +1,28 @@
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from emission_tracker.config import PersonConfig
+
+# Python 3.12+ deprecated the default datetime ↔ TIMESTAMP adapters; register
+# explicit ones at module import. Storage is ISO 8601 with timezone; reads
+# return tz-aware datetime objects. Done here so every connection sees them,
+# including ones the scheduler builds and the ones tests open via conftest.
+
+
+def _adapt_datetime(dt: datetime) -> str:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
+
+
+def _convert_timestamp(b: bytes) -> datetime:
+    return datetime.fromisoformat(b.decode())
+
+
+sqlite3.register_adapter(datetime, _adapt_datetime)
+sqlite3.register_converter("TIMESTAMP", _convert_timestamp)
 
 SCHEMA_STATEMENTS = [
     """

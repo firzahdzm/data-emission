@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block content %}
+
+<section>
+    <h2>Emission Captures (last {{ limit }} snapshots)</h2>
+    <p>
+        Scroll horizontally to see all snapshots. Hotkey & name columns stay fixed.
+    </p>
+    <form method="get" action="/captures" style="display: flex; gap: 1rem; align-items: end;">
+        <label>
+            Last N captures:
+            <input type="number" name="limit" value="{{ limit }}" min="1" max="200" style="width: 80px;">
+        </label>
+        <button type="submit">Apply</button>
+    </form>
+</section>
+
+{% if snapshots %}
+<div class="captures-container">
+    <table class="captures-table">
+        <thead>
+            <tr>
+                <th class="sticky-col col-hotkey">Hotkey</th>
+                <th class="sticky-col col-name">Name</th>
+                {% for s in snapshots %}
+                <th class="time-col" title="{{ s.taken_at | dt_s }}">{{ s.taken_at | dt_short }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in rows %}
+            <tr>
+                <td class="sticky-col col-hotkey">
+                    <code title="{{ r.hotkey }}">{{ r.hotkey[:8] }}…{{ r.hotkey[-4:] }}</code>
+                </td>
+                <td class="sticky-col col-name">{{ r.name }}</td>
+                {% for c in r.cells %}
+                <td class="cell">
+                    {% if c is none %}
+                      <span class="missing">—</span>
+                    {% elif c.is_registered == 0 %}
+                      <span class="deregistered" title="deregistered">×</span>
+                    {% else %}
+                      {{ c.emission | alpha }}
+                    {% endif %}
+                </td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<p>No snapshots yet.</p>
+{% endif %}
+
+<style>
+.captures-container {
+    overflow-x: auto;
+    max-width: 100%;
+    border: 1px solid #d0d0d0;
+}
+.captures-table {
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.875rem;
+    white-space: nowrap;
+}
+.captures-table th, .captures-table td {
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid #eee;
+    border-right: 1px solid #eee;
+    background: #fff;
+}
+.captures-table thead th {
+    background: #f4f4f4;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    font-weight: 600;
+}
+.sticky-col {
+    position: sticky;
+    background: #fff;
+    z-index: 2;
+}
+.col-hotkey { left: 0; min-width: 160px; }
+.col-name   { left: 160px; min-width: 110px; border-right: 2px solid #888 !important; }
+.captures-table thead th.sticky-col { z-index: 3; background: #f4f4f4; }
+.time-col {
+    min-width: 90px;
+    font-family: monospace;
+    font-weight: 500;
+    color: #555;
+}
+.cell {
+    font-family: monospace;
+    text-align: right;
+}
+.cell .missing { color: #aaa; }
+.cell .deregistered {
+    color: #c0392b;
+    font-weight: bold;
+}
+</style>
+
+{% endblock %}

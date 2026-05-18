@@ -59,10 +59,20 @@ def _format_dt_seconds(value) -> str:
     return f"{local.strftime('%Y-%m-%d %H:%M:%S')} {DISPLAY_TZ_LABEL}"
 
 
-# Register Jinja2 filters: RAO → alpha conversion + format, datetime to seconds
+def _format_dt_short(value) -> str:
+    """Compact WIB timestamp 'MM-DD HH:MM' for table column headers."""
+    dt = _to_datetime(value)
+    if dt is None:
+        return ""
+    local = dt.astimezone(DISPLAY_TZ)
+    return local.strftime("%m-%d %H:%M")
+
+
+# Register Jinja2 filters: RAO → alpha conversion + format, datetime helpers
 templates.env.filters["alpha"] = format_alpha
 templates.env.filters["to_alpha"] = rao_to_alpha
 templates.env.filters["dt_s"] = _format_dt_seconds
+templates.env.filters["dt_short"] = _format_dt_short
 
 
 def _db(request: Request) -> sqlite3.Connection:
@@ -116,48 +126,18 @@ def register_pages(app: FastAPI) -> None:
             },
         )
 
-    @app.get("/person/{name}", response_class=HTMLResponse)
-    def person_detail(
-        request: Request,
-        name: str,
-        range: str | None = Query(default="all"),
-        from_: str | None = Query(default=None, alias="from"),
-        to: str | None = Query(default=None),
-    ):
-        from_dt, to_dt = _range(range, from_, to)
+    @app.get("/captures", response_class=HTMLResponse)
+    def captures(request: Request, limit: int = Query(default=20, ge=1, le=200)):
         conn = _db(request)
-        series = queries.person_series(conn, name=name, from_dt=from_dt, to_dt=to_dt)
-        total = series[-1]["cumulative"] if series else 0.0
-        hotkeys = [
-            r["ss58"]
-            for r in conn.execute(
-                """
-                SELECT h.ss58 FROM hotkeys h
-                JOIN persons p ON p.id = h.person_id
-                WHERE p.name = ? ORDER BY h.ss58
-                """,
-                (name,),
-            ).fetchall()
-        ]
+        table = queries.captures_table(conn, limit=limit)
         latest = queries.latest_snapshot(conn)
-        status_map = queries.current_registration_status(conn)
-        person_status = status_map.get(
-            name, {"active": 0, "total": 0, "deregistered_hotkeys": []}
-        )
         return templates.TemplateResponse(
             request,
-            "person.html",
+            "captures.html",
             {
-                "name": name,
-                "hotkeys": hotkeys,
-                "deregistered_set": set(person_status["deregistered_hotkeys"]),
-                "active_count": person_status["active"],
-                "total_count": person_status["total"],
-                "total_cumulative": total,
-                "chart_labels": [str(s["taken_at"]) for s in series],
-                "chart_cumulative": [rao_to_alpha(s["cumulative"]) for s in series],
-                "chart_per_snap": [rao_to_alpha(s["per_snapshot_emission"]) for s in series],
-                "active_range": range or "all",
+                "snapshots": table["snapshots"],
+                "rows": table["rows"],
+                "limit": limit,
                 "latest": latest,
             },
         )

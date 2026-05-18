@@ -12,6 +12,10 @@
 <main>
     <header>
         <h1>Gradient Emission Tracker</h1>
+        <nav style="margin: 0.25rem 0 0.75rem 0; display: flex; gap: 1rem; font-size: 0.95rem;">
+            <a href="/">Dashboard</a>
+            <a href="/captures">Captures</a>
+        </nav>
         {% if latest %}
         <p>Last snapshot: {{ latest.taken_at | dt_s }} (#{{ latest.id }}, {{ latest.status }})</p>
         {% else %}

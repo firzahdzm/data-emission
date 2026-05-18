@@ -97,12 +97,25 @@ def test_dashboard_with_range_preset(app):
     assert "Alice" in resp.text
 
 
-def test_person_page_renders(app):
+def test_captures_page_renders(app):
     client = TestClient(app)
-    resp = client.get("/person/Alice")
+    resp = client.get("/captures")
     assert resp.status_code == 200
-    assert "Alice" in resp.text
-    assert HK_F1 in resp.text
+    # Page title
+    assert "Emission Captures" in resp.text
+    # Both hotkeys appear as truncated codes
+    assert HK_F1[:8] in resp.text
+    assert HK_F2[:8] in resp.text
+    # Per-snapshot emission cells appear (1.0 α and 0.5 α from seed)
+    assert "1.0000 α" in resp.text
+    assert "0.5000 α" in resp.text
+
+
+def test_captures_page_limit_param(app):
+    client = TestClient(app)
+    resp = client.get("/captures?limit=5")
+    assert resp.status_code == 200
+    assert "last 5 snapshots" in resp.text
 
 
 def test_dashboard_period_trimmed_to_seconds_in_wib(app):

@@ -6,6 +6,7 @@ import pytest
 from emission_tracker.config import PersonConfig
 from emission_tracker.db import init_schema, sync_team
 from emission_tracker.web.queries import (
+    captures_table,
     current_registration_status,
     dashboard_hotkey_summary,
     dashboard_summary,
@@ -234,6 +235,70 @@ def test_dashboard_hotkey_summary_detects_deregistered_in_latest(
     by_hk = {r["hotkey"]: r for r in rows}
     assert by_hk[HK_F2]["is_registered"] == 0
     assert by_hk[HK_F1]["is_registered"] == 1
+
+
+def test_captures_table_ascending_order_with_emissions(seeded_db: sqlite3.Connection):
+    result = captures_table(seeded_db, limit=20)
+    # 3 snapshots in seed, ascending
+    assert len(result["snapshots"]) == 3
+    assert result["snapshots"][0]["id"] == 1
+    assert result["snapshots"][-1]["id"] == 3
+
+    # 3 hotkeys total
+    by_hk = {r["hotkey"]: r for r in result["rows"]}
+    assert set(by_hk.keys()) == {HK_F1, HK_F2, HK_I1}
+
+    # HK_F1 cells across snapshots 1,2,3: 1.0, 2.0, 3.0
+    cells = by_hk[HK_F1]["cells"]
+    assert [c["emission"] for c in cells] == [1.0, 2.0, 3.0]
+    assert all(c["is_registered"] == 1 for c in cells)
+
+
+def test_captures_table_respects_limit(seeded_db: sqlite3.Connection):
+    result = captures_table(seeded_db, limit=2)
+    assert len(result["snapshots"]) == 2
+    # Most recent 2 in ascending order: ids 2, 3
+    assert [s["id"] for s in result["snapshots"]] == [2, 3]
+    # Cells per row also length 2
+    for r in result["rows"]:
+        assert len(r["cells"]) == 2
+
+
+def test_captures_table_handles_missing_cells(seeded_db: sqlite3.Connection):
+    # Delete HK_I1's row in snapshot 2 → that cell should be None
+    seeded_db.execute(
+        "DELETE FROM neuron_snapshots WHERE hotkey_ss58 = ? AND snapshot_id = 2",
+        (HK_I1,),
+    )
+    seeded_db.commit()
+    result = captures_table(seeded_db, limit=20)
+    by_hk = {r["hotkey"]: r for r in result["rows"]}
+    # cells for HK_I1 across snapshots 1,2,3: filled, None, filled
+    cells = by_hk[HK_I1]["cells"]
+    assert cells[0] is not None
+    assert cells[1] is None
+    assert cells[2] is not None
+
+
+def test_captures_table_excludes_failed_snapshots(seeded_db: sqlite3.Connection):
+    seeded_db.execute("UPDATE snapshots SET status = 'failed' WHERE id = 2")
+    seeded_db.commit()
+    result = captures_table(seeded_db, limit=20)
+    snap_ids = [s["id"] for s in result["snapshots"]]
+    assert 2 not in snap_ids
+    assert snap_ids == [1, 3]
+
+
+def test_captures_table_empty_when_no_snapshots(memory_db: sqlite3.Connection):
+    init_schema(memory_db)
+    sync_team(
+        memory_db,
+        [PersonConfig(name="A", hotkeys=[HK_F1])],
+        subnet_id=56,
+    )
+    result = captures_table(memory_db, limit=20)
+    assert result["snapshots"] == []
+    assert result["rows"] == []
 
 
 def test_dashboard_hotkey_summary_no_snapshots_yet(memory_db: sqlite3.Connection):

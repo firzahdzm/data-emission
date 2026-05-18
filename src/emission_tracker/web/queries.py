@@ -89,6 +89,86 @@ def person_series(
     return [dict(row) for row in cursor.fetchall()]
 
 
+def captures_table(conn: sqlite3.Connection, limit: int = 20) -> dict:
+    """Wide-format emission history: rows=hotkey, columns=last N snapshots.
+
+    Returns:
+        {
+            "snapshots": [{"id": int, "taken_at": str}, ...]  # ascending time
+            "rows": [
+                {
+                    "hotkey": ss58,
+                    "name":   person name,
+                    "cells":  [  # same length as snapshots
+                        {"emission": float|None, "is_registered": 0|1} | None,
+                        ...
+                    ]
+                },
+                ...
+            ]
+        }
+
+    Snapshots are the most recent N (status ok/partial), ordered ascending
+    so older is on the left. A cell is None when the hotkey has no row in
+    that snapshot (worker error / hotkey didn't exist yet).
+    """
+    snap_rows = conn.execute(
+        """
+        SELECT id, CAST(taken_at AS TEXT) AS taken_at
+        FROM snapshots
+        WHERE status IN ('ok', 'partial')
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    snapshots = [dict(r) for r in reversed(snap_rows)]
+    snap_ids = [s["id"] for s in snapshots]
+
+    if not snap_ids:
+        return {"snapshots": [], "rows": []}
+
+    placeholders = ",".join("?" for _ in snap_ids)
+    cells = conn.execute(
+        f"""
+        SELECT h.ss58 AS hotkey,
+               p.name,
+               ns.snapshot_id,
+               ns.emission,
+               ns.is_registered
+        FROM hotkeys h
+        JOIN persons p ON p.id = h.person_id
+        LEFT JOIN neuron_snapshots ns
+               ON ns.hotkey_ss58 = h.ss58
+              AND ns.snapshot_id IN ({placeholders})
+        """,
+        snap_ids,
+    ).fetchall()
+
+    by_hk: dict[str, dict] = {}
+    for c in cells:
+        bucket = by_hk.setdefault(
+            c["hotkey"], {"name": c["name"], "cells_map": {}}
+        )
+        if c["snapshot_id"] is not None:
+            bucket["cells_map"][c["snapshot_id"]] = {
+                "emission": c["emission"],
+                "is_registered": c["is_registered"],
+            }
+
+    rows = []
+    for hotkey, data in by_hk.items():
+        rows.append(
+            {
+                "hotkey": hotkey,
+                "name": data["name"],
+                "cells": [data["cells_map"].get(sid) for sid in snap_ids],
+            }
+        )
+    rows.sort(key=lambda r: (r["name"], r["hotkey"]))
+    return {"snapshots": snapshots, "rows": rows}
+
+
 def latest_snapshot(conn: sqlite3.Connection) -> dict | None:
     row = conn.execute(
         "SELECT id, CAST(taken_at AS TEXT) AS taken_at, block_number, status "

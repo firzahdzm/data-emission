@@ -54,7 +54,7 @@
             <td data-sort="{{ r.hotkey }}">
                 <code title="{{ r.hotkey }}">{{ r.hotkey[:8] }}…{{ r.hotkey[-4:] }}</code>
             </td>
-            <td data-sort="{{ r.name }}"><a href="/person/{{ r.name }}{% if active_range %}?range={{ active_range }}{% endif %}">{{ r.name }}</a></td>
+            <td data-sort="{{ r.name }}">{{ r.name }}</td>
             <td data-sort="{{ r.cumulative }}">{{ r.cumulative | alpha }}</td>
             <td data-sort="{{ 'registered' if r.is_registered else 'deregistered' }}">
                 {% if r.is_registered == 1 %}

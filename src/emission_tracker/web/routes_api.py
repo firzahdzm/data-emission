@@ -1,11 +1,17 @@
 import sqlite3
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 
 from emission_tracker.web import queries
+from emission_tracker.web.auth import require_admin
 from emission_tracker.web.range_parse import parse_range
 
 router = APIRouter()
+
+
+class SettlementCreateBody(BaseModel):
+    note: str | None = None
 
 
 def _db(request: Request) -> sqlite3.Connection:
@@ -68,6 +74,56 @@ def get_latest_snapshot(request: Request):
     if snap is None:
         raise HTTPException(status_code=404, detail="No snapshots yet")
     return snap
+
+
+@router.get("/settlements")
+def list_settlements(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    """Recent settlements (close-period events), newest first."""
+    return {
+        "settlements": queries.list_settlements(_db(request), limit=limit),
+        "limit": limit,
+    }
+
+
+@router.get("/settlements/{settlement_id}")
+def settlement_detail(request: Request, settlement_id: int):
+    """One settlement plus its per-hotkey lines."""
+    detail = queries.settlement_detail(_db(request), settlement_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Settlement not found")
+    return detail
+
+
+@router.post("/settlements", status_code=201)
+def create_settlement_endpoint(
+    request: Request,
+    body: SettlementCreateBody = Body(default_factory=SettlementCreateBody),
+    user: str = Depends(require_admin),
+):
+    """Admin only. Freeze per-hotkey cumulative emission since the previous
+    settlement into a new settlement record. Resets the live dashboard
+    accumulation back to 0 for the next period."""
+    try:
+        settlement = queries.create_settlement(_db(request), note=body.note)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return settlement
+
+
+@router.delete("/settlements/{settlement_id}", status_code=204)
+def delete_settlement_endpoint(
+    request: Request,
+    settlement_id: int,
+    user: str = Depends(require_admin),
+):
+    """Admin only. Remove a settlement (cascades to its lines). The dashboard
+    will reopen the period covered by that settlement."""
+    if not queries.delete_settlement(_db(request), settlement_id):
+        raise HTTPException(status_code=404, detail="Settlement not found")
+    return None
 
 
 @router.get("/snapshots")

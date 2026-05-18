@@ -122,3 +122,127 @@ def test_list_snapshots_rejects_invalid_limit(app_with_db):
     assert resp.status_code == 422
     resp = client.get("/api/snapshots?limit=999")
     assert resp.status_code == 422
+
+
+# ---- Settlement endpoints ----
+
+from types import SimpleNamespace
+
+
+def _set_admin_users(app, users: list[str]):
+    app.state.config = SimpleNamespace(admin_users=users)
+
+
+def test_post_settlement_requires_admin(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    # No header → 401
+    resp = client.post("/api/settlements", json={})
+    assert resp.status_code == 401
+    # Non-admin → 403
+    resp = client.post(
+        "/api/settlements", json={}, headers={"X-Remote-User": "bob"}
+    )
+    assert resp.status_code == 403
+
+
+def test_post_settlement_creates_record_when_admin(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    resp = client.post(
+        "/api/settlements",
+        json={"note": "May payout"},
+        headers={"X-Remote-User": "alice"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["note"] == "May payout"
+    assert data["settled_through_snapshot_id"] == 1
+    assert "lines" in data
+
+
+def test_post_settlement_returns_400_when_nothing_to_settle(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    # First settlement succeeds
+    client.post("/api/settlements", json={}, headers={"X-Remote-User": "alice"})
+    # Second one has nothing new
+    resp = client.post(
+        "/api/settlements", json={}, headers={"X-Remote-User": "alice"}
+    )
+    assert resp.status_code == 400
+    assert "No new completed snapshots" in resp.json()["detail"]
+
+
+def test_delete_settlement_requires_admin(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    create = client.post(
+        "/api/settlements", json={}, headers={"X-Remote-User": "alice"}
+    )
+    settlement_id = create.json()["id"]
+
+    # No auth
+    resp = client.delete(f"/api/settlements/{settlement_id}")
+    assert resp.status_code == 401
+    # Non-admin
+    resp = client.delete(
+        f"/api/settlements/{settlement_id}", headers={"X-Remote-User": "bob"}
+    )
+    assert resp.status_code == 403
+
+
+def test_delete_settlement_admin_204(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    create = client.post(
+        "/api/settlements", json={}, headers={"X-Remote-User": "alice"}
+    )
+    settlement_id = create.json()["id"]
+
+    resp = client.delete(
+        f"/api/settlements/{settlement_id}", headers={"X-Remote-User": "alice"}
+    )
+    assert resp.status_code == 204
+
+    # Settlement gone
+    resp = client.get(f"/api/settlements/{settlement_id}")
+    assert resp.status_code == 404
+
+
+def test_delete_settlement_404_unknown(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    resp = client.delete(
+        "/api/settlements/9999", headers={"X-Remote-User": "alice"}
+    )
+    assert resp.status_code == 404
+
+
+def test_get_settlements_list_no_auth_required(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    client.post("/api/settlements", json={"note": "first"}, headers={"X-Remote-User": "alice"})
+    # GET without auth header still works (read-only is public to logged-in basic-auth users)
+    resp = client.get("/api/settlements")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["limit"] == 50
+    assert len(data["settlements"]) == 1
+    assert data["settlements"][0]["note"] == "first"
+
+
+def test_get_settlement_detail_includes_lines(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    create = client.post(
+        "/api/settlements", json={}, headers={"X-Remote-User": "alice"}
+    )
+    settlement_id = create.json()["id"]
+
+    resp = client.get(f"/api/settlements/{settlement_id}")
+    assert resp.status_code == 200
+    detail = resp.json()
+    assert detail["id"] == settlement_id
+    assert "lines" in detail
+    assert len(detail["lines"]) == 2  # HK_F1 + HK_F2 from app_with_db fixture

@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block content %}
+
+<p style="margin: 0 0 1rem;"><a href="/archive">← Back to archive</a></p>
+
+<div class="kpi-grid">
+    <article class="kpi-card">
+        <span class="kpi-label">Settlement</span>
+        <div class="kpi-value">#{{ settlement.id }}</div>
+        <div class="kpi-sub">{{ settlement.settled_at | dt_s }}</div>
+    </article>
+    <article class="kpi-card">
+        <span class="kpi-label">Total frozen</span>
+        <div class="kpi-value">{{ settlement.total_cumulative_rao | alpha }}</div>
+        <div class="kpi-sub">across {{ settlement.lines | length }} hotkeys</div>
+    </article>
+    <article class="kpi-card">
+        <span class="kpi-label">Through snapshot</span>
+        <div class="kpi-value">#{{ settlement.settled_through_snapshot_id }}</div>
+        <div class="kpi-sub">last included in this period</div>
+    </article>
+    {% if is_admin %}
+    <article class="kpi-card" style="display: flex; flex-direction: column; justify-content: center; align-items: stretch;">
+        <span class="kpi-label">Admin actions</span>
+        <button id="delete-settlement-btn" style="margin-top: 0.4rem; background: var(--pico-del-color, #c0392b); border-color: var(--pico-del-color, #c0392b);">
+            Delete settlement
+        </button>
+        <div class="kpi-sub" style="margin-top: 0.4rem;">reopens this period</div>
+    </article>
+    {% endif %}
+</div>
+
+{% if settlement.note %}
+<section class="panel">
+    <header>Note</header>
+    <p style="margin: 0;">{{ settlement.note }}</p>
+</section>
+{% endif %}
+
+<section class="panel" style="padding: 0; overflow: hidden;">
+    <header style="padding: 0.85rem 1.25rem 0;">Per-hotkey breakdown</header>
+    <table class="lines-table">
+        <thead>
+            <tr>
+                <th>Hotkey</th>
+                <th>Name</th>
+                <th class="num">Frozen amount</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for line in settlement.lines %}
+            <tr>
+                <td><code class="hotkey-pill" title="{{ line.hotkey_ss58 }}">{{ line.hotkey_ss58[:8] }}…{{ line.hotkey_ss58[-4:] }}</code></td>
+                <td>{{ line.person_name }}</td>
+                <td class="num text-mono">{{ line.cumulative_rao | alpha }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+{% if is_admin %}
+<script>
+document.getElementById('delete-settlement-btn').addEventListener('click', async function() {
+    const ok = confirm(
+        "Delete settlement #{{ settlement.id }}?\n\n" +
+        "This reopens the period: the dashboard will resume accumulating\n" +
+        "from the snapshot after the previous settlement (or from the\n" +
+        "beginning if this is the only one).\n\n" +
+        "Frozen amounts in this record will be lost. Sure?"
+    );
+    if (!ok) return;
+    this.disabled = true;
+    this.textContent = 'Deleting…';
+    const resp = await fetch('/api/settlements/{{ settlement.id }}', { method: 'DELETE' });
+    if (resp.status === 204) {
+        alert('Settlement #{{ settlement.id }} deleted. Returning to archive.');
+        location.href = '/archive';
+    } else {
+        const err = await resp.json().catch(() => ({}));
+        alert('Failed: ' + (err.detail || resp.statusText));
+        this.disabled = false;
+        this.textContent = 'Delete settlement';
+    }
+});
+</script>
+{% endif %}
+
+<style>
+.lines-table th, .lines-table td {
+    padding: 0.55rem 0.85rem;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+    font-size: 0.9rem;
+}
+.lines-table tbody tr:hover {
+    background: var(--pico-card-sectionning-background-color, var(--pico-card-background-color));
+}
+</style>
+
+{% endblock %}

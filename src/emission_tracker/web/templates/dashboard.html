@@ -1,11 +1,18 @@
 {% extends "base.html" %}
 {% block content %}
 
+{% if last_settle %}
+<p class="text-muted" style="margin: 0 0 0.85rem; font-size: 0.85rem;">
+    Period started at <strong>{{ last_settle.settled_at | dt_s }}</strong>
+    (after settlement #{{ last_settle.id }}{% if last_settle.note %} &middot; <em>{{ last_settle.note }}</em>{% endif %})
+</p>
+{% endif %}
+
 <div class="kpi-grid">
     <article class="kpi-card">
-        <span class="kpi-label">Accumulated</span>
+        <span class="kpi-label">Accumulated this period</span>
         <div class="kpi-value">{{ total_cumulative | alpha }}</div>
-        <div class="kpi-sub">in selected range</div>
+        <div class="kpi-sub">{% if last_settle %}since settlement #{{ last_settle.id }}{% else %}since first snapshot{% endif %}</div>
     </article>
     <article class="kpi-card kpi-ok">
         <span class="kpi-label">Registered</span>
@@ -17,7 +24,52 @@
         <div class="kpi-value">{{ total_deregistered }}</div>
         <div class="kpi-sub">currently kicked from subnet</div>
     </article>
+    {% if is_admin %}
+    <article class="kpi-card" style="display: flex; flex-direction: column; justify-content: center; align-items: stretch;">
+        <span class="kpi-label">Period control</span>
+        <button id="close-period-btn" style="margin-top: 0.4rem;">Close period</button>
+        <div class="kpi-sub" style="margin-top: 0.4rem;">freezes accumulation, resets to 0</div>
+    </article>
+    {% endif %}
 </div>
+
+{% if is_admin %}
+<script>
+document.getElementById('close-period-btn').addEventListener('click', async function() {
+    const note = prompt(
+        "Close current period?\n\n" +
+        "All accumulation since the last settlement will be frozen into\n" +
+        "the archive. Dashboard will reset to 0 α for the next period.\n\n" +
+        "Optional note (e.g., \"Week 1 payout\"):"
+    );
+    if (note === null) return;  // cancelled
+    this.disabled = true;
+    this.textContent = 'Closing…';
+    try {
+        const resp = await fetch('/api/settlements', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({note: note || null}),
+        });
+        if (!resp.ok) {
+            const err = await resp.json();
+            alert('Failed: ' + (err.detail || resp.statusText));
+            this.disabled = false;
+            this.textContent = 'Close period';
+            return;
+        }
+        const data = await resp.json();
+        const alpha = (data.total_cumulative_rao / 1e9).toFixed(4);
+        alert('Settlement #' + data.id + ' created.\nTotal frozen: ' + alpha + ' α across ' + data.lines.length + ' hotkeys.\n\nReloading dashboard.');
+        location.href = '/';
+    } catch (e) {
+        alert('Network error: ' + e);
+        this.disabled = false;
+        this.textContent = 'Close period';
+    }
+});
+</script>
+{% endif %}
 
 <section class="panel">
     <header>Filter</header>

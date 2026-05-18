@@ -136,6 +136,58 @@ def test_dashboard_period_trimmed_to_seconds_in_wib(app):
     assert "1970-01-01 07:00:00 WIB" in period_line
 
 
+def test_archive_page_empty(app):
+    client = TestClient(app)
+    resp = client.get("/archive")
+    assert resp.status_code == 200
+    assert "No settlements yet" in resp.text
+
+
+def test_archive_page_shows_settlement(app):
+    from emission_tracker.web.queries import create_settlement
+    create_settlement(app.state.db_conn, note="Week 1")
+    client = TestClient(app)
+    resp = client.get("/archive")
+    assert resp.status_code == 200
+    assert "Week 1" in resp.text
+
+
+def test_archive_detail_404_for_unknown(app):
+    client = TestClient(app)
+    resp = client.get("/archive/9999")
+    assert resp.status_code == 404
+
+
+def test_archive_detail_renders_lines(app):
+    from emission_tracker.web.queries import create_settlement
+    settle = create_settlement(app.state.db_conn, note="Test")
+    client = TestClient(app)
+    resp = client.get(f"/archive/{settle['id']}")
+    assert resp.status_code == 200
+    # Hotkey codes appear (truncated)
+    assert HK_F1[:8] in resp.text
+    assert HK_F2[:8] in resp.text
+    # Note shown
+    assert "Test" in resp.text
+
+
+def test_dashboard_close_button_hidden_for_non_admin(app):
+    # No admin_users configured on this app → never admin
+    client = TestClient(app)
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "close-period-btn" not in resp.text
+
+
+def test_dashboard_close_button_visible_for_admin(app):
+    from types import SimpleNamespace
+    app.state.config = SimpleNamespace(admin_users=["alice"])
+    client = TestClient(app)
+    resp = client.get("/", headers={"X-Remote-User": "alice"})
+    assert resp.status_code == 200
+    assert "close-period-btn" in resp.text
+
+
 def test_format_dt_seconds_helper():
     from datetime import datetime, timezone
 

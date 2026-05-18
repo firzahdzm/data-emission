@@ -9,6 +9,7 @@ from fastapi.templating import Jinja2Templates
 
 from emission_tracker.units import format_alpha, rao_to_alpha
 from emission_tracker.web import queries
+from emission_tracker.web.auth import is_admin
 from emission_tracker.web.range_parse import parse_range
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -120,6 +121,7 @@ def register_pages(app: FastAPI) -> None:
         total_hotkeys = len(rows)
         total_deregistered = total_hotkeys - total_registered
         latest = queries.latest_snapshot(conn)
+        last_settle = queries.last_settlement(conn)
         return templates.TemplateResponse(
             request,
             "dashboard.html",
@@ -135,7 +137,44 @@ def register_pages(app: FastAPI) -> None:
                 "to_input": to or "",
                 "active_range": effective_preset if (from_ is None and to is None) else "",
                 "latest": latest,
+                "last_settle": last_settle,
                 "active_page": "dashboard",
+                "is_admin": is_admin(request),
+            },
+        )
+
+    @app.get("/archive", response_class=HTMLResponse)
+    def archive(request: Request, limit: int = Query(default=50, ge=1, le=500)):
+        conn = _db(request)
+        settlements = queries.list_settlements(conn, limit=limit)
+        latest = queries.latest_snapshot(conn)
+        return templates.TemplateResponse(
+            request,
+            "archive.html",
+            {
+                "settlements": settlements,
+                "limit": limit,
+                "latest": latest,
+                "active_page": "archive",
+                "is_admin": is_admin(request),
+            },
+        )
+
+    @app.get("/archive/{settlement_id}", response_class=HTMLResponse)
+    def archive_detail(request: Request, settlement_id: int):
+        conn = _db(request)
+        detail = queries.settlement_detail(conn, settlement_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="Settlement not found")
+        latest = queries.latest_snapshot(conn)
+        return templates.TemplateResponse(
+            request,
+            "archive_detail.html",
+            {
+                "settlement": detail,
+                "latest": latest,
+                "active_page": "archive",
+                "is_admin": is_admin(request),
             },
         )
 

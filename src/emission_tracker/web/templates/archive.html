@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+
+<section class="panel">
+    <header>Archive</header>
+    <p class="text-muted" style="margin: 0 0 0.75rem; font-size: 0.875rem;">
+        Past settlements (close-period events). Each entry freezes the accumulated emission
+        since the previous settlement into an immutable record. Click a row for per-hotkey breakdown.
+    </p>
+    <form method="get" action="/archive" class="filter-form">
+        <label>
+            Show last N
+            <input type="number" name="limit" value="{{ limit }}" min="1" max="500" style="width: 100px;">
+        </label>
+        <button type="submit">Apply</button>
+    </form>
+</section>
+
+{% if settlements %}
+<section class="panel" style="padding: 0; overflow: hidden;">
+    <table class="archive-table">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Settled at</th>
+                <th>Through snapshot</th>
+                <th>Note</th>
+                <th class="num">Total frozen</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in settlements %}
+            <tr onclick="location.href='/archive/{{ s.id }}'" style="cursor: pointer;">
+                <td class="text-mono">#{{ s.id }}</td>
+                <td>{{ s.settled_at | dt_s }}</td>
+                <td class="text-mono text-muted">snapshot #{{ s.settled_through_snapshot_id }}</td>
+                <td>{{ s.note or "—" }}</td>
+                <td class="num text-mono">{{ s.total_cumulative_rao | alpha }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% else %}
+<section class="panel">
+    <p>No settlements yet. {% if is_admin %}Click <strong>Close period</strong> on the Dashboard to create one.{% endif %}</p>
+</section>
+{% endif %}
+
+<style>
+.archive-table th, .archive-table td {
+    padding: 0.55rem 0.85rem;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+    font-size: 0.9rem;
+}
+.archive-table tbody tr:hover {
+    background: var(--pico-card-sectionning-background-color, var(--pico-card-background-color));
+}
+</style>
+
+{% endblock %}

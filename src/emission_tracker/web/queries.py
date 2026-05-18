@@ -1,5 +1,124 @@
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def last_settlement_snapshot_id(conn: sqlite3.Connection) -> int:
+    """Boundary snapshot id of the most recent settlement (0 if none).
+    Dashboard queries use ``WHERE snapshot_id > this`` to filter to the
+    current (post-settle) period only."""
+    row = conn.execute(
+        "SELECT settled_through_snapshot_id FROM settlements "
+        "ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    return row["settled_through_snapshot_id"] if row else 0
+
+
+def last_settlement(conn: sqlite3.Connection) -> dict | None:
+    """Most recent settlement row (None if no settlement has happened yet)."""
+    row = conn.execute(
+        "SELECT id, CAST(settled_at AS TEXT) AS settled_at, "
+        "       settled_through_snapshot_id, note, total_cumulative_rao "
+        "FROM settlements ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_settlements(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
+    """Recent settlements, newest first."""
+    cursor = conn.execute(
+        "SELECT id, CAST(settled_at AS TEXT) AS settled_at, "
+        "       settled_through_snapshot_id, note, total_cumulative_rao "
+        "FROM settlements ORDER BY id DESC LIMIT ?",
+        (limit,),
+    )
+    return [dict(r) for r in cursor.fetchall()]
+
+
+def settlement_detail(conn: sqlite3.Connection, settlement_id: int) -> dict | None:
+    """One settlement plus its per-hotkey lines, or None if not found."""
+    head = conn.execute(
+        "SELECT id, CAST(settled_at AS TEXT) AS settled_at, "
+        "       settled_through_snapshot_id, note, total_cumulative_rao "
+        "FROM settlements WHERE id = ?",
+        (settlement_id,),
+    ).fetchone()
+    if head is None:
+        return None
+    lines = conn.execute(
+        "SELECT hotkey_ss58, person_name, cumulative_rao "
+        "FROM settlement_lines WHERE settlement_id = ? "
+        "ORDER BY cumulative_rao DESC, person_name, hotkey_ss58",
+        (settlement_id,),
+    ).fetchall()
+    return {**dict(head), "lines": [dict(line) for line in lines]}
+
+
+def create_settlement(conn: sqlite3.Connection, note: str | None = None) -> dict:
+    """Atomically: freeze per-hotkey cumulative emission since the previous
+    settlement (or since first snapshot if none) into settlement_lines, and
+    create a new settlements row. Returns the new settlement detail.
+
+    Raises ValueError if there are no new completed snapshots to settle.
+    """
+    last_id = last_settlement_snapshot_id(conn)
+    latest = conn.execute(
+        "SELECT MAX(id) AS id FROM snapshots "
+        "WHERE status IN ('ok', 'partial') AND id > ?",
+        (last_id,),
+    ).fetchone()
+    settled_through = latest["id"] if latest else None
+    if settled_through is None:
+        raise ValueError("No new completed snapshots since last settlement")
+
+    # Per-hotkey cumulative within (last_id, settled_through]
+    rows = conn.execute(
+        """
+        SELECT h.ss58 AS hotkey,
+               p.name AS person_name,
+               COALESCE(SUM(ns.emission), 0) AS cumulative
+        FROM hotkeys h
+        JOIN persons p ON p.id = h.person_id
+        LEFT JOIN (
+            neuron_snapshots ns
+            JOIN snapshots s ON s.id = ns.snapshot_id
+                             AND s.status IN ('ok', 'partial')
+                             AND s.id >  ?
+                             AND s.id <= ?
+        ) ON ns.hotkey_ss58 = h.ss58
+        GROUP BY h.ss58, p.name
+        """,
+        (last_id, settled_through),
+    ).fetchall()
+
+    total = sum(int(r["cumulative"]) for r in rows)
+    now = datetime.now(timezone.utc)
+    cursor = conn.execute(
+        "INSERT INTO settlements "
+        "(settled_at, settled_through_snapshot_id, note, total_cumulative_rao) "
+        "VALUES (?, ?, ?, ?)",
+        (now, settled_through, note, total),
+    )
+    settlement_id = cursor.lastrowid
+    for r in rows:
+        conn.execute(
+            "INSERT INTO settlement_lines "
+            "(settlement_id, hotkey_ss58, person_name, cumulative_rao) "
+            "VALUES (?, ?, ?, ?)",
+            (settlement_id, r["hotkey"], r["person_name"], int(r["cumulative"])),
+        )
+    conn.commit()
+    return settlement_detail(conn, settlement_id)
+
+
+def delete_settlement(conn: sqlite3.Connection, settlement_id: int) -> bool:
+    """Delete a settlement (and cascade its lines). Returns True if a row
+    was removed. After deletion, the previous settlement (if any) becomes
+    the current boundary."""
+    cursor = conn.execute(
+        "DELETE FROM settlements WHERE id = ?", (settlement_id,)
+    )
+    conn.commit()
+    return cursor.rowcount > 0
 
 
 def dashboard_summary(
@@ -112,15 +231,17 @@ def captures_table(conn: sqlite3.Connection, limit: int = 20) -> dict:
     so older is on the left. A cell is None when the hotkey has no row in
     that snapshot (worker error / hotkey didn't exist yet).
     """
+    settle_boundary = last_settlement_snapshot_id(conn)
     snap_rows = conn.execute(
         """
         SELECT id, CAST(taken_at AS TEXT) AS taken_at
         FROM snapshots
         WHERE status IN ('ok', 'partial')
+          AND id > ?
         ORDER BY id DESC
         LIMIT ?
         """,
-        (limit,),
+        (settle_boundary, limit),
     ).fetchall()
     snapshots = [dict(r) for r in reversed(snap_rows)]
     snap_ids = [s["id"] for s in snapshots]
@@ -187,6 +308,7 @@ def snapshot_history(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
     for snapshots taken with a different team size — acceptable for v1.
     """
     team_size = conn.execute("SELECT COUNT(*) AS n FROM hotkeys").fetchone()["n"]
+    settle_boundary = last_settlement_snapshot_id(conn)
     cursor = conn.execute(
         """
         SELECT
@@ -199,11 +321,12 @@ def snapshot_history(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
             COALESCE(SUM(CASE WHEN ns.is_registered = 0 THEN 1 ELSE 0 END), 0) AS deregistered
         FROM snapshots s
         LEFT JOIN neuron_snapshots ns ON ns.snapshot_id = s.id
+        WHERE s.id > ?
         GROUP BY s.id, s.taken_at, s.status, s.block_number
         ORDER BY s.id DESC
         LIMIT ?
         """,
-        (limit,),
+        (settle_boundary, limit),
     )
     rows = []
     for r in cursor.fetchall():
@@ -240,7 +363,8 @@ def dashboard_hotkey_summary(
 
     Ordered by cumulative DESC, name ASC, hotkey ASC.
     """
-    # 1. Cumulative per hotkey in range
+    settle_boundary = last_settlement_snapshot_id(conn)
+    # 1. Cumulative per hotkey in range (and after last settlement)
     range_rows = conn.execute(
         """
         SELECT h.ss58 AS hotkey,
@@ -252,13 +376,14 @@ def dashboard_hotkey_summary(
             neuron_snapshots ns
             JOIN snapshots s ON s.id = ns.snapshot_id
                              AND s.status IN ('ok', 'partial')
+                             AND s.id > ?
                              AND s.taken_at >= ?
                              AND s.taken_at <  ?
         ) ON ns.hotkey_ss58 = h.ss58
         GROUP BY h.ss58, p.name
         ORDER BY cumulative DESC, p.name ASC, h.ss58 ASC
         """,
-        (from_dt, to_dt),
+        (settle_boundary, from_dt, to_dt),
     ).fetchall()
 
     rows = [dict(r) for r in range_rows]

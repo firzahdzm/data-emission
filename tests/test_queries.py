@@ -7,12 +7,18 @@ from emission_tracker.config import PersonConfig
 from emission_tracker.db import init_schema, sync_team
 from emission_tracker.web.queries import (
     captures_table,
+    create_settlement,
     current_registration_status,
     dashboard_hotkey_summary,
     dashboard_summary,
+    delete_settlement,
     hotkey_series,
+    last_settlement,
+    last_settlement_snapshot_id,
     latest_snapshot,
+    list_settlements,
     person_series,
+    settlement_detail,
     snapshot_history,
 )
 
@@ -384,3 +390,119 @@ def test_dashboard_hotkey_summary_no_snapshots_yet(memory_db: sqlite3.Connection
         assert r["cumulative"] == 0
         assert r["is_registered"] == 0
         assert r["last_refresh"] is None
+
+
+# ---- Settlement queries ----
+
+def test_last_settlement_returns_none_when_empty(seeded_db: sqlite3.Connection):
+    assert last_settlement(seeded_db) is None
+    assert last_settlement_snapshot_id(seeded_db) == 0
+
+
+def test_create_settlement_freezes_per_hotkey_cumulative(seeded_db: sqlite3.Connection):
+    # Seed cumulative: HK_F1=6.0 (1+2+3), HK_F2=1.5 (0.5*3), HK_I1=0.6 (0.1+0.2+0.3)
+    settle = create_settlement(seeded_db, note="May payout")
+    assert settle["note"] == "May payout"
+    assert settle["settled_through_snapshot_id"] == 3
+    # Total = sum of int(cumulative) per hotkey (truncated individually).
+    # Real RAO values are already integers; the seed uses 1.0/0.5/0.6 floats
+    # so each truncates: int(6.0)+int(1.5)+int(0.6) = 6+1+0 = 7.
+    assert settle["total_cumulative_rao"] == 7
+    # Lines: one per hotkey, sorted by cumulative desc
+    lines = settle["lines"]
+    assert len(lines) == 3
+    by_hk = {line["hotkey_ss58"]: line for line in lines}
+    assert by_hk[HK_F1]["cumulative_rao"] == 6
+    assert by_hk[HK_F2]["cumulative_rao"] == 1
+    assert by_hk[HK_I1]["cumulative_rao"] == 0  # int(0.6) = 0
+    assert by_hk[HK_F1]["person_name"] == "Alice"
+    assert by_hk[HK_I1]["person_name"] == "Bob"
+
+
+def test_create_settlement_raises_when_no_new_snapshots(seeded_db: sqlite3.Connection):
+    create_settlement(seeded_db)  # first settle covers all 3 snapshots
+    with pytest.raises(ValueError, match="No new completed snapshots"):
+        create_settlement(seeded_db)  # nothing new to settle
+
+
+def test_dashboard_hotkey_summary_resets_after_settlement(seeded_db: sqlite3.Connection):
+    create_settlement(seeded_db)
+    rows = dashboard_hotkey_summary(
+        seeded_db,
+        from_dt=datetime(2000, 1, 1, tzinfo=timezone.utc),
+        to_dt=datetime(2100, 1, 1, tzinfo=timezone.utc),
+    )
+    # All cumulative reset to 0 (no new snapshots since settle)
+    for r in rows:
+        assert r["cumulative"] == 0
+
+
+def test_captures_table_resets_after_settlement(seeded_db: sqlite3.Connection):
+    create_settlement(seeded_db)
+    result = captures_table(seeded_db, limit=20)
+    # No snapshots since settle → empty
+    assert result["snapshots"] == []
+
+
+def test_snapshot_history_filters_to_current_period(seeded_db: sqlite3.Connection):
+    create_settlement(seeded_db)  # boundary = snapshot id 3
+    rows = snapshot_history(seeded_db, limit=20)
+    # Snapshots 1,2,3 are pre-boundary → excluded
+    assert rows == []
+
+
+def test_delete_settlement_revives_period(seeded_db: sqlite3.Connection):
+    settle = create_settlement(seeded_db)
+    assert delete_settlement(seeded_db, settle["id"]) is True
+
+    # After delete, dashboard sees old data again
+    rows = dashboard_hotkey_summary(
+        seeded_db,
+        from_dt=datetime(2000, 1, 1, tzinfo=timezone.utc),
+        to_dt=datetime(2100, 1, 1, tzinfo=timezone.utc),
+    )
+    by_hk = {r["hotkey"]: r for r in rows}
+    assert by_hk[HK_F1]["cumulative"] == pytest.approx(6.0)
+
+    # Settlement gone
+    assert last_settlement(seeded_db) is None
+    # Lines cascaded
+    n_lines = seeded_db.execute(
+        "SELECT COUNT(*) FROM settlement_lines"
+    ).fetchone()[0]
+    assert n_lines == 0
+
+
+def test_delete_settlement_returns_false_for_unknown(seeded_db: sqlite3.Connection):
+    assert delete_settlement(seeded_db, 9999) is False
+
+
+def test_list_settlements_newest_first(seeded_db: sqlite3.Connection):
+    s1 = create_settlement(seeded_db, note="first")
+    # Add a 4th snapshot so we can settle again
+    seeded_db.execute(
+        "INSERT INTO snapshots (id, taken_at, status) VALUES (4, ?, 'ok')",
+        (datetime(2026, 5, 17, 16, 0, tzinfo=timezone.utc),),
+    )
+    seeded_db.execute(
+        "INSERT INTO neuron_snapshots VALUES (4, ?, 10, 5.0, 1)", (HK_F1,)
+    )
+    seeded_db.commit()
+    s2 = create_settlement(seeded_db, note="second")
+
+    rows = list_settlements(seeded_db)
+    assert [r["note"] for r in rows] == ["second", "first"]
+    assert rows[0]["id"] == s2["id"]
+
+
+def test_settlement_detail_returns_lines(seeded_db: sqlite3.Connection):
+    settle = create_settlement(seeded_db, note="payout")
+    detail = settlement_detail(seeded_db, settle["id"])
+    assert detail is not None
+    assert detail["note"] == "payout"
+    # Lines ordered by cumulative_rao DESC
+    assert detail["lines"][0]["cumulative_rao"] >= detail["lines"][-1]["cumulative_rao"]
+
+
+def test_settlement_detail_returns_none_for_unknown(seeded_db: sqlite3.Connection):
+    assert settlement_detail(seeded_db, 9999) is None

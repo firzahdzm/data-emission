@@ -39,6 +39,11 @@ server {
         proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
+        # Forward the basic-auth username to the app. The app uses this to
+        # gate admin-only endpoints (settle/unsettle) against the
+        # AppConfig.admin_users list.
+        proxy_set_header X-Remote-User     $remote_user;
+
         # The dashboard auto-refreshes every 5 minutes; long polling not used.
         proxy_read_timeout  60s;
         proxy_send_timeout  60s;

@@ -113,6 +113,23 @@ sudo certbot --nginx -d emission.example.com
 
 Open https://emission.example.com in a browser and log in.
 
+## 7a. Grant admin powers (settle/unsettle periods)
+
+The web UI has a `[Close period]` button and a `[Delete settlement]` button that only appear for usernames listed in `config.yaml` under `admin_users`. nginx forwards the Basic Auth username to the app via the `X-Remote-User` header (this is wired up in the example nginx config).
+
+To make a Basic-Auth user an admin, edit `config.yaml`:
+
+```yaml
+admin_users:
+  - firza     # must exactly match the htpasswd username used at /etc/nginx/.htpasswd_emission
+```
+
+```bash
+sudo systemctl restart emission-tracker
+```
+
+Non-admin users see no Close/Delete buttons; even hitting `POST /api/settlements` directly returns 403.
+
 ## 8. Update workflow
 
 When you change the code on your laptop and push:

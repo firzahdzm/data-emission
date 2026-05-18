@@ -17,3 +17,9 @@ team:
     hotkeys:
       - 5BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB1
       - 5BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB2
+
+# Usernames (must match the Basic-Auth username forwarded by nginx via
+# X-Remote-User) that are allowed to Close / Delete settlements. Leave
+# the list empty if nobody should have admin powers.
+admin_users:
+  - replace-with-your-htpasswd-username

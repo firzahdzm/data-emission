@@ -6,9 +6,9 @@
 <h2>{{ name }}</h2>
 <p>Akumulasi ({{ active_range }}): {{ total_cumulative | alpha }}</p>
 <p>
-    Hotkey: <strong>{{ active_count }}/{{ total_count }} active</strong>
+    Hotkeys: <strong>{{ active_count }}/{{ total_count }} registered</strong>
     {% if deregistered_set %}
-      &middot; <strong style="color: #c0392b;">{{ deregistered_set | length }} ketendang</strong>
+      &middot; <strong style="color: #c0392b;">{{ deregistered_set | length }} deregistered</strong>
     {% endif %}
 </p>
 
@@ -21,9 +21,9 @@
     <li>
         <code>{{ hk }}</code>
         {% if hk in deregistered_set %}
-          &nbsp;<span style="color: #c0392b; font-weight: bold;">[KETENDANG]</span>
+          &nbsp;<span style="color: #c0392b; font-weight: bold;">[DEREGISTERED]</span>
         {% else %}
-          &nbsp;<span style="color: #2e7d32;">[active]</span>
+          &nbsp;<span style="color: #2e7d32;">[registered]</span>
         {% endif %}
     </li>
     {% endfor %}

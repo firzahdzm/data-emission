@@ -21,9 +21,9 @@
 <section>
     <h2>Akumulasi ({{ active_range }}): {{ total_cumulative | alpha }}</h2>
     <p>
-        Aktif: <strong>{{ total_active }}/{{ total_hotkeys }}</strong> hotkey
+        Registered: <strong>{{ total_active }}/{{ total_hotkeys }}</strong> hotkeys
         {% if total_deregistered > 0 %}
-          &middot; <strong style="color: #c0392b;">{{ total_deregistered }} ketendang</strong>
+          &middot; <strong style="color: #c0392b;">{{ total_deregistered }} deregistered</strong>
         {% endif %}
     </p>
 </section>
@@ -45,11 +45,11 @@
                 {% if p.total == 0 %}
                   <span style="color: #888;">—</span>
                 {% elif p.active == p.total %}
-                  <span style="color: #2e7d32;">{{ p.active }}/{{ p.total }} active</span>
+                  <span style="color: #2e7d32;">{{ p.active }}/{{ p.total }} registered</span>
                 {% else %}
                   <span style="color: #c0392b;">
-                    {{ p.active }}/{{ p.total }} active &middot;
-                    {{ p.deregistered_hotkeys | length }} ketendang
+                    {{ p.active }}/{{ p.total }} registered &middot;
+                    {{ p.deregistered_hotkeys | length }} deregistered
                   </span>
                 {% endif %}
             </td>

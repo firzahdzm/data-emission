@@ -53,7 +53,15 @@ sudo chmod 600 /opt/emission-tracker/.env
 sudo chown emission:emission /opt/emission-tracker/.env
 ```
 
-`config.yaml` already lives in the repo with the team roster; edit if you need to change members.
+Create the runtime config from the example template:
+
+```bash
+sudo -u emission cp /opt/emission-tracker/config.example.yaml /opt/emission-tracker/config.yaml
+sudo -u emission nano /opt/emission-tracker/config.yaml   # add the real team roster
+sudo chmod 640 /opt/emission-tracker/config.yaml
+```
+
+`config.yaml` is gitignored; team rosters never enter the public repo. Transfer your real roster from a trusted source (your laptop, password manager) — not from a public channel.
 
 ## 6. Install systemd unit
 

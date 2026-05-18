@@ -9,7 +9,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env             # isi TAOSTATS_API_KEY
-# config.yaml sudah di-seed dengan team roster — edit kalau perlu ganti anggota
+cp config.example.yaml config.yaml  # edit team roster sesuai anggota kamu
 ```
 
 ## Run
@@ -60,7 +60,7 @@ pytest -v
 - `TAOSTATS_API_KEY` — required. Dapatkan dari <https://taostats.io/pro/>.
 - `LOG_LEVEL` — optional, default INFO. Set `DEBUG` untuk verbose logging.
 
-### `config.yaml` (committed — hotkey adalah data publik on-chain)
+### `config.yaml` (NOT committed — copy from `config.example.yaml` and fill in team)
 - `subnet_id`: 56 (Gradient).
 - `polling.interval_minutes`: default 72 (~1 tempo Bittensor).
 - `polling.request_interval_seconds`: default 15 (~4 req/menit, aman di bawah cap 5/menit).

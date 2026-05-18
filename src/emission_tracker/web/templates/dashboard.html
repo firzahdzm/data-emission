@@ -38,35 +38,86 @@
     </p>
 </section>
 
-<table>
+<table id="dashboard-table" data-sort-col="2" data-sort-dir="desc">
     <thead>
         <tr>
-            <th>Hotkey</th>
-            <th>Name</th>
-            <th>Akumulasi</th>
-            <th>Status</th>
-            <th>Last Refresh</th>
+            <th data-type="string">Hotkey <span class="sort-indicator"></span></th>
+            <th data-type="string">Name <span class="sort-indicator"></span></th>
+            <th data-type="number">Akumulasi <span class="sort-indicator"></span></th>
+            <th data-type="string">Status <span class="sort-indicator"></span></th>
+            <th data-type="string">Last Refresh <span class="sort-indicator"></span></th>
         </tr>
     </thead>
     <tbody>
         {% for r in rows %}
         <tr {% if r.is_registered == 0 %}style="background-color: #fff4e6;"{% endif %}>
-            <td>
+            <td data-sort="{{ r.hotkey }}">
                 <code title="{{ r.hotkey }}">{{ r.hotkey[:8] }}…{{ r.hotkey[-4:] }}</code>
             </td>
-            <td><a href="/person/{{ r.name }}{% if active_range %}?range={{ active_range }}{% endif %}">{{ r.name }}</a></td>
-            <td>{{ r.cumulative | alpha }}</td>
-            <td>
+            <td data-sort="{{ r.name }}"><a href="/person/{{ r.name }}{% if active_range %}?range={{ active_range }}{% endif %}">{{ r.name }}</a></td>
+            <td data-sort="{{ r.cumulative }}">{{ r.cumulative | alpha }}</td>
+            <td data-sort="{{ 'registered' if r.is_registered else 'deregistered' }}">
                 {% if r.is_registered == 1 %}
                   <span style="color: #2e7d32;">registered</span>
                 {% else %}
                   <span style="color: #c0392b; font-weight: bold;">deregistered</span>
                 {% endif %}
             </td>
-            <td>{{ r.last_refresh | dt_s if r.last_refresh else "—" }}</td>
+            <td data-sort="{{ r.last_refresh or '' }}">{{ r.last_refresh | dt_s if r.last_refresh else "—" }}</td>
         </tr>
         {% endfor %}
     </tbody>
 </table>
+
+<script>
+(function() {
+    const table = document.getElementById('dashboard-table');
+    if (!table) return;
+    const headers = Array.from(table.querySelectorAll('thead th'));
+
+    function applyIndicators(colIdx, dir) {
+        headers.forEach((h, i) => {
+            const ind = h.querySelector('.sort-indicator');
+            if (!ind) return;
+            ind.textContent = (i === colIdx) ? (dir === 'desc' ? '▼' : '▲') : '';
+        });
+    }
+
+    function sortBy(colIdx) {
+        const currentCol = parseInt(table.dataset.sortCol, 10);
+        const currentDir = table.dataset.sortDir;
+        const newDir = (currentCol === colIdx && currentDir === 'desc') ? 'asc' : 'desc';
+        table.dataset.sortCol = colIdx;
+        table.dataset.sortDir = newDir;
+
+        const type = headers[colIdx].dataset.type || 'string';
+        const tbody = table.querySelector('tbody');
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+
+        rows.sort((a, b) => {
+            const av = a.children[colIdx].dataset.sort || '';
+            const bv = b.children[colIdx].dataset.sort || '';
+            let cmp;
+            if (type === 'number') {
+                cmp = (parseFloat(av) || 0) - (parseFloat(bv) || 0);
+            } else {
+                cmp = av.localeCompare(bv);
+            }
+            return newDir === 'desc' ? -cmp : cmp;
+        });
+        rows.forEach(r => tbody.appendChild(r));
+        applyIndicators(colIdx, newDir);
+    }
+
+    headers.forEach((th, idx) => {
+        th.style.cursor = 'pointer';
+        th.style.userSelect = 'none';
+        th.addEventListener('click', () => sortBy(idx));
+    });
+
+    // Initial indicator reflects server-side default (sort by Akumulasi desc)
+    applyIndicators(parseInt(table.dataset.sortCol, 10), table.dataset.sortDir);
+})();
+</script>
 
 {% endblock %}

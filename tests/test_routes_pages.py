@@ -52,6 +52,42 @@ def test_dashboard_renders_with_person_row(app):
     assert "1.5000 α" in resp.text
 
 
+def test_dashboard_per_hotkey_rows_and_status(app):
+    """New dashboard renders one row per hotkey with truncated address + status."""
+    client = TestClient(app)
+    resp = client.get("/")
+    # Per-hotkey amounts
+    assert "1.0000 α" in resp.text  # HK_F1 row
+    assert "0.5000 α" in resp.text  # HK_F2 row
+    # Both rows currently registered
+    assert "registered" in resp.text
+    # Hotkey address shown truncated (first 8 chars must appear)
+    assert HK_F1[:8] in resp.text
+    assert HK_F2[:8] in resp.text
+
+
+def test_dashboard_accepts_date_inputs(app):
+    """from/to query params should be parsed and applied as the range."""
+    client = TestClient(app)
+    # 2026-05-17 ≤ taken_at < 2026-05-18 covers the seeded snapshot
+    resp = client.get("/?from=2026-05-17&to=2026-05-18")
+    assert resp.status_code == 200
+    assert "1.5000 α" in resp.text
+    # Period header should reflect the requested dates (in WIB display)
+    assert "2026-05-17" in resp.text
+    # Date inputs in the form should be pre-filled with the requested values
+    assert 'value="2026-05-17"' in resp.text
+    assert 'value="2026-05-18"' in resp.text
+
+
+def test_dashboard_empty_range_yields_zero(app):
+    """A date range with no snapshots should render 0 α without crashing."""
+    client = TestClient(app)
+    resp = client.get("/?from=2020-01-01&to=2020-01-02")
+    assert resp.status_code == 200
+    assert "0.0000 α" in resp.text
+
+
 def test_dashboard_with_range_preset(app):
     client = TestClient(app)
     resp = client.get("/?range=7d")

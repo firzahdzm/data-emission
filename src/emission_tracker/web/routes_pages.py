@@ -82,37 +82,36 @@ def register_pages(app: FastAPI) -> None:
     @app.get("/", response_class=HTMLResponse)
     def dashboard(
         request: Request,
-        range: str | None = Query(default="all"),
+        range: str | None = Query(default=None),
         from_: str | None = Query(default=None, alias="from"),
         to: str | None = Query(default=None),
     ):
-        from_dt, to_dt = _range(range, from_, to)
+        # Default to "all" only if neither preset nor explicit dates are given
+        effective_preset = range
+        if range is None and from_ is None and to is None:
+            effective_preset = "all"
+        from_dt, to_dt = _range(effective_preset, from_, to)
         conn = _db(request)
-        persons = queries.dashboard_summary(conn, from_dt=from_dt, to_dt=to_dt)
-        status_map = queries.current_registration_status(conn)
-        # Merge status into each person row
-        for p in persons:
-            s = status_map.get(p["name"], {"active": 0, "total": 0, "deregistered_hotkeys": []})
-            p["active"] = s["active"]
-            p["total"] = s["total"]
-            p["deregistered_hotkeys"] = s["deregistered_hotkeys"]
-        total_cumulative = sum(p["cumulative"] for p in persons)
-        total_active = sum(p["active"] for p in persons)
-        total_hotkeys = sum(p["total"] for p in persons)
-        total_deregistered = total_hotkeys - total_active
+        rows = queries.dashboard_hotkey_summary(conn, from_dt=from_dt, to_dt=to_dt)
+        total_cumulative = sum(r["cumulative"] for r in rows)
+        total_registered = sum(1 for r in rows if r["is_registered"])
+        total_hotkeys = len(rows)
+        total_deregistered = total_hotkeys - total_registered
         latest = queries.latest_snapshot(conn)
         return templates.TemplateResponse(
             request,
             "dashboard.html",
             {
-                "persons": persons,
+                "rows": rows,
                 "total_cumulative": total_cumulative,
-                "total_active": total_active,
+                "total_registered": total_registered,
                 "total_hotkeys": total_hotkeys,
                 "total_deregistered": total_deregistered,
                 "from_dt": from_dt,
                 "to_dt": to_dt,
-                "active_range": range or "all",
+                "from_input": from_ or "",
+                "to_input": to or "",
+                "active_range": effective_preset if (from_ is None and to is None) else "",
                 "latest": latest,
             },
         )

@@ -97,6 +97,82 @@ def latest_snapshot(conn: sqlite3.Connection) -> dict | None:
     return dict(row) if row else None
 
 
+def dashboard_hotkey_summary(
+    conn: sqlite3.Connection,
+    from_dt: datetime,
+    to_dt: datetime,
+) -> list[dict]:
+    """Per-hotkey summary for the dashboard.
+
+    Each row:
+        hotkey:        ss58 address
+        name:          person owning the hotkey
+        cumulative:    SUM(emission) in [from_dt, to_dt) over ok/partial snapshots
+        is_registered: 1 if registered in the latest successful snapshot, else 0
+                       (0 also when the hotkey has no row in the latest snapshot at all)
+        last_refresh:  ISO timestamp string of the most recent ok/partial snapshot
+                       where this hotkey appeared; None if never seen
+
+    Ordered by cumulative DESC, name ASC, hotkey ASC.
+    """
+    # 1. Cumulative per hotkey in range
+    range_rows = conn.execute(
+        """
+        SELECT h.ss58 AS hotkey,
+               p.name,
+               COALESCE(SUM(ns.emission), 0) AS cumulative
+        FROM hotkeys h
+        JOIN persons p ON p.id = h.person_id
+        LEFT JOIN (
+            neuron_snapshots ns
+            JOIN snapshots s ON s.id = ns.snapshot_id
+                             AND s.status IN ('ok', 'partial')
+                             AND s.taken_at >= ?
+                             AND s.taken_at <  ?
+        ) ON ns.hotkey_ss58 = h.ss58
+        GROUP BY h.ss58, p.name
+        ORDER BY cumulative DESC, p.name ASC, h.ss58 ASC
+        """,
+        (from_dt, to_dt),
+    ).fetchall()
+
+    rows = [dict(r) for r in range_rows]
+
+    # 2. Latest snapshot id for status lookup
+    latest = conn.execute(
+        "SELECT id FROM snapshots WHERE status IN ('ok', 'partial') "
+        "ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    latest_id = latest["id"] if latest else None
+
+    status_map: dict[str, int] = {}
+    if latest_id is not None:
+        status_rows = conn.execute(
+            "SELECT hotkey_ss58, is_registered FROM neuron_snapshots "
+            "WHERE snapshot_id = ?",
+            (latest_id,),
+        ).fetchall()
+        status_map = {r["hotkey_ss58"]: r["is_registered"] for r in status_rows}
+
+    # 3. Last refresh time per hotkey
+    refresh_rows = conn.execute(
+        """
+        SELECT ns.hotkey_ss58, MAX(CAST(s.taken_at AS TEXT)) AS last_refresh
+        FROM neuron_snapshots ns
+        JOIN snapshots s ON s.id = ns.snapshot_id
+        WHERE s.status IN ('ok', 'partial')
+        GROUP BY ns.hotkey_ss58
+        """
+    ).fetchall()
+    refresh_map = {r["hotkey_ss58"]: r["last_refresh"] for r in refresh_rows}
+
+    for r in rows:
+        r["is_registered"] = int(status_map.get(r["hotkey"], 0))
+        r["last_refresh"] = refresh_map.get(r["hotkey"])
+
+    return rows
+
+
 def current_registration_status(conn: sqlite3.Connection) -> dict[str, dict]:
     """Per-person registration status from the latest successful snapshot.
 

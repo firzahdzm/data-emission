@@ -7,6 +7,7 @@ from emission_tracker.config import PersonConfig
 from emission_tracker.db import init_schema, sync_team
 from emission_tracker.web.queries import (
     current_registration_status,
+    dashboard_hotkey_summary,
     dashboard_summary,
     hotkey_series,
     latest_snapshot,
@@ -173,3 +174,82 @@ def test_current_registration_status_no_snapshots_yet(memory_db: sqlite3.Connect
     assert status["X"]["active"] == 0
     assert status["X"]["total"] == 1
     assert status["X"]["deregistered_hotkeys"] == [HK_F1]
+
+
+def test_dashboard_hotkey_summary_all_time(seeded_db: sqlite3.Connection):
+    rows = dashboard_hotkey_summary(
+        seeded_db,
+        from_dt=datetime(2000, 1, 1, tzinfo=timezone.utc),
+        to_dt=datetime(2100, 1, 1, tzinfo=timezone.utc),
+    )
+    # 3 hotkeys total (HK_F1, HK_F2, HK_I1)
+    assert len(rows) == 3
+
+    by_hk = {r["hotkey"]: r for r in rows}
+    # Cumulatives: F1=6.0 (1+2+3), F2=1.5 (0.5*3), I1=0.6 (0.1+0.2+0.3)
+    assert by_hk[HK_F1]["cumulative"] == pytest.approx(6.0)
+    assert by_hk[HK_F1]["name"] == "Alice"
+    assert by_hk[HK_F1]["is_registered"] == 1
+    assert by_hk[HK_F2]["cumulative"] == pytest.approx(1.5)
+    assert by_hk[HK_I1]["cumulative"] == pytest.approx(0.6)
+
+    # Order: cumulative DESC
+    assert rows[0]["hotkey"] == HK_F1   # 6.0
+    assert rows[1]["hotkey"] == HK_F2   # 1.5
+    assert rows[2]["hotkey"] == HK_I1   # 0.6
+
+    # last_refresh: all hotkeys were in snapshot 3 → taken_at of snapshot 3
+    expected_last = "2026-05-17 14:24:00+00:00"  # base + 144 min
+    assert rows[0]["last_refresh"].startswith("2026-05-17 14:24:")
+
+
+def test_dashboard_hotkey_summary_range_filter(seeded_db: sqlite3.Connection):
+    # Only snapshots 2 and 3 in range
+    rows = dashboard_hotkey_summary(
+        seeded_db,
+        from_dt=datetime(2026, 5, 17, 13, 0, tzinfo=timezone.utc),
+        to_dt=datetime(2026, 5, 17, 15, 0, tzinfo=timezone.utc),
+    )
+    by_hk = {r["hotkey"]: r for r in rows}
+    assert by_hk[HK_F1]["cumulative"] == pytest.approx(5.0)  # 2+3
+    assert by_hk[HK_F2]["cumulative"] == pytest.approx(1.0)  # 0.5+0.5
+    assert by_hk[HK_I1]["cumulative"] == pytest.approx(0.5)  # 0.2+0.3
+
+
+def test_dashboard_hotkey_summary_detects_deregistered_in_latest(
+    seeded_db: sqlite3.Connection,
+):
+    # Mark HK_F2 deregistered in latest snapshot (id=3)
+    seeded_db.execute(
+        "UPDATE neuron_snapshots SET is_registered = 0, uid = NULL, emission = NULL "
+        "WHERE hotkey_ss58 = ? AND snapshot_id = 3",
+        (HK_F2,),
+    )
+    seeded_db.commit()
+    rows = dashboard_hotkey_summary(
+        seeded_db,
+        from_dt=datetime(2000, 1, 1, tzinfo=timezone.utc),
+        to_dt=datetime(2100, 1, 1, tzinfo=timezone.utc),
+    )
+    by_hk = {r["hotkey"]: r for r in rows}
+    assert by_hk[HK_F2]["is_registered"] == 0
+    assert by_hk[HK_F1]["is_registered"] == 1
+
+
+def test_dashboard_hotkey_summary_no_snapshots_yet(memory_db: sqlite3.Connection):
+    init_schema(memory_db)
+    sync_team(
+        memory_db,
+        [PersonConfig(name="A", hotkeys=[HK_F1, HK_F2])],
+        subnet_id=56,
+    )
+    rows = dashboard_hotkey_summary(
+        memory_db,
+        from_dt=datetime(2000, 1, 1, tzinfo=timezone.utc),
+        to_dt=datetime(2100, 1, 1, tzinfo=timezone.utc),
+    )
+    assert len(rows) == 2
+    for r in rows:
+        assert r["cumulative"] == 0
+        assert r["is_registered"] == 0
+        assert r["last_refresh"] is None

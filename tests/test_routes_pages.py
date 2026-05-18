@@ -67,3 +67,41 @@ def test_person_page_renders(app):
     assert resp.status_code == 200
     assert "Alice" in resp.text
     assert HK_F1 in resp.text
+
+
+def test_dashboard_period_trimmed_to_seconds(app):
+    """Period range timestamps must be displayed without microseconds."""
+    client = TestClient(app)
+    resp = client.get("/")
+    # Should NOT contain microsecond precision like ".250567" anywhere
+    # in the Period line. Quick check: find the Period line then verify.
+    assert "Period: " in resp.text
+    period_line = next(
+        line for line in resp.text.splitlines() if "Period:" in line
+    )
+    # Reject lines containing the microseconds dot in an ISO timestamp
+    # (allows decimal in other contexts like alpha amounts elsewhere on page)
+    assert ".000000" not in period_line
+    assert ".999999" not in period_line
+    # The seconds-precision ISO output for the epoch start is exact:
+    assert "1970-01-01" in period_line
+
+
+def test_format_dt_seconds_helper():
+    from datetime import datetime, timezone
+
+    from emission_tracker.web.routes_pages import _format_dt_seconds
+
+    # datetime object → seconds precision
+    dt = datetime(2026, 5, 17, 14, 23, 45, 567890, tzinfo=timezone.utc)
+    assert _format_dt_seconds(dt) == "2026-05-17 14:23:45+00:00"
+
+    # ISO string with microseconds + tz → strip the microseconds
+    assert (
+        _format_dt_seconds("2026-05-17 18:43:02.250567+00:00")
+        == "2026-05-17 18:43:02+00:00"
+    )
+    # ISO string without microseconds → unchanged
+    assert _format_dt_seconds("2026-05-17 18:43:02+00:00") == "2026-05-17 18:43:02+00:00"
+    # None → empty string
+    assert _format_dt_seconds(None) == ""

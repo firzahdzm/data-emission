@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -13,9 +14,35 @@ from emission_tracker.web.range_parse import parse_range
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
-# Register Jinja2 filters: RAO → alpha conversion + format
+
+
+def _format_dt_seconds(value) -> str:
+    """Render a datetime or ISO-format string trimmed to seconds (drop microseconds).
+
+    Accepts datetime objects or strings like '2026-05-17 18:43:02.250567+00:00'
+    (the format SQLite returns via CAST AS TEXT).
+    """
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat(sep=" ", timespec="seconds")
+    s = str(value)
+    # ISO-ish strings: split on '.' (microseconds prefix), keep the tz suffix if any
+    if "." in s:
+        head, _dot, tail = s.partition(".")
+        # tail may look like "250567+00:00"; keep any timezone suffix
+        for tz_marker in ("+", "-", "Z"):
+            if tz_marker in tail:
+                idx = tail.index(tz_marker)
+                return f"{head}{tail[idx:]}"
+        return head
+    return s
+
+
+# Register Jinja2 filters: RAO → alpha conversion + format, datetime to seconds
 templates.env.filters["alpha"] = format_alpha
 templates.env.filters["to_alpha"] = rao_to_alpha
+templates.env.filters["dt_s"] = _format_dt_seconds
 
 
 def _db(request: Request) -> sqlite3.Connection:

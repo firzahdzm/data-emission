@@ -13,7 +13,7 @@
     <header>
         <h1>Gradient Emission Tracker</h1>
         {% if latest %}
-        <p>Last snapshot: {{ latest.taken_at }} (#{{ latest.id }}, {{ latest.status }})</p>
+        <p>Last snapshot: {{ latest.taken_at | dt_s }} (#{{ latest.id }}, {{ latest.status }})</p>
         {% else %}
         <p>No snapshots yet.</p>
         {% endif %}

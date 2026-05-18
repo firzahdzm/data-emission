@@ -15,7 +15,7 @@
             </select>
         </label>
     </form>
-    <p>Period: {{ from_dt.isoformat() }} → {{ to_dt.isoformat() }}</p>
+    <p>Period: {{ from_dt | dt_s }} → {{ to_dt | dt_s }}</p>
 </section>
 
 <section>

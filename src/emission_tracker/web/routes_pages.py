@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -15,28 +15,48 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+# Display timezone for the dashboard (Indonesia Western Time, WIB = UTC+7)
+DISPLAY_TZ = timezone(timedelta(hours=7))
+DISPLAY_TZ_LABEL = "WIB"
 
-def _format_dt_seconds(value) -> str:
-    """Render a datetime or ISO-format string trimmed to seconds (drop microseconds).
 
-    Accepts datetime objects or strings like '2026-05-17 18:43:02.250567+00:00'
-    (the format SQLite returns via CAST AS TEXT).
+def _to_datetime(value) -> datetime | None:
+    """Coerce value (datetime, ISO string, or None) to a tz-aware datetime.
+    Strings without tz info are assumed UTC.
     """
     if value is None:
-        return ""
+        return None
     if isinstance(value, datetime):
-        return value.isoformat(sep=" ", timespec="seconds")
-    s = str(value)
-    # ISO-ish strings: split on '.' (microseconds prefix), keep the tz suffix if any
-    if "." in s:
-        head, _dot, tail = s.partition(".")
-        # tail may look like "250567+00:00"; keep any timezone suffix
-        for tz_marker in ("+", "-", "Z"):
-            if tz_marker in tail:
-                idx = tail.index(tz_marker)
-                return f"{head}{tail[idx:]}"
-        return head
-    return s
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    s = str(value).strip()
+    if not s:
+        return None
+    # SQLite TEXT timestamps may use space separator and ".microseconds"
+    # datetime.fromisoformat (Py3.11+) handles both 'T' and ' ', + tz, + microseconds
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _format_dt_seconds(value) -> str:
+    """Render a datetime/ISO string in WIB (UTC+7), trimmed to seconds.
+
+    Accepts:
+      - datetime objects (tz-aware preferred; naive assumed UTC)
+      - ISO strings like '2026-05-17 18:43:02.250567+00:00' (SQLite CAST AS TEXT)
+      - None → ''
+
+    Output format: '2026-05-18 01:43:02 WIB'
+    """
+    dt = _to_datetime(value)
+    if dt is None:
+        return ""
+    local = dt.astimezone(DISPLAY_TZ).replace(microsecond=0)
+    return f"{local.strftime('%Y-%m-%d %H:%M:%S')} {DISPLAY_TZ_LABEL}"
 
 
 # Register Jinja2 filters: RAO → alpha conversion + format, datetime to seconds

@@ -123,6 +123,7 @@ def register_pages(app: FastAPI) -> None:
                 "to_input": to or "",
                 "active_range": effective_preset if (from_ is None and to is None) else "",
                 "latest": latest,
+                "active_page": "dashboard",
             },
         )
 
@@ -139,5 +140,6 @@ def register_pages(app: FastAPI) -> None:
                 "rows": table["rows"],
                 "limit": limit,
                 "latest": latest,
+                "active_page": "captures",
             },
         )

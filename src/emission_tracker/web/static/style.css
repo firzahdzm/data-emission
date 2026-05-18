@@ -1,3 +1,193 @@
-main { max-width: 1000px; margin: 0 auto; padding: 1rem; }
-table { width: 100%; }
+/* ---- Layout ---- */
+main {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 1.5rem 1rem 3rem;
+}
+
+main > header {
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+}
+main > header h1 {
+    margin: 0;
+    font-size: 1.6rem;
+    letter-spacing: -0.02em;
+}
+main > header .subtitle {
+    color: var(--pico-muted-color);
+    margin: 0.15rem 0 0.6rem;
+    font-size: 0.95rem;
+}
+main > header .last-snap {
+    color: var(--pico-muted-color);
+    font-size: 0.875rem;
+    margin: 0.25rem 0 0;
+}
+
+/* ---- Nav ---- */
+main > header nav {
+    display: flex;
+    gap: 0.25rem;
+    margin: 0.5rem 0;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+    padding-bottom: 0;
+}
+main > header nav a {
+    padding: 0.4rem 0.85rem;
+    text-decoration: none;
+    color: var(--pico-muted-color);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+main > header nav a:hover {
+    color: var(--pico-color);
+}
+main > header nav a.active {
+    color: var(--pico-primary);
+    border-bottom-color: var(--pico-primary);
+}
+
+/* ---- Cards / sections ---- */
+section.panel {
+    background: var(--pico-card-background-color);
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: var(--pico-border-radius);
+    padding: 1rem 1.25rem;
+    margin: 0 0 1.25rem;
+}
+section.panel > h3:first-child,
+section.panel > header:first-child {
+    margin-top: 0;
+    margin-bottom: 0.75rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--pico-muted-color);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+/* ---- KPI grid ---- */
+.kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.85rem;
+    margin: 0 0 1.5rem;
+}
+.kpi-card {
+    background: var(--pico-card-background-color);
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: var(--pico-border-radius);
+    padding: 0.9rem 1.1rem;
+    margin: 0;
+}
+.kpi-card .kpi-label {
+    display: block;
+    color: var(--pico-muted-color);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 0.25rem;
+}
+.kpi-card .kpi-value {
+    font-size: 1.6rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+}
+.kpi-card .kpi-sub {
+    color: var(--pico-muted-color);
+    font-size: 0.8rem;
+    margin-top: 0.15rem;
+}
+.kpi-card.kpi-warn .kpi-value { color: var(--pico-del-color, #c0392b); }
+.kpi-card.kpi-ok .kpi-value   { color: var(--pico-ins-color, #2e7d32); }
+
+/* ---- Filter form ---- */
+form.filter-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1rem;
+    align-items: end;
+    margin: 0;
+}
+form.filter-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    font-size: 0.8rem;
+    color: var(--pico-muted-color);
+    margin: 0;
+}
+form.filter-form input,
+form.filter-form select {
+    margin: 0;
+}
+form.filter-form button {
+    margin: 0;
+}
+.filter-period {
+    color: var(--pico-muted-color);
+    font-size: 0.825rem;
+    margin: 0.75rem 0 0;
+}
+
+/* ---- Tables ---- */
+table {
+    width: 100%;
+    margin: 0;
+}
+th {
+    font-weight: 600;
+    font-size: 0.85rem;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--pico-muted-color);
+}
+tbody tr:hover {
+    background: var(--pico-card-sectionning-background-color, var(--pico-card-background-color));
+}
+td.num, th.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+code.hotkey-pill {
+    font-size: 0.78rem;
+}
+
+/* ---- Status badges ---- */
+.badge {
+    display: inline-block;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    line-height: 1.4;
+    border: 1px solid currentColor;
+    background: transparent;
+}
+.badge-ok {
+    color: var(--pico-ins-color, #2e7d32);
+}
+.badge-warn {
+    color: var(--pico-del-color, #c0392b);
+    background: color-mix(in srgb, var(--pico-del-color, #c0392b) 8%, transparent);
+}
+
+/* ---- Row highlights ---- */
+tr.row-warn {
+    background: color-mix(in srgb, var(--pico-del-color, #c0392b) 5%, transparent);
+}
+tr.row-warn:hover {
+    background: color-mix(in srgb, var(--pico-del-color, #c0392b) 9%, transparent);
+}
+
+/* ---- Misc ---- */
 canvas { margin: 1rem 0; }
+small.muted, .text-muted { color: var(--pico-muted-color); }
+.text-mono { font-family: var(--pico-font-family-monospace); }

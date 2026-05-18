@@ -1,10 +1,29 @@
 {% extends "base.html" %}
 {% block content %}
 
-<section>
-    <form method="get" action="/" style="display: flex; flex-wrap: wrap; gap: 1rem; align-items: end;">
+<div class="kpi-grid">
+    <article class="kpi-card">
+        <span class="kpi-label">Accumulated</span>
+        <div class="kpi-value">{{ total_cumulative | alpha }}</div>
+        <div class="kpi-sub">in selected range</div>
+    </article>
+    <article class="kpi-card kpi-ok">
+        <span class="kpi-label">Registered</span>
+        <div class="kpi-value">{{ total_registered }}/{{ total_hotkeys }}</div>
+        <div class="kpi-sub">hotkeys in latest snapshot</div>
+    </article>
+    <article class="kpi-card {% if total_deregistered > 0 %}kpi-warn{% endif %}">
+        <span class="kpi-label">Deregistered</span>
+        <div class="kpi-value">{{ total_deregistered }}</div>
+        <div class="kpi-sub">currently kicked from subnet</div>
+    </article>
+</div>
+
+<section class="panel">
+    <header>Filter</header>
+    <form method="get" action="/" class="filter-form">
         <label>
-            Preset:
+            Preset
             <select name="range" onchange="document.getElementById('from-input').value=''; document.getElementById('to-input').value=''; this.form.submit()">
                 <option value="" {% if not active_range %}selected{% endif %}>— custom —</option>
                 <option value="all" {% if active_range == "all" %}selected{% endif %}>All time</option>
@@ -16,58 +35,53 @@
             </select>
         </label>
         <label>
-            From:
+            From
             <input id="from-input" type="date" name="from" value="{{ from_input }}">
         </label>
         <label>
-            To:
+            To
             <input id="to-input" type="date" name="to" value="{{ to_input }}">
         </label>
         <button type="submit">Apply</button>
     </form>
-    <p>Period: {{ from_dt | dt_s }} → {{ to_dt | dt_s }}</p>
+    <p class="filter-period">Period: {{ from_dt | dt_s }} → {{ to_dt | dt_s }}</p>
 </section>
 
-<section>
-    <h2>Akumulasi: {{ total_cumulative | alpha }}</h2>
-    <p>
-        Registered: <strong>{{ total_registered }}/{{ total_hotkeys }}</strong> hotkeys
-        {% if total_deregistered > 0 %}
-          &middot; <strong style="color: #c0392b;">{{ total_deregistered }} deregistered</strong>
-        {% endif %}
-    </p>
+<section class="panel">
+    <header>Hotkey detail</header>
+    <table id="dashboard-table" data-sort-col="2" data-sort-dir="desc">
+        <thead>
+            <tr>
+                <th data-type="string">Hotkey <span class="sort-indicator"></span></th>
+                <th data-type="string">Name <span class="sort-indicator"></span></th>
+                <th data-type="number" class="num">Accumulated <span class="sort-indicator"></span></th>
+                <th data-type="string">Status <span class="sort-indicator"></span></th>
+                <th data-type="string">Last refresh <span class="sort-indicator"></span></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in rows %}
+            <tr {% if r.is_registered == 0 %}class="row-warn"{% endif %}>
+                <td data-sort="{{ r.hotkey }}">
+                    <code class="hotkey-pill" title="{{ r.hotkey }}">{{ r.hotkey[:8] }}…{{ r.hotkey[-4:] }}</code>
+                </td>
+                <td data-sort="{{ r.name }}">{{ r.name }}</td>
+                <td data-sort="{{ r.cumulative }}" class="num text-mono">{{ r.cumulative | alpha }}</td>
+                <td data-sort="{{ 'registered' if r.is_registered else 'deregistered' }}">
+                    {% if r.is_registered == 1 %}
+                      <span class="badge badge-ok">registered</span>
+                    {% else %}
+                      <span class="badge badge-warn">deregistered</span>
+                    {% endif %}
+                </td>
+                <td data-sort="{{ r.last_refresh or '' }}" class="text-muted">
+                    {{ r.last_refresh | dt_s if r.last_refresh else "—" }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
 </section>
-
-<table id="dashboard-table" data-sort-col="2" data-sort-dir="desc">
-    <thead>
-        <tr>
-            <th data-type="string">Hotkey <span class="sort-indicator"></span></th>
-            <th data-type="string">Name <span class="sort-indicator"></span></th>
-            <th data-type="number">Akumulasi <span class="sort-indicator"></span></th>
-            <th data-type="string">Status <span class="sort-indicator"></span></th>
-            <th data-type="string">Last Refresh <span class="sort-indicator"></span></th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for r in rows %}
-        <tr {% if r.is_registered == 0 %}style="background-color: #fff4e6;"{% endif %}>
-            <td data-sort="{{ r.hotkey }}">
-                <code title="{{ r.hotkey }}">{{ r.hotkey[:8] }}…{{ r.hotkey[-4:] }}</code>
-            </td>
-            <td data-sort="{{ r.name }}">{{ r.name }}</td>
-            <td data-sort="{{ r.cumulative }}">{{ r.cumulative | alpha }}</td>
-            <td data-sort="{{ 'registered' if r.is_registered else 'deregistered' }}">
-                {% if r.is_registered == 1 %}
-                  <span style="color: #2e7d32;">registered</span>
-                {% else %}
-                  <span style="color: #c0392b; font-weight: bold;">deregistered</span>
-                {% endif %}
-            </td>
-            <td data-sort="{{ r.last_refresh or '' }}">{{ r.last_refresh | dt_s if r.last_refresh else "—" }}</td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
 
 <script>
 (function() {
@@ -79,7 +93,7 @@
         headers.forEach((h, i) => {
             const ind = h.querySelector('.sort-indicator');
             if (!ind) return;
-            ind.textContent = (i === colIdx) ? (dir === 'desc' ? '▼' : '▲') : '';
+            ind.textContent = (i === colIdx) ? (dir === 'desc' ? ' ▼' : ' ▲') : '';
         });
     }
 
@@ -115,7 +129,6 @@
         th.addEventListener('click', () => sortBy(idx));
     });
 
-    // Initial indicator reflects server-side default (sort by Akumulasi desc)
     applyIndicators(parseInt(table.dataset.sortCol, 10), table.dataset.sortDir);
 })();
 </script>

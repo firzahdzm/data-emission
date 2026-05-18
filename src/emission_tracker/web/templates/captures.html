@@ -1,67 +1,69 @@
 {% extends "base.html" %}
 {% block content %}
 
-<section>
-    <h2>Emission Captures (last {{ limit }} snapshots)</h2>
-    <p>
-        Scroll horizontally to see all snapshots. Hotkey & name columns stay fixed.
+<section class="panel">
+    <header>Emission captures</header>
+    <p class="text-muted" style="margin: 0 0 0.75rem; font-size: 0.875rem;">
+        Wide-format history. Hotkey &amp; name columns stay fixed while you scroll horizontally.
+        Cells are <strong class="text-mono">emission in α</strong> per snapshot.
+        Deregistered = <span class="badge badge-warn">×</span>, missing = —.
     </p>
-    <form method="get" action="/captures" style="display: flex; gap: 1rem; align-items: end;">
+    <form method="get" action="/captures" class="filter-form">
         <label>
-            Last N captures:
-            <input type="number" name="limit" value="{{ limit }}" min="1" max="200" style="width: 80px;">
+            Last N captures
+            <input type="number" name="limit" value="{{ limit }}" min="1" max="200" style="width: 100px;">
         </label>
         <button type="submit">Apply</button>
     </form>
 </section>
 
 {% if snapshots %}
-<div class="captures-container">
-    <table class="captures-table">
-        <thead>
-            <tr>
-                <th class="sticky-col col-hotkey">Hotkey</th>
-                <th class="sticky-col col-name">Name</th>
-                {% for s in snapshots %}
-                <th class="time-col" title="{{ s.taken_at | dt_s }}">{{ s.taken_at | dt_short }}</th>
+<section class="panel" style="padding: 0; overflow: hidden;">
+    <div class="captures-container">
+        <table class="captures-table">
+            <thead>
+                <tr>
+                    <th class="sticky-col col-hotkey">Hotkey</th>
+                    <th class="sticky-col col-name">Name</th>
+                    {% for s in snapshots %}
+                    <th class="time-col" title="{{ s.taken_at | dt_s }}">{{ s.taken_at | dt_short }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in rows %}
+                <tr>
+                    <td class="sticky-col col-hotkey">
+                        <code class="hotkey-pill" title="{{ r.hotkey }}">{{ r.hotkey[:8] }}…{{ r.hotkey[-4:] }}</code>
+                    </td>
+                    <td class="sticky-col col-name">{{ r.name }}</td>
+                    {% for c in r.cells %}
+                    <td class="cell">
+                        {% if c is none %}
+                          <span class="missing">—</span>
+                        {% elif c.is_registered == 0 %}
+                          <span class="deregistered" title="deregistered">×</span>
+                        {% else %}
+                          {{ c.emission | alpha }}
+                        {% endif %}
+                    </td>
+                    {% endfor %}
+                </tr>
                 {% endfor %}
-            </tr>
-        </thead>
-        <tbody>
-            {% for r in rows %}
-            <tr>
-                <td class="sticky-col col-hotkey">
-                    <code title="{{ r.hotkey }}">{{ r.hotkey[:8] }}…{{ r.hotkey[-4:] }}</code>
-                </td>
-                <td class="sticky-col col-name">{{ r.name }}</td>
-                {% for c in r.cells %}
-                <td class="cell">
-                    {% if c is none %}
-                      <span class="missing">—</span>
-                    {% elif c.is_registered == 0 %}
-                      <span class="deregistered" title="deregistered">×</span>
-                    {% else %}
-                      {{ c.emission | alpha }}
-                    {% endif %}
-                </td>
-                {% endfor %}
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
+            </tbody>
+        </table>
+    </div>
+</section>
 {% else %}
-<p>No snapshots yet.</p>
+<section class="panel">
+    <p>No snapshots yet.</p>
+</section>
 {% endif %}
 
 <style>
-/* Use Pico CSS variables so the table follows light/dark theme.
-   Cells = page bg (blend in); headers = card bg (slight elevation). */
 .captures-container {
     overflow-x: auto;
     max-width: 100%;
-    border: 1px solid var(--pico-muted-border-color);
-    border-radius: var(--pico-border-radius);
 }
 .captures-table {
     border-collapse: separate;
@@ -71,48 +73,50 @@
     margin: 0;
 }
 .captures-table th, .captures-table td {
-    padding: 0.4rem 0.75rem;
+    padding: 0.45rem 0.85rem;
     border-bottom: 1px solid var(--pico-muted-border-color);
     border-right: 1px solid var(--pico-muted-border-color);
-    background: var(--pico-background-color);
+    background: var(--pico-card-background-color);
     color: var(--pico-color);
 }
 .captures-table thead th {
-    background: var(--pico-card-background-color);
     position: sticky;
     top: 0;
     z-index: 1;
     font-weight: 600;
-    color: var(--pico-color);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--pico-muted-color);
+    background: var(--pico-card-sectionning-background-color, var(--pico-card-background-color));
 }
 .sticky-col {
     position: sticky;
-    background: var(--pico-background-color);
     z-index: 2;
 }
-.col-hotkey { left: 0; min-width: 160px; }
+.col-hotkey { left: 0; min-width: 170px; }
 .col-name   {
-    left: 160px;
-    min-width: 110px;
+    left: 170px;
+    min-width: 120px;
     border-right: 2px solid var(--pico-muted-border-color) !important;
 }
-.captures-table thead th.sticky-col {
-    z-index: 3;
-    background: var(--pico-card-background-color);
-}
+.captures-table thead th.sticky-col { z-index: 3; }
 .time-col {
-    min-width: 90px;
+    min-width: 100px;
     font-family: var(--pico-font-family-monospace);
-    font-weight: 500;
 }
 .cell {
     font-family: var(--pico-font-family-monospace);
     text-align: right;
+    font-variant-numeric: tabular-nums;
 }
 .cell .missing { color: var(--pico-muted-color); }
 .cell .deregistered {
     color: var(--pico-del-color, #c0392b);
     font-weight: bold;
+}
+.captures-table tbody tr:hover td {
+    background: var(--pico-card-sectionning-background-color, var(--pico-secondary-background));
 }
 </style>
 

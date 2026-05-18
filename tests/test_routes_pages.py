@@ -101,8 +101,8 @@ def test_captures_page_renders(app):
     client = TestClient(app)
     resp = client.get("/captures")
     assert resp.status_code == 200
-    # Page title
-    assert "Emission Captures" in resp.text
+    # Page header (CSS upper-cases this, but raw HTML keeps casing as-is)
+    assert "Emission captures" in resp.text
     # Both hotkeys appear as truncated codes
     assert HK_F1[:8] in resp.text
     assert HK_F2[:8] in resp.text
@@ -115,7 +115,8 @@ def test_captures_page_limit_param(app):
     client = TestClient(app)
     resp = client.get("/captures?limit=5")
     assert resp.status_code == 200
-    assert "last 5 snapshots" in resp.text
+    # The numeric input echoes the limit
+    assert 'value="5"' in resp.text
 
 
 def test_dashboard_period_trimmed_to_seconds_in_wib(app):

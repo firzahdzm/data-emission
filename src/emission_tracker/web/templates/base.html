@@ -6,32 +6,30 @@
     <title>{% block title %}Gradient Emission Tracker{% endblock %}</title>
     <meta http-equiv="refresh" content="300">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css?v={{ asset_version() }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
 <main>
     <header>
         <div class="header-top">
-            <div class="header-title">
-                <h1>Gradient Emission Tracker</h1>
-                <p class="subtitle">Bittensor subnet 56 · team performance monitor</p>
-            </div>
-            <p class="last-snap">
-                {% if latest %}
-                Last snapshot:
-                <strong>{{ latest.taken_at | dt_s }}</strong>
-                <br>
-                snapshot #{{ latest.id }} · status <code>{{ latest.status }}</code>{% if latest.block_number %} · block {{ latest.block_number }}{% endif %}
-                {% else %}
-                No snapshots yet.
-                {% endif %}
-            </p>
+            <h1>Gradient Emission Tracker</h1>
+            <nav>
+                <a href="/" class="{% if active_page == 'dashboard' %}active{% endif %}">Dashboard</a>
+                <a href="/captures" class="{% if active_page == 'captures' %}active{% endif %}">Captures</a>
+            </nav>
         </div>
-        <nav>
-            <a href="/" class="{% if active_page == 'dashboard' %}active{% endif %}">Dashboard</a>
-            <a href="/captures" class="{% if active_page == 'captures' %}active{% endif %}">Captures</a>
-        </nav>
+        <p class="subtitle">Bittensor subnet 56 · team performance monitor</p>
+        <p class="last-snap">
+            {% if latest %}
+            Last snapshot:
+            <strong>{{ latest.taken_at | dt_s }}</strong>
+            · snapshot #{{ latest.id }}
+            · status <code>{{ latest.status }}</code>{% if latest.block_number %} · block {{ latest.block_number }}{% endif %}
+            {% else %}
+            No snapshots yet.
+            {% endif %}
+        </p>
     </header>
     {% block content %}{% endblock %}
 </main>

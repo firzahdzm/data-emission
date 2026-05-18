@@ -15,6 +15,18 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+
+def _asset_version() -> str:
+    """Cache-buster for /static assets — uses style.css mtime so the browser
+    fetches the new file when we edit CSS."""
+    try:
+        return str(int((STATIC_DIR / "style.css").stat().st_mtime))
+    except OSError:
+        return "0"
+
+
+templates.env.globals["asset_version"] = _asset_version
+
 # Display timezone for the dashboard (Indonesia Western Time, WIB = UTC+7)
 DISPLAY_TZ = timezone(timedelta(hours=7))
 DISPLAY_TZ_LABEL = "WIB"

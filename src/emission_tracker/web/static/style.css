@@ -7,20 +7,17 @@ main {
 
 main > header {
     margin-bottom: 1.5rem;
-    padding-bottom: 0;
+    padding-bottom: 1rem;
     border-bottom: 1px solid var(--pico-muted-border-color);
 }
-/* Top row: title block (left) + last snapshot (right) */
+/* Top row: title (left) + nav links (right), inline */
 main > header .header-top {
     display: flex;
     flex-wrap: wrap;
     justify-content: space-between;
-    align-items: flex-start;
+    align-items: center;
     gap: 0.5rem 1.5rem;
-    margin-bottom: 0.6rem;
-}
-main > header .header-title {
-    min-width: 0;
+    margin-bottom: 0.3rem;
 }
 main > header h1 {
     margin: 0;
@@ -30,14 +27,13 @@ main > header h1 {
 }
 main > header .subtitle {
     color: var(--pico-muted-color);
-    margin: 0.1rem 0 0;
+    margin: 0 0 0.4rem;
     font-size: 0.9rem;
 }
 main > header .last-snap {
     color: var(--pico-muted-color);
-    font-size: 0.82rem;
+    font-size: 0.825rem;
     margin: 0;
-    text-align: right;
     line-height: 1.5;
 }
 main > header .last-snap strong {
@@ -45,12 +41,13 @@ main > header .last-snap strong {
     font-weight: 600;
 }
 
-/* ---- Nav (left-aligned tabs) ---- */
+/* ---- Nav (inline with title, right-aligned, links side-by-side) ---- */
 main > header nav {
     display: flex;
-    justify-content: flex-start;
-    align-items: flex-end;
-    gap: 0;
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.25rem;
     margin: 0;
     padding: 0;
 }
@@ -58,18 +55,18 @@ main > header nav a {
     padding: 0.4rem 0.85rem;
     text-decoration: none;
     color: var(--pico-muted-color);
-    border-bottom: 2px solid transparent;
-    margin-bottom: -1px;
+    border-radius: var(--pico-border-radius);
     font-size: 0.875rem;
     font-weight: 500;
-    transition: color 0.15s;
+    transition: background 0.15s, color 0.15s;
 }
 main > header nav a:hover {
     color: var(--pico-color);
+    background: var(--pico-card-background-color);
 }
 main > header nav a.active {
     color: var(--pico-primary);
-    border-bottom-color: var(--pico-primary);
+    background: color-mix(in srgb, var(--pico-primary) 12%, transparent);
 }
 
 /* ---- Cards / sections ---- */

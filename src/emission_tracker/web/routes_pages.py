@@ -81,11 +81,31 @@ def _format_dt_short(value) -> str:
     return local.strftime("%m-%d %H:%M")
 
 
+def _format_idr(value) -> str:
+    """Format an integer rupiah amount as 'Rp 1.234.567' (Indonesian convention)."""
+    if value is None:
+        return "—"
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return "—"
+    sign = "-" if n < 0 else ""
+    s = str(abs(n))
+    # Insert thousand separators from the right
+    parts = []
+    while len(s) > 3:
+        parts.insert(0, s[-3:])
+        s = s[:-3]
+    parts.insert(0, s)
+    return f"{sign}Rp {'.'.join(parts)}"
+
+
 # Register Jinja2 filters: RAO → alpha conversion + format, datetime helpers
 templates.env.filters["alpha"] = format_alpha
 templates.env.filters["to_alpha"] = rao_to_alpha
 templates.env.filters["dt_s"] = _format_dt_seconds
 templates.env.filters["dt_short"] = _format_dt_short
+templates.env.filters["idr"] = _format_idr
 
 
 def _db(request: Request) -> sqlite3.Connection:
@@ -166,12 +186,33 @@ def register_pages(app: FastAPI) -> None:
         detail = queries.settlement_detail(conn, settlement_id)
         if detail is None:
             raise HTTPException(status_code=404, detail="Settlement not found")
+        # Aggregate per-person totals from the per-hotkey lines for the
+        # "Reward per orang" table. Sorted by reward desc.
+        per_person: dict[str, dict] = {}
+        for line in detail["lines"]:
+            bucket = per_person.setdefault(
+                line["person_name"],
+                {
+                    "name": line["person_name"],
+                    "cumulative_rao": 0,
+                    "personal_share_idr": 0,
+                    "reward_idr": 0,
+                },
+            )
+            bucket["cumulative_rao"] += line["cumulative_rao"]
+            bucket["personal_share_idr"] += line["personal_share_idr"]
+            bucket["reward_idr"] += line["reward_idr"]
+        persons_list = sorted(
+            per_person.values(),
+            key=lambda r: (-r["reward_idr"], -r["cumulative_rao"], r["name"]),
+        )
         latest = queries.latest_snapshot(conn)
         return templates.TemplateResponse(
             request,
             "archive_detail.html",
             {
                 "settlement": detail,
+                "persons": persons_list,
                 "latest": latest,
                 "active_page": "archive",
                 "is_admin": is_admin(request),

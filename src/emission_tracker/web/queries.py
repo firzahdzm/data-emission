@@ -13,12 +13,17 @@ def last_settlement_snapshot_id(conn: sqlite3.Connection) -> int:
     return row["settled_through_snapshot_id"] if row else 0
 
 
+_SETTLEMENT_COLS = (
+    "id, CAST(settled_at AS TEXT) AS settled_at, "
+    "settled_through_snapshot_id, note, total_cumulative_rao, "
+    "total_idr, base_salary_idr"
+)
+
+
 def last_settlement(conn: sqlite3.Connection) -> dict | None:
     """Most recent settlement row (None if no settlement has happened yet)."""
     row = conn.execute(
-        "SELECT id, CAST(settled_at AS TEXT) AS settled_at, "
-        "       settled_through_snapshot_id, note, total_cumulative_rao "
-        "FROM settlements ORDER BY id DESC LIMIT 1"
+        f"SELECT {_SETTLEMENT_COLS} FROM settlements ORDER BY id DESC LIMIT 1"
     ).fetchone()
     return dict(row) if row else None
 
@@ -26,37 +31,57 @@ def last_settlement(conn: sqlite3.Connection) -> dict | None:
 def list_settlements(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
     """Recent settlements, newest first."""
     cursor = conn.execute(
-        "SELECT id, CAST(settled_at AS TEXT) AS settled_at, "
-        "       settled_through_snapshot_id, note, total_cumulative_rao "
-        "FROM settlements ORDER BY id DESC LIMIT ?",
+        f"SELECT {_SETTLEMENT_COLS} FROM settlements ORDER BY id DESC LIMIT ?",
         (limit,),
     )
     return [dict(r) for r in cursor.fetchall()]
 
 
 def settlement_detail(conn: sqlite3.Connection, settlement_id: int) -> dict | None:
-    """One settlement plus its per-hotkey lines, or None if not found."""
+    """One settlement plus its per-hotkey lines + payout totals."""
     head = conn.execute(
-        "SELECT id, CAST(settled_at AS TEXT) AS settled_at, "
-        "       settled_through_snapshot_id, note, total_cumulative_rao "
-        "FROM settlements WHERE id = ?",
+        f"SELECT {_SETTLEMENT_COLS} FROM settlements WHERE id = ?",
         (settlement_id,),
     ).fetchone()
     if head is None:
         return None
     lines = conn.execute(
-        "SELECT hotkey_ss58, person_name, cumulative_rao "
+        "SELECT hotkey_ss58, person_name, cumulative_rao, "
+        "       personal_share_idr, reward_idr "
         "FROM settlement_lines WHERE settlement_id = ? "
-        "ORDER BY cumulative_rao DESC, person_name, hotkey_ss58",
+        "ORDER BY reward_idr DESC, cumulative_rao DESC, person_name, hotkey_ss58",
         (settlement_id,),
     ).fetchall()
-    return {**dict(head), "lines": [dict(line) for line in lines]}
+    result = {**dict(head), "lines": [dict(line) for line in lines]}
+
+    # Derive payout summary
+    total_payout_idr = sum(line["reward_idr"] for line in result["lines"])
+    result["total_payout_idr"] = total_payout_idr
+    if result["total_idr"] is not None:
+        result["kas_bersama_idr"] = result["total_idr"] - total_payout_idr
+    else:
+        result["kas_bersama_idr"] = None
+    return result
 
 
-def create_settlement(conn: sqlite3.Connection, note: str | None = None) -> dict:
-    """Atomically: freeze per-hotkey cumulative emission since the previous
-    settlement (or since first snapshot if none) into settlement_lines, and
-    create a new settlements row. Returns the new settlement detail.
+PERSONAL_SHARE_PCT = 0.30  # 30% of total_idr allocated to performers by emission share
+
+
+def create_settlement(
+    conn: sqlite3.Connection,
+    note: str | None = None,
+    total_idr: int | None = None,
+    base_salary_idr: int | None = None,
+) -> dict:
+    """Freeze per-hotkey cumulative emission into a settlement record.
+
+    When ``total_idr`` and ``base_salary_idr`` are both provided, compute the
+    payout distribution and store it on each settlement_line:
+        person_share_idr = (cumulative / total_cumulative) * 0.30 * total_idr
+        reward_idr       = base_salary_idr + person_share_idr
+    Per-person rewards aggregate across that person's hotkeys at render time.
+    The remainder (total_idr - sum(reward_idr)) is the "kas bersama" reported
+    by settlement_detail.
 
     Raises ValueError if there are no new completed snapshots to settle.
     """
@@ -70,7 +95,6 @@ def create_settlement(conn: sqlite3.Connection, note: str | None = None) -> dict
     if settled_through is None:
         raise ValueError("No new completed snapshots since last settlement")
 
-    # Per-hotkey cumulative within (last_id, settled_through]
     rows = conn.execute(
         """
         SELECT h.ss58 AS hotkey,
@@ -90,21 +114,86 @@ def create_settlement(conn: sqlite3.Connection, note: str | None = None) -> dict
         (last_id, settled_through),
     ).fetchall()
 
-    total = sum(int(r["cumulative"]) for r in rows)
+    rows_int = [
+        {
+            "hotkey": r["hotkey"],
+            "person_name": r["person_name"],
+            "cumulative": int(r["cumulative"]),
+        }
+        for r in rows
+    ]
+    total_cum = sum(r["cumulative"] for r in rows_int)
+
+    # Aggregate per-person cumulative (for per-person base salary)
+    per_person_cum: dict[str, int] = {}
+    for r in rows_int:
+        per_person_cum[r["person_name"]] = (
+            per_person_cum.get(r["person_name"], 0) + r["cumulative"]
+        )
+    person_count = len(per_person_cum)
+
+    # Distribution math (only if both inputs are given)
+    distribute = total_idr is not None and base_salary_idr is not None
+    person_rewards: dict[str, int] = {}
+    person_shares: dict[str, int] = {}
+    if distribute:
+        performance_pool_idr = int(round(total_idr * PERSONAL_SHARE_PCT))
+        for name, cum in per_person_cum.items():
+            share = (
+                int(round(cum / total_cum * performance_pool_idr))
+                if total_cum > 0
+                else 0
+            )
+            person_shares[name] = share
+            person_rewards[name] = base_salary_idr + share
+
     now = datetime.now(timezone.utc)
     cursor = conn.execute(
         "INSERT INTO settlements "
-        "(settled_at, settled_through_snapshot_id, note, total_cumulative_rao) "
-        "VALUES (?, ?, ?, ?)",
-        (now, settled_through, note, total),
+        "(settled_at, settled_through_snapshot_id, note, total_cumulative_rao, "
+        " total_idr, base_salary_idr) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (now, settled_through, note, total_cum, total_idr, base_salary_idr),
     )
     settlement_id = cursor.lastrowid
-    for r in rows:
+
+    for r in rows_int:
+        # Per-hotkey share = its slice of the person's per-person share,
+        # weighted by its contribution to that person's cumulative.
+        person_cum = per_person_cum[r["person_name"]]
+        if distribute and person_cum > 0:
+            line_share = int(
+                round(r["cumulative"] / person_cum * person_shares[r["person_name"]])
+            )
+            # Base salary is paid to the person, attributed proportionally to
+            # their hotkeys so per-line reward_idr sums to the person's reward.
+            line_base = int(
+                round(r["cumulative"] / person_cum * base_salary_idr)
+            ) if person_cum > 0 else (base_salary_idr // max(1, len([x for x in rows_int if x["person_name"] == r["person_name"]])))
+            line_reward = line_base + line_share
+        elif distribute:
+            # Person has 0 emission: split base salary evenly across their hotkeys
+            person_hotkey_count = sum(
+                1 for x in rows_int if x["person_name"] == r["person_name"]
+            )
+            line_share = 0
+            line_reward = base_salary_idr // person_hotkey_count
+        else:
+            line_share = 0
+            line_reward = 0
         conn.execute(
             "INSERT INTO settlement_lines "
-            "(settlement_id, hotkey_ss58, person_name, cumulative_rao) "
-            "VALUES (?, ?, ?, ?)",
-            (settlement_id, r["hotkey"], r["person_name"], int(r["cumulative"])),
+            "(settlement_id, hotkey_ss58, person_name, cumulative_rao, "
+            " personal_share_idr, reward_idr) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                settlement_id,
+                r["hotkey"],
+                r["person_name"],
+                r["cumulative"],
+                line_share,
+                line_reward,
+            ),
         )
     conn.commit()
     return settlement_detail(conn, settlement_id)

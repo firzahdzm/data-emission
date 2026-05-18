@@ -35,21 +35,74 @@
 
 {% if is_admin %}
 <script>
+function _parseIdr(input) {
+    if (!input) return null;
+    // Accept "5000000", "5,000,000", "5.000.000", "5jt", "100jt"
+    const trimmed = String(input).trim().toLowerCase();
+    if (trimmed.endsWith('jt')) {
+        const n = parseFloat(trimmed.slice(0, -2).replace(/[.,]/g, ''));
+        if (isNaN(n)) return null;
+        return Math.round(n * 1_000_000);
+    }
+    const n = parseInt(trimmed.replace(/[.,\s]/g, ''), 10);
+    return isNaN(n) ? null : n;
+}
+
 document.getElementById('close-period-btn').addEventListener('click', async function() {
-    const note = prompt(
-        "Close current period?\n\n" +
-        "All accumulation since the last settlement will be frozen into\n" +
-        "the archive. Dashboard will reset to 0 α for the next period.\n\n" +
-        "Optional note (e.g., \"Week 1 payout\"):"
+    const totalRaw = prompt(
+        "STEP 1/3: Total uang yang akan dibagikan (Rp).\n\n" +
+        "Contoh format yang diterima:\n" +
+        "  100000000      → Rp 100.000.000\n" +
+        "  100,000,000    → Rp 100.000.000\n" +
+        "  100jt          → Rp 100.000.000"
     );
-    if (note === null) return;  // cancelled
+    if (totalRaw === null) return;
+    const totalIdr = _parseIdr(totalRaw);
+    if (totalIdr === null || totalIdr <= 0) {
+        alert('Total tidak valid. Batal.');
+        return;
+    }
+
+    const baseRaw = prompt(
+        "STEP 2/3: Gaji pokok per orang (Rp).\n\n" +
+        "Contoh: 5000000 atau 5jt"
+    );
+    if (baseRaw === null) return;
+    const baseIdr = _parseIdr(baseRaw);
+    if (baseIdr === null || baseIdr <= 0) {
+        alert('Gaji pokok tidak valid. Batal.');
+        return;
+    }
+
+    const note = prompt(
+        "STEP 3/3: Catatan untuk settlement ini (opsional).\n\n" +
+        "Contoh: \"Week 1 payout\""
+    );
+    if (note === null) return;
+
+    // Final confirmation
+    const totalFmt = totalIdr.toLocaleString('id-ID');
+    const baseFmt = baseIdr.toLocaleString('id-ID');
+    if (!confirm(
+        "Konfirmasi:\n\n" +
+        "  Total uang  : Rp " + totalFmt + "\n" +
+        "  Gaji pokok  : Rp " + baseFmt + " per orang\n" +
+        "  Formula     : reward = gaji pokok + (emisi_orang / total_emisi × 30% × total uang)\n" +
+        "  Note        : " + (note || "—") + "\n\n" +
+        "Lanjut Close period?"
+    )) return;
+
     this.disabled = true;
     this.textContent = 'Closing…';
     try {
         const resp = await fetch('/api/settlements', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({note: note || null}),
+            body: JSON.stringify({
+                note: note || null,
+                total_idr: totalIdr,
+                base_salary_idr: baseIdr,
+            }),
         });
         if (!resp.ok) {
             const err = await resp.json();
@@ -59,9 +112,7 @@ document.getElementById('close-period-btn').addEventListener('click', async func
             return;
         }
         const data = await resp.json();
-        const alpha = (data.total_cumulative_rao / 1e9).toFixed(4);
-        alert('Settlement #' + data.id + ' created.\nTotal frozen: ' + alpha + ' α across ' + data.lines.length + ' hotkeys.\n\nReloading dashboard.');
-        location.href = '/';
+        location.href = '/archive/' + data.id;
     } catch (e) {
         alert('Network error: ' + e);
         this.disabled = false;

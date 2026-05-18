@@ -31,6 +31,11 @@ def create_app(
     env_path: Path = Path(".env"),
 ) -> FastAPI:
     _setup_logging()
+    # Allow overriding config + env paths via env vars — useful for running
+    # a parallel dev server with config.dev.yaml + data/dev.db while the
+    # production tracker keeps running unchanged.
+    config_path = Path(os.environ.get("EMISSION_CONFIG_PATH") or config_path)
+    env_path = Path(os.environ.get("EMISSION_ENV_PATH") or env_path)
     config = AppConfig.load(yaml_path=config_path, env_path=env_path)
 
     db_path = config.database.path

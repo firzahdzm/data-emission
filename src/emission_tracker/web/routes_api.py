@@ -12,6 +12,8 @@ router = APIRouter()
 
 class SettlementCreateBody(BaseModel):
     note: str | None = None
+    total_idr: int | None = None
+    base_salary_idr: int | None = None
 
 
 def _db(request: Request) -> sqlite3.Connection:
@@ -107,7 +109,12 @@ def create_settlement_endpoint(
     settlement into a new settlement record. Resets the live dashboard
     accumulation back to 0 for the next period."""
     try:
-        settlement = queries.create_settlement(_db(request), note=body.note)
+        settlement = queries.create_settlement(
+            _db(request),
+            note=body.note,
+            total_idr=body.total_idr,
+            base_salary_idr=body.base_salary_idr,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return settlement

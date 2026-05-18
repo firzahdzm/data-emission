@@ -10,15 +10,33 @@
         <div class="kpi-sub">{{ settlement.settled_at | dt_s }}</div>
     </article>
     <article class="kpi-card">
-        <span class="kpi-label">Total frozen</span>
+        <span class="kpi-label">Total emisi frozen</span>
         <div class="kpi-value">{{ settlement.total_cumulative_rao | alpha }}</div>
         <div class="kpi-sub">across {{ settlement.lines | length }} hotkeys</div>
     </article>
+    {% if settlement.total_idr is not none %}
+    <article class="kpi-card">
+        <span class="kpi-label">Total uang dibagikan</span>
+        <div class="kpi-value" style="font-size: 1.3rem;">{{ settlement.total_idr | idr }}</div>
+        <div class="kpi-sub">gaji pokok {{ settlement.base_salary_idr | idr }} / orang + 30% performance</div>
+    </article>
+    <article class="kpi-card kpi-ok">
+        <span class="kpi-label">Total payout</span>
+        <div class="kpi-value" style="font-size: 1.3rem;">{{ settlement.total_payout_idr | idr }}</div>
+        <div class="kpi-sub">terdistribusi ke {{ persons | length }} orang</div>
+    </article>
+    <article class="kpi-card {% if settlement.kas_bersama_idr is not none and settlement.kas_bersama_idr < 0 %}kpi-warn{% endif %}">
+        <span class="kpi-label">Kas bersama</span>
+        <div class="kpi-value" style="font-size: 1.3rem;">{{ settlement.kas_bersama_idr | idr }}</div>
+        <div class="kpi-sub">total uang − total payout</div>
+    </article>
+    {% else %}
     <article class="kpi-card">
         <span class="kpi-label">Through snapshot</span>
         <div class="kpi-value">#{{ settlement.settled_through_snapshot_id }}</div>
         <div class="kpi-sub">last included in this period</div>
     </article>
+    {% endif %}
     {% if is_admin %}
     <article class="kpi-card" style="display: flex; flex-direction: column; justify-content: center; align-items: stretch;">
         <span class="kpi-label">Admin actions</span>
@@ -37,6 +55,50 @@
 </section>
 {% endif %}
 
+{% if settlement.total_idr is not none %}
+<section class="panel" style="padding: 0; overflow: hidden;">
+    <header style="padding: 0.85rem 1.25rem 0;">Reward per orang</header>
+    <p style="padding: 0 1.25rem 0.5rem; color: var(--pico-muted-color); font-size: 0.875rem; margin: 0;">
+        Formula: <code>reward = gaji_pokok + (emisi_orang / total_emisi × 30% × total_uang)</code>
+    </p>
+    <table class="payout-table">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th class="num">Emisi</th>
+                <th class="num">% share</th>
+                <th class="num">Bonus 30%</th>
+                <th class="num">Reward total</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in persons %}
+            <tr>
+                <td><strong>{{ p.name }}</strong></td>
+                <td class="num text-mono">{{ p.cumulative_rao | alpha }}</td>
+                <td class="num text-mono text-muted">
+                    {% if settlement.total_cumulative_rao > 0 %}
+                      {{ "%.2f"|format(p.cumulative_rao / settlement.total_cumulative_rao * 100) }}%
+                    {% else %}—{% endif %}
+                </td>
+                <td class="num text-mono">{{ p.personal_share_idr | idr }}</td>
+                <td class="num text-mono"><strong>{{ p.reward_idr | idr }}</strong></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr>
+                <td><strong>Total</strong></td>
+                <td class="num text-mono">{{ settlement.total_cumulative_rao | alpha }}</td>
+                <td class="num text-muted">100%</td>
+                <td class="num text-mono">{{ settlement.lines | sum(attribute='personal_share_idr') | idr }}</td>
+                <td class="num text-mono"><strong>{{ settlement.total_payout_idr | idr }}</strong></td>
+            </tr>
+        </tfoot>
+    </table>
+</section>
+{% endif %}
+
 <section class="panel" style="padding: 0; overflow: hidden;">
     <header style="padding: 0.85rem 1.25rem 0;">Per-hotkey breakdown</header>
     <table class="lines-table">
@@ -44,7 +106,10 @@
             <tr>
                 <th>Hotkey</th>
                 <th>Name</th>
-                <th class="num">Frozen amount</th>
+                <th class="num">Emisi</th>
+                {% if settlement.total_idr is not none %}
+                <th class="num">Reward (hotkey)</th>
+                {% endif %}
             </tr>
         </thead>
         <tbody>
@@ -53,6 +118,9 @@
                 <td><code class="hotkey-pill" title="{{ line.hotkey_ss58 }}">{{ line.hotkey_ss58[:8] }}…{{ line.hotkey_ss58[-4:] }}</code></td>
                 <td>{{ line.person_name }}</td>
                 <td class="num text-mono">{{ line.cumulative_rao | alpha }}</td>
+                {% if settlement.total_idr is not none %}
+                <td class="num text-mono text-muted">{{ line.reward_idr | idr }}</td>
+                {% endif %}
             </tr>
             {% endfor %}
         </tbody>
@@ -87,13 +155,21 @@ document.getElementById('delete-settlement-btn').addEventListener('click', async
 {% endif %}
 
 <style>
-.lines-table th, .lines-table td {
+.lines-table th, .lines-table td,
+.payout-table th, .payout-table td {
     padding: 0.55rem 0.85rem;
     border-bottom: 1px solid var(--pico-muted-border-color);
     font-size: 0.9rem;
 }
-.lines-table tbody tr:hover {
+.lines-table tbody tr:hover,
+.payout-table tbody tr:hover {
     background: var(--pico-card-sectionning-background-color, var(--pico-card-background-color));
+}
+.payout-table tfoot td {
+    border-top: 2px solid var(--pico-muted-border-color);
+    border-bottom: none;
+    background: var(--pico-card-sectionning-background-color, var(--pico-card-background-color));
+    font-weight: 500;
 }
 </style>
 

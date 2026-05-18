@@ -1,12 +1,22 @@
 """Read the authenticated user from nginx (`X-Remote-User` header) and
 gate admin-only endpoints against the `admin_users` config list."""
 
+import os
+
 from fastapi import HTTPException, Request
 
 
 def current_user(request: Request) -> str | None:
     """Return the authenticated username forwarded by nginx, or None when
-    no auth layer is in front (local dev, tests)."""
+    no auth layer is in front (local dev, tests).
+
+    Dev escape hatch: if EMISSION_DEV_USER is set, treat all requests as
+    that user. Lets you test admin UI locally without setting up nginx +
+    Basic Auth. Never use in production.
+    """
+    dev_user = os.environ.get("EMISSION_DEV_USER")
+    if dev_user:
+        return dev_user
     return request.headers.get("X-Remote-User") or None
 
 

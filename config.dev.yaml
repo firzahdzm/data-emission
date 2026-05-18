@@ -1,0 +1,41 @@
+# Local development config — points to a separate dummy DB and skips the
+# live TaoStats fetcher. Use with scripts/seed_dummy.py to populate test data.
+#
+#   EMISSION_CONFIG_PATH=config.dev.yaml EMISSION_DEV_USER=admin \
+#     .venv/bin/uvicorn emission_tracker.main:create_app --factory --port 8001
+
+subnet_id: 56
+
+polling:
+  interval_minutes: 72
+  request_interval_seconds: 15
+  run_on_startup: false      # ← no live API calls in dev
+
+database:
+  path: data/dev.db          # separate from production data/emissions.db
+
+web:
+  host: 127.0.0.1
+  port: 8001
+
+team:
+  - name: Alice
+    hotkeys:
+      - 5AaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaA1
+      - 5AaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaA2
+  - name: Bob
+    hotkeys:
+      - 5BbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbB1
+      - 5BbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbB2
+  - name: Carol
+    hotkeys:
+      - 5CcccccccccccccccccccccccccccccccccccccccccccCC1
+      - 5CcccccccccccccccccccccccccccccccccccccccccccCC2
+  - name: Dave
+    hotkeys:
+      - 5DddddddddddddddddddddddddddddddddddddddddddddD1
+      - 5DddddddddddddddddddddddddddddddddddddddddddddD2
+
+# Test admin user — pair with EMISSION_DEV_USER=admin
+admin_users:
+  - admin

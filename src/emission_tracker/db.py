@@ -62,15 +62,19 @@ SCHEMA_STATEMENTS = [
         settled_at                  TIMESTAMP NOT NULL,
         settled_through_snapshot_id INTEGER NOT NULL REFERENCES snapshots(id),
         note                        TEXT,
-        total_cumulative_rao        INTEGER NOT NULL
+        total_cumulative_rao        INTEGER NOT NULL,
+        total_idr                   INTEGER,
+        base_salary_idr             INTEGER
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS settlement_lines (
-        settlement_id   INTEGER NOT NULL REFERENCES settlements(id) ON DELETE CASCADE,
-        hotkey_ss58     TEXT    NOT NULL,
-        person_name     TEXT    NOT NULL,
-        cumulative_rao  INTEGER NOT NULL,
+        settlement_id       INTEGER NOT NULL REFERENCES settlements(id) ON DELETE CASCADE,
+        hotkey_ss58         TEXT    NOT NULL,
+        person_name         TEXT    NOT NULL,
+        cumulative_rao      INTEGER NOT NULL,
+        personal_share_idr  INTEGER NOT NULL DEFAULT 0,
+        reward_idr          INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (settlement_id, hotkey_ss58)
     )
     """,
@@ -92,6 +96,17 @@ def connect(path: str):
         conn.close()
 
 
+MIGRATIONS = [
+    # Idempotent ALTER TABLE statements for existing DBs that pre-date a
+    # column addition. SQLite errors with "duplicate column name" if the
+    # column is already there — we catch and ignore that case.
+    "ALTER TABLE settlements ADD COLUMN total_idr INTEGER",
+    "ALTER TABLE settlements ADD COLUMN base_salary_idr INTEGER",
+    "ALTER TABLE settlement_lines ADD COLUMN personal_share_idr INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE settlement_lines ADD COLUMN reward_idr INTEGER NOT NULL DEFAULT 0",
+]
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
     # WAL lets reads run concurrently with the snapshot worker's writes —
     # without this, a 5-minute snapshot loop blocks any other write (e.g.,
@@ -99,6 +114,12 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA journal_mode=WAL")
     for stmt in SCHEMA_STATEMENTS:
         conn.execute(stmt)
+    for stmt in MIGRATIONS:
+        try:
+            conn.execute(stmt)
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                raise
     conn.commit()
 
 

@@ -43,6 +43,10 @@ class AppConfig(BaseModel):
     web: WebConfig
     team: list[PersonConfig] = Field(min_length=1)
     taostats_api_key: SecretStr
+    # Usernames (matched against the nginx-forwarded X-Remote-User header)
+    # that are allowed to settle/unsettle periods. Empty = nobody is admin
+    # (settle button hidden, POST/DELETE endpoints return 403).
+    admin_users: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _validate_unique_names_and_hotkeys(self) -> "AppConfig":

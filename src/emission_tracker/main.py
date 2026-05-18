@@ -56,6 +56,8 @@ def create_app(
             log.info("marked %d orphaned in_progress snapshot(s) as failed", cleaned)
         sync_team(long_lived_conn, config.team, subnet_id=config.subnet_id)
         app.state.db_conn = long_lived_conn
+        # Expose config so admin gating (web/auth.py) can read admin_users
+        app.state.config = config
 
         # Scheduler with its own connection per job
         def conn_factory():

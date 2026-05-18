@@ -13,6 +13,7 @@ from emission_tracker.web.queries import (
     hotkey_series,
     latest_snapshot,
     person_series,
+    snapshot_history,
 )
 
 
@@ -287,6 +288,71 @@ def test_captures_table_excludes_failed_snapshots(seeded_db: sqlite3.Connection)
     snap_ids = [s["id"] for s in result["snapshots"]]
     assert 2 not in snap_ids
     assert snap_ids == [1, 3]
+
+
+def test_snapshot_history_all_three_hotkeys_registered(seeded_db: sqlite3.Connection):
+    """All snapshots in seed have HK_F1+HK_F2+HK_I1 with is_registered=1, status='ok'."""
+    rows = snapshot_history(seeded_db, limit=10)
+    assert len(rows) == 3
+    # newest first
+    assert [r["id"] for r in rows] == [3, 2, 1]
+    for r in rows:
+        assert r["status"] == "ok"
+        assert r["team_size"] == 3       # HK_F1, HK_F2, HK_I1
+        assert r["total_rows"] == 3
+        assert r["registered"] == 3
+        assert r["deregistered"] == 0
+        assert r["failed"] == 0
+
+
+def test_snapshot_history_counts_deregistered(seeded_db: sqlite3.Connection):
+    # Mark HK_F2 as deregistered in snapshot 3
+    seeded_db.execute(
+        "UPDATE neuron_snapshots SET is_registered = 0 "
+        "WHERE hotkey_ss58 = ? AND snapshot_id = 3",
+        (HK_F2,),
+    )
+    seeded_db.commit()
+    rows = snapshot_history(seeded_db, limit=10)
+    snap3 = next(r for r in rows if r["id"] == 3)
+    assert snap3["registered"] == 2
+    assert snap3["deregistered"] == 1
+    assert snap3["failed"] == 0
+
+
+def test_snapshot_history_counts_failed_when_rows_missing(
+    seeded_db: sqlite3.Connection,
+):
+    # Simulate worker failing to insert HK_I1 in snapshot 2 (row missing)
+    seeded_db.execute(
+        "DELETE FROM neuron_snapshots WHERE hotkey_ss58 = ? AND snapshot_id = 2",
+        (HK_I1,),
+    )
+    seeded_db.execute(
+        "UPDATE snapshots SET status = 'partial' WHERE id = 2"
+    )
+    seeded_db.commit()
+    rows = snapshot_history(seeded_db, limit=10)
+    snap2 = next(r for r in rows if r["id"] == 2)
+    assert snap2["status"] == "partial"
+    assert snap2["total_rows"] == 2  # only HK_F1 + HK_F2 left
+    assert snap2["failed"] == 1
+
+
+def test_snapshot_history_respects_limit(seeded_db: sqlite3.Connection):
+    rows = snapshot_history(seeded_db, limit=2)
+    assert len(rows) == 2
+    assert [r["id"] for r in rows] == [3, 2]
+
+
+def test_snapshot_history_empty_when_no_snapshots(memory_db: sqlite3.Connection):
+    init_schema(memory_db)
+    sync_team(
+        memory_db,
+        [PersonConfig(name="X", hotkeys=[HK_F1])],
+        subnet_id=56,
+    )
+    assert snapshot_history(memory_db) == []
 
 
 def test_captures_table_empty_when_no_snapshots(memory_db: sqlite3.Connection):

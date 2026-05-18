@@ -139,6 +139,34 @@ def register_pages(app: FastAPI) -> None:
             },
         )
 
+    @app.get("/history", response_class=HTMLResponse)
+    def history(request: Request, limit: int = Query(default=50, ge=1, le=500)):
+        conn = _db(request)
+        rows = queries.snapshot_history(conn, limit=limit)
+        latest = queries.latest_snapshot(conn)
+        # Top-level aggregates for the page
+        ok = sum(1 for r in rows if r["status"] == "ok")
+        partial = sum(1 for r in rows if r["status"] == "partial")
+        failed = sum(1 for r in rows if r["status"] == "failed")
+        in_progress = sum(1 for r in rows if r["status"] == "in_progress")
+        return templates.TemplateResponse(
+            request,
+            "history.html",
+            {
+                "rows": rows,
+                "limit": limit,
+                "counts": {
+                    "ok": ok,
+                    "partial": partial,
+                    "failed": failed,
+                    "in_progress": in_progress,
+                    "total": len(rows),
+                },
+                "latest": latest,
+                "active_page": "history",
+            },
+        )
+
     @app.get("/captures", response_class=HTMLResponse)
     def captures(request: Request, limit: int = Query(default=20, ge=1, le=200)):
         conn = _db(request)

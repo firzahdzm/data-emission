@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="kpi-grid">
+    <article class="kpi-card kpi-ok">
+        <span class="kpi-label">OK</span>
+        <div class="kpi-value">{{ counts.ok }}</div>
+        <div class="kpi-sub">all hotkeys captured</div>
+    </article>
+    <article class="kpi-card {% if counts.partial > 0 %}kpi-warn{% endif %}">
+        <span class="kpi-label">Partial</span>
+        <div class="kpi-value">{{ counts.partial }}</div>
+        <div class="kpi-sub">some hotkeys missing</div>
+    </article>
+    <article class="kpi-card {% if counts.failed > 0 %}kpi-warn{% endif %}">
+        <span class="kpi-label">Failed</span>
+        <div class="kpi-value">{{ counts.failed }}</div>
+        <div class="kpi-sub">all hotkeys errored</div>
+    </article>
+    <article class="kpi-card">
+        <span class="kpi-label">In progress</span>
+        <div class="kpi-value">{{ counts.in_progress }}</div>
+        <div class="kpi-sub">currently running</div>
+    </article>
+</div>
+
+<section class="panel">
+    <header>Snapshot history</header>
+    <p class="text-muted" style="margin: 0 0 0.75rem; font-size: 0.875rem;">
+        Per-run quality across the last {{ counts.total }} snapshots, newest first.
+        <span class="badge badge-ok">ok</span> = all team hotkeys captured.
+        <span class="badge badge-warn">partial</span> / <span class="badge badge-warn">failed</span> = some/all hotkey fetches errored.
+    </p>
+    <form method="get" action="/history" class="filter-form">
+        <label>
+            Show last N runs
+            <input type="number" name="limit" value="{{ limit }}" min="1" max="500" style="width: 100px;">
+        </label>
+        <button type="submit">Apply</button>
+    </form>
+</section>
+
+<section class="panel" style="padding: 0; overflow: hidden;">
+    <table class="history-table">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Taken at</th>
+                <th>Status</th>
+                <th class="num">Registered</th>
+                <th class="num">Deregistered</th>
+                <th class="num">Failed</th>
+                <th class="num">Block</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in rows %}
+            <tr class="status-row-{{ r.status }}">
+                <td class="text-mono">#{{ r.id }}</td>
+                <td>{{ r.taken_at | dt_s }}</td>
+                <td>
+                    {% if r.status == "ok" %}
+                      <span class="badge badge-ok">ok</span>
+                    {% elif r.status == "partial" %}
+                      <span class="badge badge-warn">partial</span>
+                    {% elif r.status == "failed" %}
+                      <span class="badge badge-warn">failed</span>
+                    {% else %}
+                      <span class="badge badge-info">{{ r.status }}</span>
+                    {% endif %}
+                </td>
+                <td class="num text-mono">
+                    {% if r.registered > 0 %}<span style="color: var(--pico-ins-color, #2e7d32);">{{ r.registered }}</span>
+                    {% else %}<span class="text-muted">0</span>{% endif %}
+                </td>
+                <td class="num text-mono">
+                    {% if r.deregistered > 0 %}<span style="color: var(--pico-del-color, #c0392b);">{{ r.deregistered }}</span>
+                    {% else %}<span class="text-muted">0</span>{% endif %}
+                </td>
+                <td class="num text-mono">
+                    {% if r.failed > 0 %}<span style="color: var(--pico-del-color, #c0392b); font-weight: bold;">{{ r.failed }}</span>
+                    {% else %}<span class="text-muted">0</span>{% endif %}
+                </td>
+                <td class="num text-mono text-muted">{{ r.block_number or "—" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+<style>
+.history-table th, .history-table td {
+    padding: 0.55rem 0.85rem;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+    font-size: 0.9rem;
+}
+.history-table tbody tr.status-row-partial,
+.history-table tbody tr.status-row-failed {
+    background: color-mix(in srgb, var(--pico-del-color, #c0392b) 4%, transparent);
+}
+.history-table tbody tr.status-row-in_progress {
+    background: color-mix(in srgb, var(--pico-primary) 4%, transparent);
+}
+.badge-info {
+    color: var(--pico-primary);
+}
+</style>
+
+{% endblock %}

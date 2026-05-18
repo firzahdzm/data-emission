@@ -169,6 +169,51 @@ def captures_table(conn: sqlite3.Connection, limit: int = 20) -> dict:
     return {"snapshots": snapshots, "rows": rows}
 
 
+def snapshot_history(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
+    """Per-snapshot run quality stats, newest first.
+
+    For each snapshot:
+        id, taken_at, status, block_number
+        team_size:    current hotkey count (same for all rows in a response)
+        total_rows:   neuron_snapshots rows actually written for this snapshot
+        registered:   how many of those have is_registered=1
+        deregistered: how many of those have is_registered=0
+        failed:       team_size - total_rows
+                      (hotkeys that should have been fetched but no row exists,
+                      typically per-hotkey API failures during the run)
+
+    Note: team_size is captured at query time, not at snapshot time. If the
+    roster grew/shrank, historical rows may show a small skew in "failed"
+    for snapshots taken with a different team size — acceptable for v1.
+    """
+    team_size = conn.execute("SELECT COUNT(*) AS n FROM hotkeys").fetchone()["n"]
+    cursor = conn.execute(
+        """
+        SELECT
+            s.id,
+            CAST(s.taken_at AS TEXT)                                  AS taken_at,
+            s.status,
+            s.block_number,
+            COUNT(ns.hotkey_ss58)                                     AS total_rows,
+            COALESCE(SUM(CASE WHEN ns.is_registered = 1 THEN 1 ELSE 0 END), 0) AS registered,
+            COALESCE(SUM(CASE WHEN ns.is_registered = 0 THEN 1 ELSE 0 END), 0) AS deregistered
+        FROM snapshots s
+        LEFT JOIN neuron_snapshots ns ON ns.snapshot_id = s.id
+        GROUP BY s.id, s.taken_at, s.status, s.block_number
+        ORDER BY s.id DESC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+    rows = []
+    for r in cursor.fetchall():
+        d = dict(r)
+        d["team_size"] = team_size
+        d["failed"] = max(0, team_size - d["total_rows"])
+        rows.append(d)
+    return rows
+
+
 def latest_snapshot(conn: sqlite3.Connection) -> dict | None:
     row = conn.execute(
         "SELECT id, CAST(taken_at AS TEXT) AS taken_at, block_number, status "

@@ -6,6 +6,7 @@ import pytest
 from emission_tracker.config import PersonConfig
 from emission_tracker.db import init_schema, sync_team
 from emission_tracker.web.queries import (
+    current_registration_status,
     dashboard_summary,
     hotkey_series,
     latest_snapshot,
@@ -119,3 +120,56 @@ def test_latest_snapshot_returns_most_recent_ok(seeded_db: sqlite3.Connection):
     snap = latest_snapshot(seeded_db)
     assert snap["id"] == 3
     assert snap["status"] == "ok"
+
+
+def test_current_registration_status_all_active(seeded_db: sqlite3.Connection):
+    status = current_registration_status(seeded_db)
+    assert status["Alice"] == {"active": 2, "total": 2, "deregistered_hotkeys": []}
+    assert status["Bob"] == {"active": 1, "total": 1, "deregistered_hotkeys": []}
+
+
+def test_current_registration_status_detects_deregistered(seeded_db: sqlite3.Connection):
+    # Simulate HK_F2 getting deregistered in the latest snapshot
+    seeded_db.execute(
+        "UPDATE neuron_snapshots SET is_registered = 0, uid = NULL, emission = NULL "
+        "WHERE hotkey_ss58 = ? AND snapshot_id = 3",
+        (HK_F2,),
+    )
+    seeded_db.commit()
+
+    status = current_registration_status(seeded_db)
+    assert status["Alice"]["active"] == 1
+    assert status["Alice"]["total"] == 2
+    assert status["Alice"]["deregistered_hotkeys"] == [HK_F2]
+    # Bob unaffected
+    assert status["Bob"]["active"] == 1
+
+
+def test_current_registration_status_missing_row_counts_as_deregistered(
+    seeded_db: sqlite3.Connection,
+):
+    # Worker failure: no row for HK_I1 in latest snapshot (LEFT JOIN gives NULL)
+    seeded_db.execute(
+        "DELETE FROM neuron_snapshots WHERE hotkey_ss58 = ? AND snapshot_id = 3",
+        (HK_I1,),
+    )
+    seeded_db.commit()
+
+    status = current_registration_status(seeded_db)
+    assert status["Bob"]["active"] == 0
+    assert status["Bob"]["total"] == 1
+    assert HK_I1 in status["Bob"]["deregistered_hotkeys"]
+
+
+def test_current_registration_status_no_snapshots_yet(memory_db: sqlite3.Connection):
+    init_schema(memory_db)
+    sync_team(
+        memory_db,
+        [PersonConfig(name="X", hotkeys=[HK_F1])],
+        subnet_id=56,
+    )
+    status = current_registration_status(memory_db)
+    # No snapshots → all hotkeys count as deregistered (visibility)
+    assert status["X"]["active"] == 0
+    assert status["X"]["total"] == 1
+    assert status["X"]["deregistered_hotkeys"] == [HK_F1]

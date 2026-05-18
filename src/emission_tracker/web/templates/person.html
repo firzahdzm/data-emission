@@ -5,6 +5,12 @@
 
 <h2>{{ name }}</h2>
 <p>Akumulasi ({{ active_range }}): {{ total_cumulative | alpha }}</p>
+<p>
+    Hotkey: <strong>{{ active_count }}/{{ total_count }} active</strong>
+    {% if deregistered_set %}
+      &middot; <strong style="color: #c0392b;">{{ deregistered_set | length }} ketendang</strong>
+    {% endif %}
+</p>
 
 <canvas id="cumChart" width="800" height="300"></canvas>
 <canvas id="perSnapChart" width="800" height="300"></canvas>
@@ -12,7 +18,14 @@
 <h3>Hotkey breakdown</h3>
 <ul>
     {% for hk in hotkeys %}
-    <li>{{ hk }}</li>
+    <li>
+        <code>{{ hk }}</code>
+        {% if hk in deregistered_set %}
+          &nbsp;<span style="color: #c0392b; font-weight: bold;">[KETENDANG]</span>
+        {% else %}
+          &nbsp;<span style="color: #2e7d32;">[active]</span>
+        {% endif %}
+    </li>
     {% endfor %}
 </ul>
 

@@ -95,3 +95,49 @@ def latest_snapshot(conn: sqlite3.Connection) -> dict | None:
         "FROM snapshots ORDER BY id DESC LIMIT 1"
     ).fetchone()
     return dict(row) if row else None
+
+
+def current_registration_status(conn: sqlite3.Connection) -> dict[str, dict]:
+    """Per-person registration status from the latest successful snapshot.
+
+    Returns a mapping name -> {
+        "active":               int  # hotkeys registered in latest snapshot
+        "total":                int  # total hotkeys for this person
+        "deregistered_hotkeys": list[str]  # ss58 of currently-deregistered hotkeys
+    }
+
+    If a hotkey has no row in the latest snapshot at all (e.g. worker error),
+    it's counted as "deregistered" to surface the visibility gap. Persons with
+    no snapshots at all get total=N, active=0.
+    """
+    latest_id_row = conn.execute(
+        "SELECT id FROM snapshots WHERE status IN ('ok', 'partial') "
+        "ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    latest_id = latest_id_row["id"] if latest_id_row else None
+
+    cursor = conn.execute(
+        """
+        SELECT p.name, h.ss58, ns.is_registered
+        FROM persons p
+        JOIN hotkeys h ON h.person_id = p.id
+        LEFT JOIN neuron_snapshots ns
+               ON ns.hotkey_ss58 = h.ss58
+              AND ns.snapshot_id = ?
+        ORDER BY p.name, h.ss58
+        """,
+        (latest_id,),
+    )
+
+    result: dict[str, dict] = {}
+    for row in cursor.fetchall():
+        name = row["name"]
+        bucket = result.setdefault(
+            name, {"active": 0, "total": 0, "deregistered_hotkeys": []}
+        )
+        bucket["total"] += 1
+        if row["is_registered"] == 1:
+            bucket["active"] += 1
+        else:
+            bucket["deregistered_hotkeys"].append(row["ss58"])
+    return result

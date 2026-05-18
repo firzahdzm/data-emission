@@ -20,6 +20,12 @@
 
 <section>
     <h2>Akumulasi ({{ active_range }}): {{ total_cumulative | alpha }}</h2>
+    <p>
+        Aktif: <strong>{{ total_active }}/{{ total_hotkeys }}</strong> hotkey
+        {% if total_deregistered > 0 %}
+          &middot; <strong style="color: #c0392b;">{{ total_deregistered }} ketendang</strong>
+        {% endif %}
+    </p>
 </section>
 
 <table>
@@ -27,13 +33,26 @@
         <tr>
             <th>Name</th>
             <th>Akumulasi</th>
+            <th>Status hotkey</th>
         </tr>
     </thead>
     <tbody>
         {% for p in persons %}
-        <tr>
+        <tr {% if p.deregistered_hotkeys %}style="background-color: #fff4e6;"{% endif %}>
             <td><a href="/person/{{ p.name }}?range={{ active_range }}">{{ p.name }}</a></td>
             <td>{{ p.cumulative | alpha }}</td>
+            <td>
+                {% if p.total == 0 %}
+                  <span style="color: #888;">—</span>
+                {% elif p.active == p.total %}
+                  <span style="color: #2e7d32;">{{ p.active }}/{{ p.total }} active</span>
+                {% else %}
+                  <span style="color: #c0392b;">
+                    {{ p.active }}/{{ p.total }} active &middot;
+                    {{ p.deregistered_hotkeys | length }} ketendang
+                  </span>
+                {% endif %}
+            </td>
         </tr>
         {% endfor %}
     </tbody>

@@ -89,14 +89,27 @@ def register_pages(app: FastAPI) -> None:
         from_dt, to_dt = _range(range, from_, to)
         conn = _db(request)
         persons = queries.dashboard_summary(conn, from_dt=from_dt, to_dt=to_dt)
-        total = sum(p["cumulative"] for p in persons)
+        status_map = queries.current_registration_status(conn)
+        # Merge status into each person row
+        for p in persons:
+            s = status_map.get(p["name"], {"active": 0, "total": 0, "deregistered_hotkeys": []})
+            p["active"] = s["active"]
+            p["total"] = s["total"]
+            p["deregistered_hotkeys"] = s["deregistered_hotkeys"]
+        total_cumulative = sum(p["cumulative"] for p in persons)
+        total_active = sum(p["active"] for p in persons)
+        total_hotkeys = sum(p["total"] for p in persons)
+        total_deregistered = total_hotkeys - total_active
         latest = queries.latest_snapshot(conn)
         return templates.TemplateResponse(
             request,
             "dashboard.html",
             {
                 "persons": persons,
-                "total_cumulative": total,
+                "total_cumulative": total_cumulative,
+                "total_active": total_active,
+                "total_hotkeys": total_hotkeys,
+                "total_deregistered": total_deregistered,
                 "from_dt": from_dt,
                 "to_dt": to_dt,
                 "active_range": range or "all",
@@ -128,12 +141,19 @@ def register_pages(app: FastAPI) -> None:
             ).fetchall()
         ]
         latest = queries.latest_snapshot(conn)
+        status_map = queries.current_registration_status(conn)
+        person_status = status_map.get(
+            name, {"active": 0, "total": 0, "deregistered_hotkeys": []}
+        )
         return templates.TemplateResponse(
             request,
             "person.html",
             {
                 "name": name,
                 "hotkeys": hotkeys,
+                "deregistered_set": set(person_status["deregistered_hotkeys"]),
+                "active_count": person_status["active"],
+                "total_count": person_status["total"],
                 "total_cumulative": total,
                 "chart_labels": [str(s["taken_at"]) for s in series],
                 "chart_cumulative": [rao_to_alpha(s["cumulative"]) for s in series],

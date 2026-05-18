@@ -65,12 +65,12 @@ document.getElementById('close-period-btn').addEventListener('click', async func
 
     const baseRaw = prompt(
         "STEP 2/3: Gaji pokok per orang (Rp).\n\n" +
-        "Contoh: 5000000 atau 5jt"
+        "Contoh: 5000000, 5jt, atau 0 untuk close period tanpa gaji pokok."
     );
     if (baseRaw === null) return;
-    const baseIdr = _parseIdr(baseRaw);
-    if (baseIdr === null || baseIdr <= 0) {
-        alert('Gaji pokok tidak valid. Batal.');
+    const baseIdr = baseRaw.trim() === '' ? 0 : _parseIdr(baseRaw);
+    if (baseIdr === null || baseIdr < 0) {
+        alert('Gaji pokok tidak valid (harus angka ≥ 0). Batal.');
         return;
     }
 

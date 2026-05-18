@@ -93,6 +93,10 @@ def connect(path: str):
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
+    # WAL lets reads run concurrently with the snapshot worker's writes —
+    # without this, a 5-minute snapshot loop blocks any other write (e.g.,
+    # an admin clicking Close Period during the run) with "database is locked".
+    conn.execute("PRAGMA journal_mode=WAL")
     for stmt in SCHEMA_STATEMENTS:
         conn.execute(stmt)
     conn.commit()

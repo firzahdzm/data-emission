@@ -126,7 +126,9 @@ def dashboard_summary(
     from_dt: datetime,
     to_dt: datetime,
 ) -> list[dict]:
-    """Return per-person cumulative emission in range, ordered desc."""
+    """Return per-person cumulative emission in current period (since last
+    settlement), filtered by the requested date range, ordered desc."""
+    settle_boundary = last_settlement_snapshot_id(conn)
     cursor = conn.execute(
         """
         SELECT p.name,
@@ -137,13 +139,14 @@ def dashboard_summary(
             neuron_snapshots ns
             JOIN snapshots s ON s.id = ns.snapshot_id
                              AND s.status IN ('ok', 'partial')
+                             AND s.id > ?
                              AND s.taken_at >= ?
                              AND s.taken_at <  ?
         ) ON ns.hotkey_ss58 = h.ss58
         GROUP BY p.name
         ORDER BY cumulative DESC, p.name ASC
         """,
-        (from_dt, to_dt),
+        (settle_boundary, from_dt, to_dt),
     )
     return [dict(row) for row in cursor.fetchall()]
 
@@ -154,6 +157,7 @@ def hotkey_series(
     from_dt: datetime,
     to_dt: datetime,
 ) -> list[dict]:
+    settle_boundary = last_settlement_snapshot_id(conn)
     cursor = conn.execute(
         """
         SELECT CAST(s.taken_at AS TEXT) AS taken_at,
@@ -166,11 +170,12 @@ def hotkey_series(
         JOIN snapshots s ON s.id = ns.snapshot_id
         WHERE ns.hotkey_ss58 = ?
           AND s.status IN ('ok', 'partial')
+          AND s.id > ?
           AND s.taken_at >= ?
           AND s.taken_at <  ?
         ORDER BY s.taken_at
         """,
-        (hotkey, from_dt, to_dt),
+        (hotkey, settle_boundary, from_dt, to_dt),
     )
     return [dict(row) for row in cursor.fetchall()]
 
@@ -181,6 +186,7 @@ def person_series(
     from_dt: datetime,
     to_dt: datetime,
 ) -> list[dict]:
+    settle_boundary = last_settlement_snapshot_id(conn)
     cursor = conn.execute(
         """
         WITH per_snap AS (
@@ -193,6 +199,7 @@ def person_series(
             JOIN snapshots s         ON s.id = ns.snapshot_id
             WHERE p.name = ?
               AND s.status IN ('ok', 'partial')
+              AND s.id > ?
               AND s.taken_at >= ?
               AND s.taken_at <  ?
             GROUP BY s.id, s.taken_at
@@ -203,7 +210,7 @@ def person_series(
         FROM per_snap
         ORDER BY taken_at
         """,
-        (name, from_dt, to_dt),
+        (name, settle_boundary, from_dt, to_dt),
     )
     return [dict(row) for row in cursor.fetchall()]
 

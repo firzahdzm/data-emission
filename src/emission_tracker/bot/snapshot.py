@@ -63,6 +63,9 @@ def take_snapshot(
             ok += 1
             if info.block is not None:
                 last_block = info.block
+        # Commit per-hotkey so the write lock isn't held for the full ~5.5min
+        # loop — other writers (e.g. admin clicking Close Period) can proceed.
+        conn.commit()
 
     total = len(hotkeys)
     if fail == 0:

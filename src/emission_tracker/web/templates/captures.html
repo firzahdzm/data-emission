@@ -55,51 +55,63 @@
 {% endif %}
 
 <style>
+/* Use Pico CSS variables so the table follows light/dark theme.
+   Cells = page bg (blend in); headers = card bg (slight elevation). */
 .captures-container {
     overflow-x: auto;
     max-width: 100%;
-    border: 1px solid #d0d0d0;
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: var(--pico-border-radius);
 }
 .captures-table {
     border-collapse: separate;
     border-spacing: 0;
     font-size: 0.875rem;
     white-space: nowrap;
+    margin: 0;
 }
 .captures-table th, .captures-table td {
     padding: 0.4rem 0.75rem;
-    border-bottom: 1px solid #eee;
-    border-right: 1px solid #eee;
-    background: #fff;
+    border-bottom: 1px solid var(--pico-muted-border-color);
+    border-right: 1px solid var(--pico-muted-border-color);
+    background: var(--pico-background-color);
+    color: var(--pico-color);
 }
 .captures-table thead th {
-    background: #f4f4f4;
+    background: var(--pico-card-background-color);
     position: sticky;
     top: 0;
     z-index: 1;
     font-weight: 600;
+    color: var(--pico-color);
 }
 .sticky-col {
     position: sticky;
-    background: #fff;
+    background: var(--pico-background-color);
     z-index: 2;
 }
 .col-hotkey { left: 0; min-width: 160px; }
-.col-name   { left: 160px; min-width: 110px; border-right: 2px solid #888 !important; }
-.captures-table thead th.sticky-col { z-index: 3; background: #f4f4f4; }
+.col-name   {
+    left: 160px;
+    min-width: 110px;
+    border-right: 2px solid var(--pico-muted-border-color) !important;
+}
+.captures-table thead th.sticky-col {
+    z-index: 3;
+    background: var(--pico-card-background-color);
+}
 .time-col {
     min-width: 90px;
-    font-family: monospace;
+    font-family: var(--pico-font-family-monospace);
     font-weight: 500;
-    color: #555;
 }
 .cell {
-    font-family: monospace;
+    font-family: var(--pico-font-family-monospace);
     text-align: right;
 }
-.cell .missing { color: #aaa; }
+.cell .missing { color: var(--pico-muted-color); }
 .cell .deregistered {
-    color: #c0392b;
+    color: var(--pico-del-color, #c0392b);
     font-weight: bold;
 }
 </style>

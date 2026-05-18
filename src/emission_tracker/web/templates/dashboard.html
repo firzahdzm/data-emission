@@ -19,7 +19,7 @@
 </section>
 
 <section>
-    <h2>Akumulasi ({{ active_range }}): {{ "%.4f"|format(total_cumulative) }} alpha</h2>
+    <h2>Akumulasi ({{ active_range }}): {{ total_cumulative | alpha }}</h2>
 </section>
 
 <table>
@@ -33,7 +33,7 @@
         {% for p in persons %}
         <tr>
             <td><a href="/person/{{ p.name }}?range={{ active_range }}">{{ p.name }}</a></td>
-            <td>{{ "%.4f"|format(p.cumulative) }}</td>
+            <td>{{ p.cumulative | alpha }}</td>
         </tr>
         {% endfor %}
     </tbody>

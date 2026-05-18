@@ -4,7 +4,7 @@
 <p><a href="/?range={{ active_range }}">← Back to dashboard</a></p>
 
 <h2>{{ name }}</h2>
-<p>Akumulasi ({{ active_range }}): {{ "%.4f"|format(total_cumulative) }} alpha</p>
+<p>Akumulasi ({{ active_range }}): {{ total_cumulative | alpha }}</p>
 
 <canvas id="cumChart" width="800" height="300"></canvas>
 <canvas id="perSnapChart" width="800" height="300"></canvas>
@@ -18,17 +18,22 @@
 
 <script>
 const labels = {{ chart_labels|tojson }};
+// Chart data already converted RAO → alpha server-side
 const cumulative = {{ chart_cumulative|tojson }};
 const perSnap = {{ chart_per_snap|tojson }};
 
+const yAxis = { title: { display: true, text: 'alpha (α)' } };
+
 new Chart(document.getElementById('cumChart'), {
     type: 'line',
-    data: { labels, datasets: [{ label: 'Cumulative', data: cumulative, fill: false }] },
+    data: { labels, datasets: [{ label: 'Cumulative (α)', data: cumulative, fill: false }] },
+    options: { scales: { y: yAxis } },
 });
 
 new Chart(document.getElementById('perSnapChart'), {
     type: 'bar',
-    data: { labels, datasets: [{ label: 'Per snapshot', data: perSnap }] },
+    data: { labels, datasets: [{ label: 'Per snapshot (α)', data: perSnap }] },
+    options: { scales: { y: yAxis } },
 });
 </script>
 

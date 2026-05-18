@@ -6,12 +6,16 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from emission_tracker.units import format_alpha, rao_to_alpha
 from emission_tracker.web import queries
 from emission_tracker.web.range_parse import parse_range
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+# Register Jinja2 filters: RAO → alpha conversion + format
+templates.env.filters["alpha"] = format_alpha
+templates.env.filters["to_alpha"] = rao_to_alpha
 
 
 def _db(request: Request) -> sqlite3.Connection:
@@ -85,8 +89,8 @@ def register_pages(app: FastAPI) -> None:
                 "hotkeys": hotkeys,
                 "total_cumulative": total,
                 "chart_labels": [str(s["taken_at"]) for s in series],
-                "chart_cumulative": [s["cumulative"] for s in series],
-                "chart_per_snap": [s["per_snapshot_emission"] for s in series],
+                "chart_cumulative": [rao_to_alpha(s["cumulative"]) for s in series],
+                "chart_per_snap": [rao_to_alpha(s["per_snapshot_emission"]) for s in series],
                 "active_range": range or "all",
                 "latest": latest,
             },

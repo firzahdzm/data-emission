@@ -32,8 +32,9 @@ def app(memory_db: sqlite3.Connection):
         "INSERT INTO snapshots (id, taken_at, status) VALUES (1, ?, 'ok')",
         (datetime(2026, 5, 17, 0, 0, tzinfo=timezone.utc),),
     )
-    conn.execute("INSERT INTO neuron_snapshots VALUES (1, ?, 10, 1.0, 1)", (HK_F1,))
-    conn.execute("INSERT INTO neuron_snapshots VALUES (1, ?, 11, 0.5, 1)", (HK_F2,))
+    # Emission stored in RAO (10^9 = 1 alpha). 1.0 α + 0.5 α = 1.5 α total.
+    conn.execute("INSERT INTO neuron_snapshots VALUES (1, ?, 10, 1_000_000_000, 1)", (HK_F1,))
+    conn.execute("INSERT INTO neuron_snapshots VALUES (1, ?, 11, 500_000_000, 1)", (HK_F2,))
     conn.commit()
     a = FastAPI()
     a.state.db_conn = conn
@@ -47,7 +48,8 @@ def test_dashboard_renders_with_person_row(app):
     resp = client.get("/")
     assert resp.status_code == 200
     assert "Alice" in resp.text
-    assert "1.5" in resp.text  # cumulative
+    # 1.5 alpha (= 1.5 × 10^9 RAO seeded) should be displayed as "1.5000 α"
+    assert "1.5000 α" in resp.text
 
 
 def test_dashboard_with_range_preset(app):

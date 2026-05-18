@@ -17,7 +17,36 @@ def test_init_schema_creates_all_tables(memory_db: sqlite3.Connection):
         "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
     )
     tables = [row["name"] for row in cursor.fetchall()]
-    assert tables == ["hotkeys", "neuron_snapshots", "persons", "snapshots"]
+    assert tables == [
+        "hotkeys",
+        "neuron_snapshots",
+        "persons",
+        "settlement_lines",
+        "settlements",
+        "snapshots",
+    ]
+
+
+def test_settlements_fk_cascade_to_lines(memory_db: sqlite3.Connection):
+    init_schema(memory_db)
+    # seed a snapshot to reference
+    memory_db.execute(
+        "INSERT INTO snapshots (id, taken_at, status) "
+        "VALUES (1, CURRENT_TIMESTAMP, 'ok')"
+    )
+    memory_db.execute(
+        "INSERT INTO settlements (id, settled_at, settled_through_snapshot_id, total_cumulative_rao) "
+        "VALUES (1, CURRENT_TIMESTAMP, 1, 0)"
+    )
+    memory_db.execute(
+        "INSERT INTO settlement_lines (settlement_id, hotkey_ss58, person_name, cumulative_rao) "
+        "VALUES (1, '5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1', 'Alice', 1000)"
+    )
+    memory_db.commit()
+    assert memory_db.execute("SELECT COUNT(*) FROM settlement_lines").fetchone()[0] == 1
+    memory_db.execute("DELETE FROM settlements WHERE id = 1")
+    memory_db.commit()
+    assert memory_db.execute("SELECT COUNT(*) FROM settlement_lines").fetchone()[0] == 0
 
 
 def test_init_schema_is_idempotent(memory_db: sqlite3.Connection):

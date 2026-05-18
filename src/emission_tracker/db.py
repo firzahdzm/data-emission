@@ -56,8 +56,27 @@ SCHEMA_STATEMENTS = [
         PRIMARY KEY (snapshot_id, hotkey_ss58)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS settlements (
+        id                          INTEGER PRIMARY KEY,
+        settled_at                  TIMESTAMP NOT NULL,
+        settled_through_snapshot_id INTEGER NOT NULL REFERENCES snapshots(id),
+        note                        TEXT,
+        total_cumulative_rao        INTEGER NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS settlement_lines (
+        settlement_id   INTEGER NOT NULL REFERENCES settlements(id) ON DELETE CASCADE,
+        hotkey_ss58     TEXT    NOT NULL,
+        person_name     TEXT    NOT NULL,
+        cumulative_rao  INTEGER NOT NULL,
+        PRIMARY KEY (settlement_id, hotkey_ss58)
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_neuron_snap_hotkey ON neuron_snapshots(hotkey_ss58)",
     "CREATE INDEX IF NOT EXISTS idx_snapshots_taken_at ON snapshots(taken_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_settlements_through ON settlements(settled_through_snapshot_id)",
 ]
 
 

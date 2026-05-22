@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="kpi-grid">
+    <article class="kpi-card kpi-ok">
+        <span class="kpi-label">Saldo kas saat ini</span>
+        <div class="kpi-value" style="font-size: 1.3rem;">{{ totals.balance | idr }}</div>
+        <div class="kpi-sub">tersedia untuk didistribusikan</div>
+    </article>
+    <article class="kpi-card">
+        <span class="kpi-label">Total terkumpul</span>
+        <div class="kpi-value" style="font-size: 1.3rem;">{{ totals.contributed | idr }}</div>
+        <div class="kpi-sub">70% × emisi sejak project start</div>
+    </article>
+    <article class="kpi-card">
+        <span class="kpi-label">Total terdistribusi</span>
+        <div class="kpi-value" style="font-size: 1.3rem;">{{ totals.distributed | idr }}</div>
+        <div class="kpi-sub">sudah dibagikan ke tim</div>
+    </article>
+    {% if is_admin %}
+    <article class="kpi-card"
+        style="display: flex; flex-direction: column; justify-content: center; align-items: stretch;">
+        <span class="kpi-label">Admin actions</span>
+        <button id="distribute-btn" style="margin-top: 0.4rem;" {% if totals.balance <= 0 %}disabled{% endif %}>
+            Distribusi kas
+        </button>
+        <div class="kpi-sub" style="margin-top: 0.4rem;">
+            {% if totals.balance > 0 %}split by all-time emission share{% else %}saldo kas kosong{% endif %}
+        </div>
+    </article>
+    {% endif %}
+</div>
+
+<section class="panel" style="padding: 0; overflow: hidden;">
+    <header style="padding: 0.85rem 1.25rem 0;">All-time contribution (untuk weighting distribusi)</header>
+    <p style="padding: 0 1.25rem 0.5rem; color: var(--pico-muted-color); font-size: 0.875rem; margin: 0;">
+        Sum emisi setiap orang dari semua settlement (period) yang sudah pernah di-close.
+    </p>
+    <table class="kas-table">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th class="num">All-time emisi</th>
+                <th class="num">% share</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for c in contributions %}
+            <tr>
+                <td><strong>{{ c.name }}</strong></td>
+                <td class="num text-mono">{{ c.cumulative_rao | alpha }}</td>
+                <td class="num text-mono text-muted">{{ "%.2f"|format(c.share_pct) }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+<section class="panel" style="padding: 0; overflow: hidden;">
+    <header style="padding: 0.85rem 1.25rem 0;">Distribution history</header>
+    {% if distributions %}
+    <table class="kas-table">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Distributed at</th>
+                <th class="num">Amount</th>
+                <th>Note</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for d in distributions %}
+            <tr onclick="location.href='/kas/{{ d.id }}'" style="cursor: pointer;">
+                <td class="text-mono">#{{ d.id }}</td>
+                <td>{{ d.distributed_at | dt_s }}</td>
+                <td class="num text-mono"><strong>{{ d.amount_idr | idr }}</strong></td>
+                <td>{{ d.note or "—" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="padding: 1rem 1.25rem;">Belum ada distribusi kas.</p>
+    {% endif %}
+</section>
+
+{% if is_admin %}
+<script>
+    function _parseIdr(input) {
+        if (input === null || input === undefined) return null;
+        const trimmed = String(input).trim().toLowerCase();
+        if (trimmed === '') return 0;
+        if (trimmed.endsWith('jt')) {
+            const n = parseFloat(trimmed.slice(0, -2).replace(/[.,]/g, ''));
+            return isNaN(n) ? null : Math.round(n * 1_000_000);
+        }
+        const n = parseInt(trimmed.replace(/[.,\s]/g, ''), 10);
+        return isNaN(n) ? null : n;
+    }
+    function _idr(n) { return 'Rp ' + Number(n).toLocaleString('id-ID'); }
+
+    const BALANCE = {{ totals.balance }};
+    const btn = document.getElementById('distribute-btn');
+    if (btn) btn.addEventListener('click', async function () {
+        const raw = prompt(
+            "Distribusi kas bersama.\n\n" +
+            "Saldo tersedia: " + _idr(BALANCE) + "\n\n" +
+            "Jumlah yang dibagikan (Rp). Contoh: 50jt atau 50000000."
+        );
+        if (raw === null) return;
+        const amount = _parseIdr(raw);
+        if (amount === null || amount <= 0) {
+            alert('Jumlah tidak valid.');
+            return;
+        }
+        if (amount > BALANCE) {
+            alert('Jumlah melebihi saldo kas (' + _idr(BALANCE) + ').');
+            return;
+        }
+
+        // Preview shares
+        const previewResp = await fetch('/api/kas/preview?amount_idr=' + amount);
+        if (!previewResp.ok) {
+            alert('Gagal preview.');
+            return;
+        }
+        const preview = await previewResp.json();
+        let previewLines = preview.shares
+            .map(s => '  ' + s.name + ': ' + _idr(s.share_idr))
+            .join('\n');
+
+        const note = prompt(
+            "Distribusi: " + _idr(amount) + "\n\n" +
+            "Preview share per orang (by all-time emission):\n" +
+            previewLines + "\n\n" +
+            "Catatan untuk distribusi ini (opsional):"
+        );
+        if (note === null) return;
+
+        if (!confirm("Konfirmasi distribusi " + _idr(amount) + "?\n\nLanjut?")) return;
+
+        this.disabled = true;
+        this.textContent = 'Distributing…';
+        const resp = await fetch('/api/kas/distributions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ amount_idr: amount, note: note || null }),
+        });
+        if (resp.ok) {
+            const data = await resp.json();
+            location.href = '/kas/' + data.id;
+        } else {
+            const err = await resp.json().catch(() => ({}));
+            alert('Failed: ' + (err.detail || resp.statusText));
+            this.disabled = false;
+            this.textContent = 'Distribusi kas';
+        }
+    });
+</script>
+{% endif %}
+
+<style>
+    .kas-table th,
+    .kas-table td {
+        padding: 0.55rem 0.85rem;
+        border-bottom: 1px solid var(--pico-muted-border-color);
+        font-size: 0.9rem;
+    }
+    .kas-table tbody tr:hover {
+        background: var(--pico-card-sectionning-background-color, var(--pico-card-background-color));
+    }
+</style>
+
+{% endblock %}

@@ -19,6 +19,8 @@ def test_init_schema_creates_all_tables(memory_db: sqlite3.Connection):
     tables = [row["name"] for row in cursor.fetchall()]
     assert tables == [
         "hotkeys",
+        "kas_distribution_lines",
+        "kas_distributions",
         "neuron_snapshots",
         "persons",
         "settlement_lines",

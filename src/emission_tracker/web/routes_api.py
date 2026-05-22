@@ -17,8 +17,12 @@ class SettlementCreateBody(BaseModel):
 
 
 class SettlementDistributionBody(BaseModel):
-    total_idr: int
-    base_salary_idr: int
+    token_price_idr: int
+
+
+class KasDistributionBody(BaseModel):
+    amount_idr: int
+    note: str | None = None
 
 
 def _db(request: Request) -> sqlite3.Connection:
@@ -146,20 +150,91 @@ def set_settlement_distribution_endpoint(
     user: str = Depends(require_admin),
 ):
     """Admin only. Compute or recompute the IDR payout distribution for an
-    existing settlement. Safe to call repeatedly — each call overwrites the
-    previous distribution."""
+    existing settlement using the current token price.
+
+    Per line: reward_idr = 30% × (cum_alpha × token_price),
+              kas_contribution_idr = the remaining 70%.
+    Safe to call repeatedly — each call overwrites the previous distribution."""
     try:
         updated = queries.set_settlement_distribution(
             _db(request),
             settlement_id,
-            total_idr=body.total_idr,
-            base_salary_idr=body.base_salary_idr,
+            token_price_idr=body.token_price_idr,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if updated is None:
         raise HTTPException(status_code=404, detail="Settlement not found")
     return updated
+
+
+# ---- Kas Bersama endpoints ----
+
+
+@router.get("/kas/balance")
+def get_kas_balance(request: Request):
+    """Running balance of kas bersama: total contributed (70% × every
+    settlement's emission_idr) minus total already distributed."""
+    return queries.kas_totals(_db(request))
+
+
+@router.get("/kas/preview")
+def preview_kas(request: Request, amount_idr: int = Query(ge=0)):
+    """Read-only preview of how `amount_idr` would split across all-time
+    contributors. Useful for the Distribusi kas form before confirming."""
+    try:
+        return {"shares": queries.preview_kas_distribution(_db(request), amount_idr)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/kas/distributions")
+def list_kas(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    return {
+        "distributions": queries.list_kas_distributions(_db(request), limit=limit),
+        "limit": limit,
+    }
+
+
+@router.get("/kas/distributions/{distribution_id}")
+def kas_distribution_detail_endpoint(request: Request, distribution_id: int):
+    detail = queries.kas_distribution_detail(_db(request), distribution_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Kas distribution not found")
+    return detail
+
+
+@router.post("/kas/distributions", status_code=201)
+def create_kas_distribution_endpoint(
+    request: Request,
+    body: KasDistributionBody,
+    user: str = Depends(require_admin),
+):
+    """Admin only. Freeze a kas-bersama distribution: per-person share
+    proportional to their all-time emission (across all settlement_lines).
+    Decrements the running kas balance."""
+    try:
+        return queries.create_kas_distribution(
+            _db(request), amount_idr=body.amount_idr, note=body.note
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/kas/distributions/{distribution_id}", status_code=204)
+def delete_kas_distribution_endpoint(
+    request: Request,
+    distribution_id: int,
+    user: str = Depends(require_admin),
+):
+    """Admin only. Remove a kas distribution. Its amount returns to the
+    running balance."""
+    if not queries.delete_kas_distribution(_db(request), distribution_id):
+        raise HTTPException(status_code=404, detail="Kas distribution not found")
+    return None
 
 
 @router.get("/snapshots")

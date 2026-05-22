@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block content %}
+
+<p style="margin: 0 0 1rem;"><a href="/kas">← Back to kas</a></p>
+
+<div class="kpi-grid">
+    <article class="kpi-card">
+        <span class="kpi-label">Kas distribution</span>
+        <div class="kpi-value">#{{ distribution.id }}</div>
+        <div class="kpi-sub">{{ distribution.distributed_at | dt_s }}</div>
+    </article>
+    <article class="kpi-card kpi-ok">
+        <span class="kpi-label">Total dibagikan</span>
+        <div class="kpi-value" style="font-size: 1.3rem;">{{ distribution.amount_idr | idr }}</div>
+        <div class="kpi-sub">terdistribusi ke {{ distribution.lines | length }} orang</div>
+    </article>
+    {% if is_admin %}
+    <article class="kpi-card"
+        style="display: flex; flex-direction: column; justify-content: center; align-items: stretch;">
+        <span class="kpi-label">Admin actions</span>
+        <button id="delete-kas-btn"
+            style="margin-top: 0.4rem; background: var(--pico-del-color, #c0392b); border-color: var(--pico-del-color, #c0392b);">
+            Delete distribution
+        </button>
+        <div class="kpi-sub" style="margin-top: 0.4rem;">amount returns to balance</div>
+    </article>
+    {% endif %}
+</div>
+
+{% if distribution.note %}
+<section class="panel">
+    <header>Note</header>
+    <p style="margin: 0;">{{ distribution.note }}</p>
+</section>
+{% endif %}
+
+<section class="panel" style="padding: 0; overflow: hidden;">
+    <header style="padding: 0.85rem 1.25rem 0;">Per-person share</header>
+    <p style="padding: 0 1.25rem 0.5rem; color: var(--pico-muted-color); font-size: 0.875rem; margin: 0;">
+        Share dihitung dari all-time emission per orang saat distribusi ini dibuat.
+    </p>
+    <table class="kas-table">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th class="num">All-time emisi (saat distribusi)</th>
+                <th class="num">Share</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for line in distribution.lines %}
+            <tr>
+                <td><strong>{{ line.person_name }}</strong></td>
+                <td class="num text-mono">{{ line.all_time_emission_rao | alpha }}</td>
+                <td class="num text-mono"><strong>{{ line.share_idr | idr }}</strong></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot>
+            <tr>
+                <td><strong>Total</strong></td>
+                <td></td>
+                <td class="num text-mono"><strong>{{ distribution.amount_idr | idr }}</strong></td>
+            </tr>
+        </tfoot>
+    </table>
+</section>
+
+{% if is_admin %}
+<script>
+    document.getElementById('delete-kas-btn').addEventListener('click', async function () {
+        const ok = confirm(
+            "Delete kas distribution #{{ distribution.id }}?\n\n" +
+            "Jumlah {{ distribution.amount_idr | idr }} akan kembali ke saldo kas.\n\n" +
+            "Lanjut?"
+        );
+        if (!ok) return;
+        this.disabled = true;
+        this.textContent = 'Deleting…';
+        const resp = await fetch('/api/kas/distributions/{{ distribution.id }}', { method: 'DELETE' });
+        if (resp.status === 204) {
+            location.href = '/kas';
+        } else {
+            const err = await resp.json().catch(() => ({}));
+            alert('Failed: ' + (err.detail || resp.statusText));
+            this.disabled = false;
+            this.textContent = 'Delete distribution';
+        }
+    });
+</script>
+{% endif %}
+
+<style>
+    .kas-table th,
+    .kas-table td {
+        padding: 0.55rem 0.85rem;
+        border-bottom: 1px solid var(--pico-muted-border-color);
+        font-size: 0.9rem;
+    }
+    .kas-table tfoot td {
+        border-top: 2px solid var(--pico-muted-border-color);
+        border-bottom: none;
+        background: var(--pico-card-sectionning-background-color, var(--pico-card-background-color));
+    }
+</style>
+
+{% endblock %}

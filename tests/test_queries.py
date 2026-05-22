@@ -13,6 +13,7 @@ from emission_tracker.web.queries import (
     dashboard_summary,
     delete_settlement,
     hotkey_series,
+    kas_totals,
     last_settlement,
     last_settlement_snapshot_id,
     latest_snapshot,
@@ -509,60 +510,154 @@ def test_settlement_detail_returns_none_for_unknown(seeded_db: sqlite3.Connectio
     assert settlement_detail(seeded_db, 9999) is None
 
 
-# ---- set_settlement_distribution ----
+# ---- set_settlement_distribution (token-price scheme) ----
 
-def test_set_distribution_on_emission_only_settlement(seeded_db: sqlite3.Connection):
-    """Settle without IDR, then set distribution afterwards."""
-    settle = create_settlement(seeded_db, note="no IDR yet")
-    assert settle["total_idr"] is None
+def test_set_distribution_token_price_split_30_70(seeded_db: sqlite3.Connection):
+    """Compute distribution: 30% personal reward + 70% kas contribution."""
+    settle = create_settlement(seeded_db, note="just close")
+    assert settle["token_price_idr"] is None
 
+    # Seed cumulative: HK_F1=6.0 RAO, HK_F2=1.5 RAO, HK_I1=0.6 RAO (total 8.1 RAO)
+    # Token price = 1_000_000_000 IDR per alpha (Rp 1jt × 1e9 RAO → tiny per RAO)
+    # Each emission_idr ≈ cum × price / 1e9 → ~0-6 IDR per line. Tiny but legal.
     updated = set_settlement_distribution(
-        seeded_db, settle["id"], total_idr=100_000_000, base_salary_idr=5_000_000
+        seeded_db, settle["id"], token_price_idr=1_000_000_000
     )
-    assert updated["total_idr"] == 100_000_000
-    assert updated["base_salary_idr"] == 5_000_000
-    # Total payout = N persons × 5jt + 0.3 × total = 2 × 5jt + 30jt = 40jt
-    # (rounding may shift by a rupiah)
-    assert abs(updated["total_payout_idr"] - 40_000_000) <= 2
-    # Lines now carry reward_idr > 0
+    assert updated["token_price_idr"] == 1_000_000_000
+
+    # For HK_F1 with cum=6.0 RAO:
+    #   emission_idr = round(6.0 × 1e9 / 1e9) = 6
+    #   reward_idr   = round(6 × 0.3) = 2
+    #   kas_contrib  = 6 - 2 = 4
+    line_hk_f1 = next(line for line in updated["lines"] if line["hotkey_ss58"] == HK_F1)
+    assert line_hk_f1["reward_idr"] == 2
+    assert line_hk_f1["kas_contribution_idr"] == 4
+    # Personal reward + kas contribution = emission_idr exactly
     for line in updated["lines"]:
-        assert line["reward_idr"] >= 0
+        emission_idr = round(line["cumulative_rao"] * 1_000_000_000 / 1_000_000_000)
+        assert line["reward_idr"] + line["kas_contribution_idr"] == emission_idr
 
 
-def test_set_distribution_can_be_re_run_to_edit(seeded_db: sqlite3.Connection):
+def test_set_distribution_realistic_price(seeded_db: sqlite3.Connection):
+    """Token price Rp 5jt per alpha; settlement total emission 8.1 RAO."""
+    # Seed lines have cumulative_rao stored as REAL (e.g., 6.0) — in production
+    # these would be large integers in RAO. Math should still work.
     settle = create_settlement(seeded_db)
-    # First compute
-    a = set_settlement_distribution(
-        seeded_db, settle["id"], total_idr=100_000_000, base_salary_idr=5_000_000
+    updated = set_settlement_distribution(
+        seeded_db, settle["id"], token_price_idr=5_000_000  # Rp 5jt / α
     )
-    first_total = a["total_payout_idr"]
-    # Re-compute with different inputs
-    b = set_settlement_distribution(
-        seeded_db, settle["id"], total_idr=200_000_000, base_salary_idr=0
-    )
-    # New payout = 0 × N + 0.3 × 200jt = 60jt
-    assert abs(b["total_payout_idr"] - 60_000_000) <= 2
-    assert b["total_payout_idr"] != first_total
-    assert b["total_idr"] == 200_000_000
-    assert b["base_salary_idr"] == 0
+    # Total emission ≈ 8.1 RAO → emission_idr_total = round(8.1 × 5jt / 1e9)
+    # That's effectively 0 because 8.1 RAO is sub-alpha. Real prod values are bigger.
+    # We just check shape: totals consistent
+    assert updated["total_personal_reward_idr"] >= 0
+    assert updated["total_kas_contribution_idr"] >= 0
+
+
+def test_set_distribution_recomputes_on_repeat(seeded_db: sqlite3.Connection):
+    settle = create_settlement(seeded_db)
+    a = set_settlement_distribution(seeded_db, settle["id"], token_price_idr=1_000_000_000)
+    b = set_settlement_distribution(seeded_db, settle["id"], token_price_idr=2_000_000_000)
+    # Doubling price should double both reward and kas contribution (roughly)
+    assert b["token_price_idr"] == 2_000_000_000
+    assert b["total_personal_reward_idr"] >= a["total_personal_reward_idr"]
 
 
 def test_set_distribution_returns_none_for_unknown(seeded_db: sqlite3.Connection):
     assert (
-        set_settlement_distribution(
-            seeded_db, 9999, total_idr=100_000_000, base_salary_idr=0
-        )
-        is None
+        set_settlement_distribution(seeded_db, 9999, token_price_idr=1_000) is None
     )
 
 
 def test_set_distribution_rejects_negative(seeded_db: sqlite3.Connection):
     settle = create_settlement(seeded_db)
     with pytest.raises(ValueError, match="non-negative"):
-        set_settlement_distribution(
-            seeded_db, settle["id"], total_idr=-1, base_salary_idr=0
-        )
+        set_settlement_distribution(seeded_db, settle["id"], token_price_idr=-1)
+
+
+# ---- Kas Bersama ----
+
+def test_kas_totals_empty(memory_db: sqlite3.Connection):
+    init_schema(memory_db)
+    sync_team(memory_db, [PersonConfig(name="X", hotkeys=[HK_F1])], subnet_id=56)
+    totals = kas_totals(memory_db)
+    assert totals == {"contributed": 0, "distributed": 0, "balance": 0}
+
+
+def test_kas_balance_after_settlement_with_distribution(seeded_db: sqlite3.Connection):
+    from emission_tracker.web.queries import kas_totals
+    settle = create_settlement(seeded_db)
+    set_settlement_distribution(seeded_db, settle["id"], token_price_idr=1_000_000_000)
+    totals = kas_totals(seeded_db)
+    # contributed > 0 (the 70% from each line)
+    assert totals["contributed"] > 0
+    assert totals["distributed"] == 0
+    assert totals["balance"] == totals["contributed"]
+
+
+def test_all_time_contributions(seeded_db: sqlite3.Connection):
+    from emission_tracker.web.queries import all_time_contributions
+    settle = create_settlement(seeded_db)
+    contribs = all_time_contributions(seeded_db)
+    names = {c["name"] for c in contribs}
+    assert names == {"Alice", "Bob"}
+    # Alice has 2 hotkeys (HK_F1, HK_F2) totaling 7.5 RAO; Bob has 1 (HK_I1) = 0.6
+    alice = next(c for c in contribs if c["name"] == "Alice")
+    assert alice["cumulative_rao"] == 7  # int truncation of 7.5
+    bob = next(c for c in contribs if c["name"] == "Bob")
+    assert bob["cumulative_rao"] == 0  # int truncation of 0.6
+
+
+def test_preview_kas_distribution_sums_to_amount(seeded_db: sqlite3.Connection):
+    from emission_tracker.web.queries import preview_kas_distribution
+    settle = create_settlement(seeded_db)
+    shares = preview_kas_distribution(seeded_db, amount_idr=10_000_000)
+    # Sum must equal amount exactly (last-person remainder fix)
+    assert sum(s["share_idr"] for s in shares) == 10_000_000
+    # Alice (more emission) > Bob
+    by_name = {s["name"]: s for s in shares}
+    assert by_name["Alice"]["share_idr"] >= by_name["Bob"]["share_idr"]
+
+
+def test_create_and_delete_kas_distribution(seeded_db: sqlite3.Connection):
+    from emission_tracker.web.queries import (
+        create_kas_distribution,
+        delete_kas_distribution,
+        kas_totals,
+        list_kas_distributions,
+    )
+    settle = create_settlement(seeded_db)
+    set_settlement_distribution(seeded_db, settle["id"], token_price_idr=1_000_000_000)
+    before = kas_totals(seeded_db)
+    assert before["balance"] > 0
+
+    amount = before["balance"] // 2
+    if amount == 0:
+        amount = 1  # ensure non-zero for the test
+    d = create_kas_distribution(seeded_db, amount_idr=amount, note="test")
+    assert d["amount_idr"] == amount
+    assert sum(line["share_idr"] for line in d["lines"]) == amount
+
+    mid = kas_totals(seeded_db)
+    assert mid["distributed"] == amount
+    assert mid["balance"] == before["balance"] - amount
+
+    # Delete reopens balance
+    assert delete_kas_distribution(seeded_db, d["id"]) is True
+    after = kas_totals(seeded_db)
+    assert after["distributed"] == 0
+    assert after["balance"] == before["balance"]
+
+
+def test_kas_distribution_rejects_overdraw(seeded_db: sqlite3.Connection):
+    from emission_tracker.web.queries import create_kas_distribution, kas_totals
+    settle = create_settlement(seeded_db)
+    set_settlement_distribution(seeded_db, settle["id"], token_price_idr=1_000_000_000)
+    balance = kas_totals(seeded_db)["balance"]
+    with pytest.raises(ValueError, match="Insufficient kas balance"):
+        create_kas_distribution(seeded_db, amount_idr=balance + 1)
+
+
+def test_kas_distribution_rejects_negative(seeded_db: sqlite3.Connection):
+    from emission_tracker.web.queries import create_kas_distribution
     with pytest.raises(ValueError, match="non-negative"):
-        set_settlement_distribution(
-            seeded_db, settle["id"], total_idr=100_000, base_salary_idr=-1
-        )
+        create_kas_distribution(seeded_db, amount_idr=-1)

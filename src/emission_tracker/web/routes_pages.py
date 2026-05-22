@@ -195,13 +195,13 @@ def register_pages(app: FastAPI) -> None:
                 {
                     "name": line["person_name"],
                     "cumulative_rao": 0,
-                    "personal_share_idr": 0,
                     "reward_idr": 0,
+                    "kas_contribution_idr": 0,
                 },
             )
             bucket["cumulative_rao"] += line["cumulative_rao"]
-            bucket["personal_share_idr"] += line["personal_share_idr"]
             bucket["reward_idr"] += line["reward_idr"]
+            bucket["kas_contribution_idr"] += line["kas_contribution_idr"]
         persons_list = sorted(
             per_person.values(),
             key=lambda r: (-r["reward_idr"], -r["cumulative_rao"], r["name"]),
@@ -215,6 +215,53 @@ def register_pages(app: FastAPI) -> None:
                 "persons": persons_list,
                 "latest": latest,
                 "active_page": "archive",
+                "is_admin": is_admin(request),
+            },
+        )
+
+    @app.get("/kas", response_class=HTMLResponse)
+    def kas(request: Request, limit: int = Query(default=50, ge=1, le=500)):
+        conn = _db(request)
+        totals = queries.kas_totals(conn)
+        contributions = queries.all_time_contributions(conn)
+        total_emission = sum(c["cumulative_rao"] for c in contributions)
+        contributions_view = [
+            {
+                **c,
+                "share_pct": (c["cumulative_rao"] / total_emission * 100) if total_emission > 0 else 0,
+            }
+            for c in contributions
+        ]
+        distributions = queries.list_kas_distributions(conn, limit=limit)
+        latest = queries.latest_snapshot(conn)
+        return templates.TemplateResponse(
+            request,
+            "kas.html",
+            {
+                "totals": totals,
+                "contributions": contributions_view,
+                "distributions": distributions,
+                "limit": limit,
+                "latest": latest,
+                "active_page": "kas",
+                "is_admin": is_admin(request),
+            },
+        )
+
+    @app.get("/kas/{distribution_id}", response_class=HTMLResponse)
+    def kas_detail(request: Request, distribution_id: int):
+        conn = _db(request)
+        detail = queries.kas_distribution_detail(conn, distribution_id)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="Kas distribution not found")
+        latest = queries.latest_snapshot(conn)
+        return templates.TemplateResponse(
+            request,
+            "kas_detail.html",
+            {
+                "distribution": detail,
+                "latest": latest,
+                "active_page": "kas",
                 "is_admin": is_admin(request),
             },
         )

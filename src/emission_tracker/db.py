@@ -69,13 +69,31 @@ SCHEMA_STATEMENTS = [
     """,
     """
     CREATE TABLE IF NOT EXISTS settlement_lines (
-        settlement_id       INTEGER NOT NULL REFERENCES settlements(id) ON DELETE CASCADE,
-        hotkey_ss58         TEXT    NOT NULL,
-        person_name         TEXT    NOT NULL,
-        cumulative_rao      INTEGER NOT NULL,
-        personal_share_idr  INTEGER NOT NULL DEFAULT 0,
-        reward_idr          INTEGER NOT NULL DEFAULT 0,
+        settlement_id        INTEGER NOT NULL REFERENCES settlements(id) ON DELETE CASCADE,
+        hotkey_ss58          TEXT    NOT NULL,
+        person_name          TEXT    NOT NULL,
+        cumulative_rao       INTEGER NOT NULL,
+        personal_share_idr   INTEGER NOT NULL DEFAULT 0,   -- legacy, unused after v0.4
+        reward_idr           INTEGER NOT NULL DEFAULT 0,   -- personal reward (30% × emission_idr)
+        kas_contribution_idr INTEGER NOT NULL DEFAULT 0,   -- 70% × emission_idr → kas bersama
         PRIMARY KEY (settlement_id, hotkey_ss58)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS kas_distributions (
+        id                     INTEGER PRIMARY KEY,
+        distributed_at         TIMESTAMP NOT NULL,
+        amount_idr             INTEGER NOT NULL,
+        note                   TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS kas_distribution_lines (
+        distribution_id     INTEGER NOT NULL REFERENCES kas_distributions(id) ON DELETE CASCADE,
+        person_name         TEXT    NOT NULL,
+        all_time_emission_rao INTEGER NOT NULL,
+        share_idr           INTEGER NOT NULL,
+        PRIMARY KEY (distribution_id, person_name)
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_neuron_snap_hotkey ON neuron_snapshots(hotkey_ss58)",
@@ -102,8 +120,10 @@ MIGRATIONS = [
     # column is already there — we catch and ignore that case.
     "ALTER TABLE settlements ADD COLUMN total_idr INTEGER",
     "ALTER TABLE settlements ADD COLUMN base_salary_idr INTEGER",
+    "ALTER TABLE settlements ADD COLUMN token_price_idr INTEGER",
     "ALTER TABLE settlement_lines ADD COLUMN personal_share_idr INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE settlement_lines ADD COLUMN reward_idr INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE settlement_lines ADD COLUMN kas_contribution_idr INTEGER NOT NULL DEFAULT 0",
 ]
 
 

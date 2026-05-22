@@ -16,8 +16,12 @@ def last_settlement_snapshot_id(conn: sqlite3.Connection) -> int:
 _SETTLEMENT_COLS = (
     "id, CAST(settled_at AS TEXT) AS settled_at, "
     "settled_through_snapshot_id, note, total_cumulative_rao, "
-    "total_idr, base_salary_idr"
+    "total_idr, base_salary_idr, token_price_idr"
 )
+
+RAO_PER_ALPHA = 10**9
+PERSONAL_REWARD_PCT = 0.30  # of emission_idr per person
+KAS_CONTRIBUTION_PCT = 0.70  # complement; explicit for readability
 
 
 def last_settlement(conn: sqlite3.Connection) -> dict | None:
@@ -38,7 +42,19 @@ def list_settlements(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
 
 
 def settlement_detail(conn: sqlite3.Connection, settlement_id: int) -> dict | None:
-    """One settlement plus its per-hotkey lines + payout totals."""
+    """One settlement plus its per-hotkey lines + payout totals.
+
+    Distribution semantics (v0.4+):
+        reward_idr (per line)          = 30% × (cum_alpha × token_price_idr)
+        kas_contribution_idr (per line) = 70% × (cum_alpha × token_price_idr)
+        total_personal_reward_idr      = SUM(reward_idr) across lines
+        total_kas_contribution_idr     = SUM(kas_contribution_idr) across lines
+
+    For backward compat, the older `total_idr` / `base_salary_idr` /
+    legacy `kas_bersama_idr` fields are still returned but will be None
+    when token_price_idr is set (the new field). Templates should branch
+    on `token_price_idr is not None` for the new layout.
+    """
     head = conn.execute(
         f"SELECT {_SETTLEMENT_COLS} FROM settlements WHERE id = ?",
         (settlement_id,),
@@ -47,18 +63,20 @@ def settlement_detail(conn: sqlite3.Connection, settlement_id: int) -> dict | No
         return None
     lines = conn.execute(
         "SELECT hotkey_ss58, person_name, cumulative_rao, "
-        "       personal_share_idr, reward_idr "
+        "       personal_share_idr, reward_idr, kas_contribution_idr "
         "FROM settlement_lines WHERE settlement_id = ? "
         "ORDER BY reward_idr DESC, cumulative_rao DESC, person_name, hotkey_ss58",
         (settlement_id,),
     ).fetchall()
     result = {**dict(head), "lines": [dict(line) for line in lines]}
 
-    # Derive payout summary
-    total_payout_idr = sum(line["reward_idr"] for line in result["lines"])
-    result["total_payout_idr"] = total_payout_idr
-    if result["total_idr"] is not None:
-        result["kas_bersama_idr"] = result["total_idr"] - total_payout_idr
+    result["total_personal_reward_idr"] = sum(line["reward_idr"] for line in result["lines"])
+    result["total_kas_contribution_idr"] = sum(line["kas_contribution_idr"] for line in result["lines"])
+    # Legacy fields for backward-compatible templates
+    result["total_payout_idr"] = result["total_personal_reward_idr"]
+    if result["total_idr"] is not None and result["token_price_idr"] is None:
+        # Pre-v0.4 settlement with the old fixed-pot scheme
+        result["kas_bersama_idr"] = result["total_idr"] - result["total_personal_reward_idr"]
     else:
         result["kas_bersama_idr"] = None
     return result
@@ -202,26 +220,25 @@ def create_settlement(
 def set_settlement_distribution(
     conn: sqlite3.Connection,
     settlement_id: int,
-    total_idr: int,
-    base_salary_idr: int,
+    token_price_idr: int,
 ) -> dict | None:
-    """Compute (or recompute) the IDR payout distribution for an existing
-    settlement using its frozen settlement_lines as inputs.
+    """Compute (or recompute) per-line payout for an existing settlement
+    given the current token price (IDR per alpha).
 
-    Returns the updated settlement detail, or None if the settlement_id
-    doesn't exist. Raises ValueError on negative inputs.
+    Per line:
+        emission_idr         = round(cum_rao × token_price_idr / 1e9)
+        reward_idr           = round(emission_idr × 30%)        ← personal reward
+        kas_contribution_idr = emission_idr - reward_idr        ← into kas bersama
 
-    The math mirrors create_settlement's distribution branch:
-        performance_pool = 0.30 * total_idr
-        per_person_share = (person_cum / total_cum) * performance_pool
-        line_share       = (line_cum / person_cum) * per_person_share
-        line_base        = (line_cum / person_cum) * base_salary_idr
-        line_reward      = line_share + line_base
-    Persons with zero emission split base_salary_idr evenly across their
-    hotkeys and get zero performance share.
+    Doing the kas as `emission_idr - reward_idr` (instead of independently
+    rounding) guarantees the two pieces always sum exactly back to
+    emission_idr — no off-by-one cents.
+
+    Returns the updated settlement_detail, or None if id unknown. Raises
+    ValueError on negative price.
     """
-    if total_idr < 0 or base_salary_idr < 0:
-        raise ValueError("total_idr and base_salary_idr must be non-negative")
+    if token_price_idr < 0:
+        raise ValueError("token_price_idr must be non-negative")
 
     head = conn.execute(
         "SELECT id FROM settlements WHERE id = ?", (settlement_id,)
@@ -230,56 +247,184 @@ def set_settlement_distribution(
         return None
 
     lines = conn.execute(
-        "SELECT hotkey_ss58, person_name, cumulative_rao "
+        "SELECT hotkey_ss58, cumulative_rao "
         "FROM settlement_lines WHERE settlement_id = ?",
         (settlement_id,),
     ).fetchall()
 
-    total_cum = sum(line["cumulative_rao"] for line in lines)
-    per_person_cum: dict[str, int] = {}
-    person_hotkey_count: dict[str, int] = {}
     for line in lines:
-        per_person_cum[line["person_name"]] = (
-            per_person_cum.get(line["person_name"], 0) + line["cumulative_rao"]
-        )
-        person_hotkey_count[line["person_name"]] = (
-            person_hotkey_count.get(line["person_name"], 0) + 1
-        )
-
-    performance_pool_idr = int(round(total_idr * PERSONAL_SHARE_PCT))
-    person_shares: dict[str, int] = {}
-    for name, cum in per_person_cum.items():
-        person_shares[name] = (
-            int(round(cum / total_cum * performance_pool_idr))
-            if total_cum > 0
-            else 0
-        )
-
-    for line in lines:
-        person_cum = per_person_cum[line["person_name"]]
-        if person_cum > 0:
-            line_share = int(
-                round(line["cumulative_rao"] / person_cum * person_shares[line["person_name"]])
-            )
-            line_base = int(
-                round(line["cumulative_rao"] / person_cum * base_salary_idr)
-            )
-            line_reward = line_share + line_base
-        else:
-            line_share = 0
-            line_reward = base_salary_idr // person_hotkey_count[line["person_name"]]
+        emission_idr = int(round(line["cumulative_rao"] * token_price_idr / RAO_PER_ALPHA))
+        reward = int(round(emission_idr * PERSONAL_REWARD_PCT))
+        kas = emission_idr - reward  # the remaining 70%, exact
         conn.execute(
-            "UPDATE settlement_lines SET personal_share_idr = ?, reward_idr = ? "
+            "UPDATE settlement_lines SET "
+            "    reward_idr = ?, "
+            "    kas_contribution_idr = ?, "
+            "    personal_share_idr = 0 "  # legacy field zeroed for clarity
             "WHERE settlement_id = ? AND hotkey_ss58 = ?",
-            (line_share, line_reward, settlement_id, line["hotkey_ss58"]),
+            (reward, kas, settlement_id, line["hotkey_ss58"]),
         )
 
     conn.execute(
-        "UPDATE settlements SET total_idr = ?, base_salary_idr = ? WHERE id = ?",
-        (total_idr, base_salary_idr, settlement_id),
+        "UPDATE settlements SET "
+        "    token_price_idr = ?, "
+        "    total_idr = NULL, "         # legacy fields cleared
+        "    base_salary_idr = NULL "
+        "WHERE id = ?",
+        (token_price_idr, settlement_id),
     )
     conn.commit()
     return settlement_detail(conn, settlement_id)
+
+
+# ---- Kas Bersama queries ----
+
+def all_time_contributions(conn: sqlite3.Connection) -> list[dict]:
+    """Per-person all-time emission summed across every settlement_lines row.
+
+    Returns list of {name, cumulative_rao} ordered by cumulative desc.
+    Used to weight kas bersama distribution shares.
+    """
+    rows = conn.execute(
+        """
+        SELECT person_name AS name,
+               COALESCE(SUM(cumulative_rao), 0) AS cumulative_rao
+        FROM settlement_lines
+        GROUP BY person_name
+        ORDER BY cumulative_rao DESC, person_name ASC
+        """
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def kas_totals(conn: sqlite3.Connection) -> dict:
+    """Running balance of kas bersama:
+        contributed = SUM(kas_contribution_idr) across all settlement_lines
+        distributed = SUM(amount_idr) across all kas_distributions
+        balance     = contributed - distributed
+    """
+    contributed = conn.execute(
+        "SELECT COALESCE(SUM(kas_contribution_idr), 0) AS n FROM settlement_lines"
+    ).fetchone()["n"]
+    distributed = conn.execute(
+        "SELECT COALESCE(SUM(amount_idr), 0) AS n FROM kas_distributions"
+    ).fetchone()["n"]
+    return {
+        "contributed": int(contributed),
+        "distributed": int(distributed),
+        "balance": int(contributed) - int(distributed),
+    }
+
+
+def preview_kas_distribution(conn: sqlite3.Connection, amount_idr: int) -> list[dict]:
+    """Preview how `amount_idr` would split across all-time contributors.
+
+    Returns list of {name, all_time_emission_rao, share_idr} ordered by share desc.
+    Sum of share_idr equals amount_idr exactly (last person gets the rounding remainder).
+    """
+    if amount_idr < 0:
+        raise ValueError("amount_idr must be non-negative")
+    contribs = all_time_contributions(conn)
+    total_emission = sum(c["cumulative_rao"] for c in contribs)
+    if total_emission == 0 or not contribs:
+        return [
+            {"name": c["name"], "all_time_emission_rao": c["cumulative_rao"], "share_idr": 0}
+            for c in contribs
+        ]
+    result = []
+    running_total = 0
+    for i, c in enumerate(contribs):
+        if i == len(contribs) - 1:
+            # Last person gets remainder so the total matches exactly
+            share = amount_idr - running_total
+        else:
+            share = int(round(c["cumulative_rao"] / total_emission * amount_idr))
+            running_total += share
+        result.append(
+            {
+                "name": c["name"],
+                "all_time_emission_rao": c["cumulative_rao"],
+                "share_idr": share,
+            }
+        )
+    return result
+
+
+def create_kas_distribution(
+    conn: sqlite3.Connection,
+    amount_idr: int,
+    note: str | None = None,
+) -> dict:
+    """Atomically: snapshot per-person shares (by all-time emission) and
+    insert a kas_distributions header + lines.
+
+    Raises ValueError if amount_idr is negative, or if balance is insufficient.
+    """
+    if amount_idr < 0:
+        raise ValueError("amount_idr must be non-negative")
+    totals = kas_totals(conn)
+    if amount_idr > totals["balance"]:
+        raise ValueError(
+            f"Insufficient kas balance: requested {amount_idr}, available {totals['balance']}"
+        )
+    shares = preview_kas_distribution(conn, amount_idr)
+    now = datetime.now(timezone.utc)
+    cursor = conn.execute(
+        "INSERT INTO kas_distributions (distributed_at, amount_idr, note) "
+        "VALUES (?, ?, ?)",
+        (now, amount_idr, note),
+    )
+    distribution_id = cursor.lastrowid
+    for s in shares:
+        conn.execute(
+            "INSERT INTO kas_distribution_lines "
+            "(distribution_id, person_name, all_time_emission_rao, share_idr) "
+            "VALUES (?, ?, ?, ?)",
+            (distribution_id, s["name"], s["all_time_emission_rao"], s["share_idr"]),
+        )
+    conn.commit()
+    return kas_distribution_detail(conn, distribution_id)
+
+
+def delete_kas_distribution(conn: sqlite3.Connection, distribution_id: int) -> bool:
+    """Delete a kas distribution + cascade its lines. The balance is
+    automatically reopened (since balance = contributed - distributed).
+
+    Returns True if a row was deleted.
+    """
+    cursor = conn.execute(
+        "DELETE FROM kas_distributions WHERE id = ?", (distribution_id,)
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def list_kas_distributions(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
+    cursor = conn.execute(
+        "SELECT id, CAST(distributed_at AS TEXT) AS distributed_at, "
+        "       amount_idr, note "
+        "FROM kas_distributions ORDER BY id DESC LIMIT ?",
+        (limit,),
+    )
+    return [dict(r) for r in cursor.fetchall()]
+
+
+def kas_distribution_detail(conn: sqlite3.Connection, distribution_id: int) -> dict | None:
+    head = conn.execute(
+        "SELECT id, CAST(distributed_at AS TEXT) AS distributed_at, "
+        "       amount_idr, note "
+        "FROM kas_distributions WHERE id = ?",
+        (distribution_id,),
+    ).fetchone()
+    if head is None:
+        return None
+    lines = conn.execute(
+        "SELECT person_name, all_time_emission_rao, share_idr "
+        "FROM kas_distribution_lines WHERE distribution_id = ? "
+        "ORDER BY share_idr DESC, person_name ASC",
+        (distribution_id,),
+    ).fetchall()
+    return {**dict(head), "lines": [dict(line) for line in lines]}
 
 
 def delete_settlement(conn: sqlite3.Connection, settlement_id: int) -> bool:

@@ -36,10 +36,29 @@
         <div class="kpi-sub">last included in this period</div>
     </article>
     {% endif %}
+    <article class="kpi-card {% if settlement.paid_at %}kpi-ok{% else %}kpi-warn{% endif %}">
+        <span class="kpi-label">Payout status</span>
+        {% if settlement.paid_at %}
+        <div class="kpi-value" style="font-size: 1.3rem;">Paid</div>
+        <div class="kpi-sub">on {{ settlement.paid_at | dt_s }}</div>
+        {% else %}
+        <div class="kpi-value" style="font-size: 1.3rem;">Unpaid</div>
+        <div class="kpi-sub">not yet disbursed to team</div>
+        {% endif %}
+    </article>
     {% if is_admin %}
     <article class="kpi-card"
         style="display: flex; flex-direction: column; justify-content: center; align-items: stretch;">
         <span class="kpi-label">Admin actions</span>
+        {% if settlement.paid_at %}
+        <button id="toggle-paid-btn" data-action="unpaid" style="margin-top: 0.4rem;">
+            Mark as unpaid
+        </button>
+        {% else %}
+        <button id="toggle-paid-btn" data-action="paid" style="margin-top: 0.4rem;">
+            Mark as paid
+        </button>
+        {% endif %}
         <button id="delete-settlement-btn"
             style="margin-top: 0.4rem; background: var(--pico-del-color, #c0392b); border-color: var(--pico-del-color, #c0392b);">
             Delete settlement
@@ -55,45 +74,10 @@
 </section>
 {% endif %}
 
-{% if is_admin %}
-<section class="panel">
-    <header>
-        Distribusi uang
-        {% if settlement.token_price_usd is not none %}
-        <span style="float: right;">
-            <button id="edit-dist-btn" type="button" style="margin: 0; padding: 0.25rem 0.7rem; font-size: 0.78rem;">
-                Edit token price
-            </button>
-        </span>
-        {% endif %}
-    </header>
-    {% if settlement.token_price_usd is none %}
-    <p class="text-muted" style="margin: 0 0 0.75rem; font-size: 0.875rem;">
-        Not yet computed. Enter the token price (USD per 1 α) when this period was settled →
-        auto-computes personal reward (30%) + kas contribution (70%) per person.
-    </p>
-    {% endif %}
-    <form id="dist-form" {% if settlement.token_price_usd is not none %}style="display: none;"{% endif %}
-          class="filter-form" style="gap: 0.85rem;">
-        <label>
-            Token price (USD per 1 α)
-            <input id="dist-price" type="text" placeholder="5, 5k, or 5000"
-                   value="{{ settlement.token_price_usd or '' }}" style="width: 200px;">
-        </label>
-        <button id="dist-submit-btn" type="button">
-            {% if settlement.token_price_usd is none %}Compute distribution{% else %}Update token price{% endif %}
-        </button>
-        {% if settlement.token_price_usd is not none %}
-        <button id="dist-cancel-btn" type="button" style="background: transparent; color: var(--pico-muted-color); border-color: var(--pico-muted-border-color);">
-            Cancel
-        </button>
-        {% endif %}
-    </form>
-</section>
-{% elif settlement.token_price_usd is none %}
+{% if settlement.token_price_usd is none %}
 <section class="panel">
     <p class="text-muted" style="margin: 0; font-size: 0.875rem;">
-        Distribution not yet computed. Admin can enter the token price from the settlement detail page.
+        ⚠ Legacy settlement without token price. New settlements always include the price set at Close Period.
     </p>
 </section>
 {% endif %}
@@ -173,78 +157,29 @@
 
 {% if is_admin %}
 <script>
-    function _parseUsd(input) {
-        // Accepts decimals: "5.25", "0.05", "5k" → 5000, "1.5k" → 1500,
-        // "5m" → 5_000_000, "" → 0; null → null
-        if (input === null || input === undefined) return null;
-        const trimmed = String(input).trim().toLowerCase();
-        if (trimmed === '') return 0;
-        if (trimmed.endsWith('m')) {
-            const n = parseFloat(trimmed.slice(0, -1).replace(/,/g, ''));
-            return isNaN(n) ? null : n * 1_000_000;
-        }
-        if (trimmed.endsWith('k')) {
-            const n = parseFloat(trimmed.slice(0, -1).replace(/,/g, ''));
-            return isNaN(n) ? null : n * 1_000;
-        }
-        const n = parseFloat(trimmed.replace(/[,\s]/g, ''));
-        return isNaN(n) ? null : n;
-    }
-    function _fmtUsd(n) {
-        if (n == null) return '—';
-        const abs = Math.abs(n);
-        const sign = n < 0 ? '-' : '';
-        if (abs === Math.floor(abs)) {
-            return sign + '$' + abs.toLocaleString('en-US');
-        }
-        return sign + '$' + abs.toLocaleString('en-US', {
-            minimumFractionDigits: 2, maximumFractionDigits: 4
-        });
-    }
-
-    const distForm = document.getElementById('dist-form');
-    const editBtn = document.getElementById('edit-dist-btn');
-    const cancelBtn = document.getElementById('dist-cancel-btn');
-    if (editBtn) {
-        editBtn.addEventListener('click', () => {
-            distForm.style.display = '';
-            editBtn.style.display = 'none';
-        });
-    }
-    if (cancelBtn) {
-        cancelBtn.addEventListener('click', () => {
-            distForm.style.display = 'none';
-            if (editBtn) editBtn.style.display = '';
-        });
-    }
-    document.getElementById('dist-submit-btn').addEventListener('click', async function () {
-        const price = _parseUsd(document.getElementById('dist-price').value);
-        if (price === null || price < 0) {
-            alert('Invalid token price (must be a non-negative number).');
-            return;
-        }
-        const fmt = _fmtUsd(price);
-        if (!confirm(
-            "Set token price = " + fmt + " per 1 α?\n\n" +
-            "Per line:\n" +
-            "  reward            = emission × price × 30%\n" +
-            "  kas contribution  = emission × price × 70%\n\n" +
-            "Continue?"
-        )) return;
+    document.getElementById('toggle-paid-btn').addEventListener('click', async function () {
+        const action = this.dataset.action;  // 'paid' or 'unpaid'
+        const isMarkingPaid = action === 'paid';
+        const confirmMsg = isMarkingPaid
+            ? "Mark settlement #{{ settlement.id }} as PAID?\n\n" +
+              "This records that the payout has been disbursed to the team. " +
+              "Frozen reward/kas amounts are unaffected — this is a bookkeeping flag only."
+            : "Mark settlement #{{ settlement.id }} back to UNPAID?\n\n" +
+              "The paid timestamp will be cleared.";
+        if (!confirm(confirmMsg)) return;
         this.disabled = true;
-        this.textContent = 'Saving…';
-        const resp = await fetch('/api/settlements/{{ settlement.id }}/distribution', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token_price_usd: price }),
-        });
+        this.textContent = isMarkingPaid ? 'Marking paid…' : 'Marking unpaid…';
+        const endpoint = isMarkingPaid
+            ? '/api/settlements/{{ settlement.id }}/mark-paid'
+            : '/api/settlements/{{ settlement.id }}/mark-unpaid';
+        const resp = await fetch(endpoint, { method: 'POST' });
         if (resp.ok) {
             location.reload();
         } else {
             const err = await resp.json().catch(() => ({}));
             alert('Failed: ' + (err.detail || resp.statusText));
             this.disabled = false;
-            this.textContent = '{% if settlement.token_price_usd is none %}Compute distribution{% else %}Update token price{% endif %}';
+            this.textContent = isMarkingPaid ? 'Mark as paid' : 'Mark as unpaid';
         }
     });
 

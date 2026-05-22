@@ -2,7 +2,7 @@
 {% block content %}
 
 <section class="panel">
-    <header>Archive</header>
+    <header>Periods</header>
     <p class="text-muted" style="margin: 0 0 0.75rem; font-size: 0.875rem;">
         Past settlements (close-period events). Each entry freezes the accumulated emission
         since the previous settlement into an immutable record. Click a row for per-hotkey breakdown.
@@ -26,6 +26,7 @@
                 <th>Through snapshot</th>
                 <th>Note</th>
                 <th class="num">Total frozen</th>
+                <th>Status</th>
             </tr>
         </thead>
         <tbody>
@@ -36,6 +37,13 @@
                 <td class="text-mono text-muted">snapshot #{{ s.settled_through_snapshot_id }}</td>
                 <td>{{ s.note or "—" }}</td>
                 <td class="num text-mono">{{ s.total_cumulative_rao | alpha }}</td>
+                <td>
+                    {% if s.paid_at %}
+                    <span class="badge badge-ok" title="Paid {{ s.paid_at | dt_s }}">paid</span>
+                    {% else %}
+                    <span class="badge badge-warn">unpaid</span>
+                    {% endif %}
+                </td>
             </tr>
             {% endfor %}
         </tbody>

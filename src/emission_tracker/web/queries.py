@@ -20,7 +20,9 @@ _SETTLEMENT_COLS = (
     # every SELECT so the rest of the codebase + API + UI deal in USD.
     "total_idr AS total_usd, "
     "base_salary_idr AS base_salary_usd, "
-    "token_price_idr AS token_price_usd"
+    "token_price_idr AS token_price_usd, "
+    # NULL = unpaid; non-NULL = ISO timestamp when admin marked paid.
+    "CAST(paid_at AS TEXT) AS paid_at"
 )
 
 RAO_PER_ALPHA = 10**9
@@ -86,22 +88,22 @@ PERSONAL_SHARE_PCT = 0.30  # 30% of total_idr allocated to performers by emissio
 
 def create_settlement(
     conn: sqlite3.Connection,
+    token_price_usd: float,
     note: str | None = None,
-    total_idr: int | None = None,
-    base_salary_idr: int | None = None,
 ) -> dict:
-    """Freeze per-hotkey cumulative emission into a settlement record.
+    """Freeze per-hotkey cumulative emission AND compute payout distribution
+    in one atomic step.
 
-    When ``total_idr`` and ``base_salary_idr`` are both provided, compute the
-    payout distribution and store it on each settlement_line:
-        person_share_idr = (cumulative / total_cumulative) * 0.30 * total_idr
-        reward_idr       = base_salary_idr + person_share_idr
-    Per-person rewards aggregate across that person's hotkeys at render time.
-    The remainder (total_idr - sum(reward_idr)) is the "kas bersama" reported
-    by settlement_detail.
+    Per line (computed once and frozen, never editable):
+        emission_usd         = cum_rao × token_price_usd / 1e9
+        reward_usd  (30%)    = round(emission_usd × 0.30, 2)
+        kas_contribution     = round(emission_usd − reward_usd, 2)
 
-    Raises ValueError if there are no new completed snapshots to settle.
+    Raises ValueError if there are no new completed snapshots to settle,
+    or if token_price_usd is negative.
     """
+    if token_price_usd < 0:
+        raise ValueError("token_price_usd must be non-negative")
     last_id = last_settlement_snapshot_id(conn)
     latest = conn.execute(
         "SELECT MAX(id) AS id FROM snapshots "
@@ -141,143 +143,34 @@ def create_settlement(
     ]
     total_cum = sum(r["cumulative"] for r in rows_int)
 
-    # Aggregate per-person cumulative (for per-person base salary)
-    per_person_cum: dict[str, int] = {}
-    for r in rows_int:
-        per_person_cum[r["person_name"]] = (
-            per_person_cum.get(r["person_name"], 0) + r["cumulative"]
-        )
-    person_count = len(per_person_cum)
-
-    # Distribution math (only if both inputs are given)
-    distribute = total_idr is not None and base_salary_idr is not None
-    person_rewards: dict[str, int] = {}
-    person_shares: dict[str, int] = {}
-    if distribute:
-        performance_pool_idr = int(round(total_idr * PERSONAL_SHARE_PCT))
-        for name, cum in per_person_cum.items():
-            share = (
-                int(round(cum / total_cum * performance_pool_idr))
-                if total_cum > 0
-                else 0
-            )
-            person_shares[name] = share
-            person_rewards[name] = base_salary_idr + share
-
     now = datetime.now(timezone.utc)
     cursor = conn.execute(
         "INSERT INTO settlements "
         "(settled_at, settled_through_snapshot_id, note, total_cumulative_rao, "
-        " total_idr, base_salary_idr) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (now, settled_through, note, total_cum, total_idr, base_salary_idr),
+        " token_price_idr) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (now, settled_through, note, total_cum, token_price_usd),
     )
     settlement_id = cursor.lastrowid
 
     for r in rows_int:
-        # Per-hotkey share = its slice of the person's per-person share,
-        # weighted by its contribution to that person's cumulative.
-        person_cum = per_person_cum[r["person_name"]]
-        if distribute and person_cum > 0:
-            line_share = int(
-                round(r["cumulative"] / person_cum * person_shares[r["person_name"]])
-            )
-            # Base salary is paid to the person, attributed proportionally to
-            # their hotkeys so per-line reward_idr sums to the person's reward.
-            line_base = int(
-                round(r["cumulative"] / person_cum * base_salary_idr)
-            ) if person_cum > 0 else (base_salary_idr // max(1, len([x for x in rows_int if x["person_name"] == r["person_name"]])))
-            line_reward = line_base + line_share
-        elif distribute:
-            # Person has 0 emission: split base salary evenly across their hotkeys
-            person_hotkey_count = sum(
-                1 for x in rows_int if x["person_name"] == r["person_name"]
-            )
-            line_share = 0
-            line_reward = base_salary_idr // person_hotkey_count
-        else:
-            line_share = 0
-            line_reward = 0
+        emission_usd = r["cumulative"] * token_price_usd / RAO_PER_ALPHA
+        line_reward = round(emission_usd * PERSONAL_REWARD_PCT, 2)
+        line_kas = round(emission_usd - line_reward, 2)
         conn.execute(
             "INSERT INTO settlement_lines "
             "(settlement_id, hotkey_ss58, person_name, cumulative_rao, "
-            " personal_share_idr, reward_idr) "
+            " reward_idr, kas_contribution_idr) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (
                 settlement_id,
                 r["hotkey"],
                 r["person_name"],
                 r["cumulative"],
-                line_share,
                 line_reward,
+                line_kas,
             ),
         )
-    conn.commit()
-    return settlement_detail(conn, settlement_id)
-
-
-def set_settlement_distribution(
-    conn: sqlite3.Connection,
-    settlement_id: int,
-    token_price_usd: float,
-) -> dict | None:
-    """Compute (or recompute) per-line payout for an existing settlement
-    given the current token price (USD per alpha).
-
-    Per line:
-        emission_usd         = round(cum_rao × token_price_usd / 1e9)
-        reward_usd           = round(emission_usd × 30%)        ← personal reward
-        kas_contribution_usd = emission_usd - reward_usd        ← into kas bersama
-
-    Doing kas as `emission_usd - reward_usd` (instead of independently
-    rounding) guarantees the two pieces always sum exactly back to
-    emission_usd — no off-by-one cents.
-
-    Returns the updated settlement_detail, or None if id unknown. Raises
-    ValueError on negative price.
-
-    Note: the underlying DB columns are named *_idr (legacy from when the
-    app was designed for rupiah). They store USD now. SELECT aliases
-    surface them as *_usd to the rest of the codebase.
-    """
-    if token_price_usd < 0:
-        raise ValueError("token_price_usd must be non-negative")
-
-    head = conn.execute(
-        "SELECT id FROM settlements WHERE id = ?", (settlement_id,)
-    ).fetchone()
-    if head is None:
-        return None
-
-    lines = conn.execute(
-        "SELECT hotkey_ss58, cumulative_rao "
-        "FROM settlement_lines WHERE settlement_id = ?",
-        (settlement_id,),
-    ).fetchall()
-
-    for line in lines:
-        # All math in float; SQLite's type affinity stores into the legacy
-        # INTEGER columns without coercing, preserving cents/sub-cent.
-        emission_usd = line["cumulative_rao"] * token_price_usd / RAO_PER_ALPHA
-        reward = round(emission_usd * PERSONAL_REWARD_PCT, 2)
-        kas = round(emission_usd - reward, 2)
-        conn.execute(
-            "UPDATE settlement_lines SET "
-            "    reward_idr = ?, "
-            "    kas_contribution_idr = ?, "
-            "    personal_share_idr = 0 "
-            "WHERE settlement_id = ? AND hotkey_ss58 = ?",
-            (reward, kas, settlement_id, line["hotkey_ss58"]),
-        )
-
-    conn.execute(
-        "UPDATE settlements SET "
-        "    token_price_idr = ?, "
-        "    total_idr = NULL, "
-        "    base_salary_idr = NULL "
-        "WHERE id = ?",
-        (token_price_usd, settlement_id),
-    )
     conn.commit()
     return settlement_detail(conn, settlement_id)
 
@@ -440,6 +333,40 @@ def delete_settlement(conn: sqlite3.Connection, settlement_id: int) -> bool:
     )
     conn.commit()
     return cursor.rowcount > 0
+
+
+def set_settlement_paid(
+    conn: sqlite3.Connection,
+    settlement_id: int,
+    paid: bool,
+) -> dict | None:
+    """Mark a settlement as paid (paid_at = now) or unpaid (paid_at = NULL).
+
+    This is purely a bookkeeping flag — it does NOT alter the frozen
+    reward / kas-contribution amounts, the kas balance, or the period
+    boundary. It exists so admins can track which periods have actually
+    been disbursed to team members vs which are still pending payout.
+
+    Returns the updated settlement detail dict (same shape as
+    `settlement_detail`), or None if the settlement_id does not exist.
+    """
+    exists = conn.execute(
+        "SELECT 1 FROM settlements WHERE id = ?", (settlement_id,)
+    ).fetchone()
+    if not exists:
+        return None
+    if paid:
+        conn.execute(
+            "UPDATE settlements SET paid_at = ? WHERE id = ?",
+            (datetime.now(timezone.utc), settlement_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE settlements SET paid_at = NULL WHERE id = ?",
+            (settlement_id,),
+        )
+    conn.commit()
+    return settlement_detail(conn, settlement_id)
 
 
 def dashboard_summary(

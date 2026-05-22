@@ -2,11 +2,6 @@
 {% block content %}
 
 <div class="kpi-grid">
-    <article class="kpi-card kpi-ok">
-        <span class="kpi-label">Current balance</span>
-        <div class="kpi-value" style="font-size: 1.3rem;">{{ totals.balance | usd }}</div>
-        <div class="kpi-sub">available to distribute</div>
-    </article>
     <article class="kpi-card">
         <span class="kpi-label">Total contributed</span>
         <div class="kpi-value" style="font-size: 1.3rem;">{{ totals.contributed | usd }}</div>

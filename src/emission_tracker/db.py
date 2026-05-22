@@ -64,7 +64,8 @@ SCHEMA_STATEMENTS = [
         note                        TEXT,
         total_cumulative_rao        INTEGER NOT NULL,
         total_idr                   INTEGER,
-        base_salary_idr             INTEGER
+        base_salary_idr             INTEGER,
+        paid_at                     TIMESTAMP  -- NULL = unpaid; set when admin marks paid
     )
     """,
     """
@@ -124,6 +125,7 @@ MIGRATIONS = [
     "ALTER TABLE settlement_lines ADD COLUMN personal_share_idr INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE settlement_lines ADD COLUMN reward_idr INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE settlement_lines ADD COLUMN kas_contribution_idr INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE settlements ADD COLUMN paid_at TIMESTAMP",
 ]
 
 

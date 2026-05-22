@@ -137,11 +137,12 @@ def test_post_settlement_requires_admin(app_with_db):
     _set_admin_users(app_with_db, ["alice"])
     client = TestClient(app_with_db)
     # No header → 401
-    resp = client.post("/api/settlements", json={})
+    resp = client.post(
+        "/api/settlements", json={"token_price_usd": 1_000_000_000})
     assert resp.status_code == 401
     # Non-admin → 403
     resp = client.post(
-        "/api/settlements", json={}, headers={"X-Remote-User": "bob"}
+        "/api/settlements", json={"token_price_usd": 1_000_000_000}, headers={"X-Remote-User": "bob"}
     )
     assert resp.status_code == 403
 
@@ -151,7 +152,7 @@ def test_post_settlement_creates_record_when_admin(app_with_db):
     client = TestClient(app_with_db)
     resp = client.post(
         "/api/settlements",
-        json={"note": "May payout"},
+        json={"token_price_usd": 1_000_000_000, "note": "May payout"},
         headers={"X-Remote-User": "alice"},
     )
     assert resp.status_code == 201
@@ -165,10 +166,11 @@ def test_post_settlement_returns_400_when_nothing_to_settle(app_with_db):
     _set_admin_users(app_with_db, ["alice"])
     client = TestClient(app_with_db)
     # First settlement succeeds
-    client.post("/api/settlements", json={}, headers={"X-Remote-User": "alice"})
+    client.post(
+        "/api/settlements", json={"token_price_usd": 1_000_000_000}, headers={"X-Remote-User": "alice"})
     # Second one has nothing new
     resp = client.post(
-        "/api/settlements", json={}, headers={"X-Remote-User": "alice"}
+        "/api/settlements", json={"token_price_usd": 1_000_000_000}, headers={"X-Remote-User": "alice"}
     )
     assert resp.status_code == 400
     assert "No new completed snapshots" in resp.json()["detail"]
@@ -178,7 +180,7 @@ def test_delete_settlement_requires_admin(app_with_db):
     _set_admin_users(app_with_db, ["alice"])
     client = TestClient(app_with_db)
     create = client.post(
-        "/api/settlements", json={}, headers={"X-Remote-User": "alice"}
+        "/api/settlements", json={"token_price_usd": 1_000_000_000}, headers={"X-Remote-User": "alice"}
     )
     settlement_id = create.json()["id"]
 
@@ -196,7 +198,7 @@ def test_delete_settlement_admin_204(app_with_db):
     _set_admin_users(app_with_db, ["alice"])
     client = TestClient(app_with_db)
     create = client.post(
-        "/api/settlements", json={}, headers={"X-Remote-User": "alice"}
+        "/api/settlements", json={"token_price_usd": 1_000_000_000}, headers={"X-Remote-User": "alice"}
     )
     settlement_id = create.json()["id"]
 
@@ -219,10 +221,90 @@ def test_delete_settlement_404_unknown(app_with_db):
     assert resp.status_code == 404
 
 
+def test_mark_settlement_paid_requires_admin(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    create = client.post(
+        "/api/settlements",
+        json={"token_price_usd": 1_000_000_000},
+        headers={"X-Remote-User": "alice"},
+    )
+    sid = create.json()["id"]
+    # No auth → 401
+    resp = client.post(f"/api/settlements/{sid}/mark-paid")
+    assert resp.status_code == 401
+    # Non-admin → 403
+    resp = client.post(
+        f"/api/settlements/{sid}/mark-paid",
+        headers={"X-Remote-User": "bob"},
+    )
+    assert resp.status_code == 403
+    # Same for mark-unpaid
+    resp = client.post(f"/api/settlements/{sid}/mark-unpaid")
+    assert resp.status_code == 401
+    resp = client.post(
+        f"/api/settlements/{sid}/mark-unpaid",
+        headers={"X-Remote-User": "bob"},
+    )
+    assert resp.status_code == 403
+
+
+def test_mark_settlement_paid_round_trip(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    create = client.post(
+        "/api/settlements",
+        json={"token_price_usd": 1_000_000_000, "note": "Week 1"},
+        headers={"X-Remote-User": "alice"},
+    )
+    sid = create.json()["id"]
+    # Fresh settlement starts unpaid
+    detail = client.get(f"/api/settlements/{sid}").json()
+    assert detail["paid_at"] is None
+
+    # Mark paid → returns detail with paid_at set
+    resp = client.post(
+        f"/api/settlements/{sid}/mark-paid",
+        headers={"X-Remote-User": "alice"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["paid_at"] is not None
+    # GET also sees the new state
+    assert client.get(f"/api/settlements/{sid}").json()["paid_at"] is not None
+    # Listing also reflects it
+    listing = client.get("/api/settlements").json()["settlements"]
+    assert any(s["id"] == sid and s["paid_at"] is not None for s in listing)
+
+    # Mark unpaid → paid_at clears
+    resp = client.post(
+        f"/api/settlements/{sid}/mark-unpaid",
+        headers={"X-Remote-User": "alice"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["paid_at"] is None
+    assert client.get(f"/api/settlements/{sid}").json()["paid_at"] is None
+
+
+def test_mark_settlement_paid_404_unknown(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    resp = client.post(
+        "/api/settlements/9999/mark-paid",
+        headers={"X-Remote-User": "alice"},
+    )
+    assert resp.status_code == 404
+    resp = client.post(
+        "/api/settlements/9999/mark-unpaid",
+        headers={"X-Remote-User": "alice"},
+    )
+    assert resp.status_code == 404
+
+
 def test_get_settlements_list_no_auth_required(app_with_db):
     _set_admin_users(app_with_db, ["alice"])
     client = TestClient(app_with_db)
-    client.post("/api/settlements", json={"note": "first"}, headers={"X-Remote-User": "alice"})
+    client.post("/api/settlements", json={"token_price_usd": 1_000_000_000, "note": "first"}, headers={"X-Remote-User": "alice"})
     # GET without auth header still works (read-only is public to logged-in basic-auth users)
     resp = client.get("/api/settlements")
     assert resp.status_code == 200
@@ -236,7 +318,7 @@ def test_get_settlement_detail_includes_lines(app_with_db):
     _set_admin_users(app_with_db, ["alice"])
     client = TestClient(app_with_db)
     create = client.post(
-        "/api/settlements", json={}, headers={"X-Remote-User": "alice"}
+        "/api/settlements", json={"token_price_usd": 1_000_000_000}, headers={"X-Remote-User": "alice"}
     )
     settlement_id = create.json()["id"]
 
@@ -248,87 +330,11 @@ def test_get_settlement_detail_includes_lines(app_with_db):
     assert len(detail["lines"]) == 2  # HK_F1 + HK_F2 from app_with_db fixture
 
 
-def test_put_distribution_requires_admin(app_with_db):
-    _set_admin_users(app_with_db, ["alice"])
-    client = TestClient(app_with_db)
-    create = client.post(
-        "/api/settlements", json={}, headers={"X-Remote-User": "alice"}
-    )
-    settlement_id = create.json()["id"]
-
-    body = {"token_price_usd": 5_000_000}
-    # no auth → 401
-    resp = client.put(f"/api/settlements/{settlement_id}/distribution", json=body)
-    assert resp.status_code == 401
-    # non-admin → 403
-    resp = client.put(
-        f"/api/settlements/{settlement_id}/distribution",
-        json=body,
-        headers={"X-Remote-User": "bob"},
-    )
-    assert resp.status_code == 403
 
 
-def test_put_distribution_computes_then_edits(app_with_db):
-    _set_admin_users(app_with_db, ["alice"])
-    client = TestClient(app_with_db)
-    create = client.post(
-        "/api/settlements", json={}, headers={"X-Remote-User": "alice"}
-    )
-    settlement_id = create.json()["id"]
-    # Initially no distribution
-    assert create.json()["token_price_usd"] is None
-
-    # Compute with token_price=1e9 (1 IDR per RAO)
-    resp = client.put(
-        f"/api/settlements/{settlement_id}/distribution",
-        json={"token_price_usd": 1_000_000_000},
-        headers={"X-Remote-User": "alice"},
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["token_price_usd"] == 1_000_000_000
-    first_reward = data["total_personal_reward_usd"]
-    first_kas = data["total_kas_contribution_usd"]
-    # 70% kas vs 30% reward → kas ≈ 2.33 × reward (approx, rounding)
-    assert first_kas > first_reward
-
-    # Edit: double the price → both numbers should double (approximately)
-    resp = client.put(
-        f"/api/settlements/{settlement_id}/distribution",
-        json={"token_price_usd": 2_000_000_000},
-        headers={"X-Remote-User": "alice"},
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["token_price_usd"] == 2_000_000_000
-    assert data["total_personal_reward_usd"] >= first_reward
 
 
-def test_put_distribution_404_for_unknown(app_with_db):
-    _set_admin_users(app_with_db, ["alice"])
-    client = TestClient(app_with_db)
-    resp = client.put(
-        "/api/settlements/9999/distribution",
-        json={"token_price_usd": 100},
-        headers={"X-Remote-User": "alice"},
-    )
-    assert resp.status_code == 404
 
-
-def test_put_distribution_400_for_negative(app_with_db):
-    _set_admin_users(app_with_db, ["alice"])
-    client = TestClient(app_with_db)
-    create = client.post(
-        "/api/settlements", json={}, headers={"X-Remote-User": "alice"}
-    )
-    settlement_id = create.json()["id"]
-    resp = client.put(
-        f"/api/settlements/{settlement_id}/distribution",
-        json={"token_price_usd": -100},
-        headers={"X-Remote-User": "alice"},
-    )
-    assert resp.status_code == 400
 
 
 # ---- Kas API ----
@@ -337,13 +343,7 @@ def test_put_distribution_400_for_negative(app_with_db):
 def _settle_and_set_price(client, settlement_note="period"):
     client.post(
         "/api/settlements",
-        json={"note": settlement_note},
-        headers={"X-Remote-User": "alice"},
-    )
-    # Settlement #1 created; set distribution to populate kas
-    client.put(
-        "/api/settlements/1/distribution",
-        json={"token_price_usd": 1_000_000_000},
+        json={"token_price_usd": 1_000_000_000, "note": settlement_note},
         headers={"X-Remote-User": "alice"},
     )
 
@@ -416,6 +416,28 @@ def test_post_kas_distribution_rejects_overdraw(app_with_db):
     )
     assert resp.status_code == 400
     assert "Insufficient" in resp.json()["detail"]
+
+
+def test_delete_kas_distribution_requires_admin(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    _settle_and_set_price(client)
+    balance = client.get("/api/kas/balance").json()["balance"]
+    create = client.post(
+        "/api/kas/distributions",
+        json={"amount_usd": balance},
+        headers={"X-Remote-User": "alice"},
+    )
+    dist_id = create.json()["id"]
+    # No auth → 401
+    resp = client.delete(f"/api/kas/distributions/{dist_id}")
+    assert resp.status_code == 401
+    # Non-admin → 403
+    resp = client.delete(
+        f"/api/kas/distributions/{dist_id}",
+        headers={"X-Remote-User": "bob"},
+    )
+    assert resp.status_code == 403
 
 
 def test_delete_kas_distribution_admin(app_with_db):

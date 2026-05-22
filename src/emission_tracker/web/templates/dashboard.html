@@ -35,16 +35,63 @@
 
 {% if is_admin %}
 <script>
+function _parseUsd(input) {
+    if (input === null || input === undefined) return null;
+    const trimmed = String(input).trim().toLowerCase();
+    if (trimmed === '') return 0;
+    if (trimmed.endsWith('m')) {
+        const n = parseFloat(trimmed.slice(0, -1).replace(/,/g, ''));
+        return isNaN(n) ? null : n * 1_000_000;
+    }
+    if (trimmed.endsWith('k')) {
+        const n = parseFloat(trimmed.slice(0, -1).replace(/,/g, ''));
+        return isNaN(n) ? null : n * 1_000;
+    }
+    const n = parseFloat(trimmed.replace(/[,\s]/g, ''));
+    return isNaN(n) ? null : n;
+}
+function _fmtUsd(n) {
+    if (n == null) return '—';
+    const abs = Math.abs(n);
+    const sign = n < 0 ? '-' : '';
+    if (abs === Math.floor(abs)) {
+        return sign + '$' + abs.toLocaleString('en-US');
+    }
+    return sign + '$' + abs.toLocaleString('en-US', {
+        minimumFractionDigits: 2, maximumFractionDigits: 4
+    });
+}
+
 document.getElementById('close-period-btn').addEventListener('click', async function() {
-    const note = prompt(
-        "Close current period?\n\n" +
-        "All accumulation since the last settlement will be frozen into an\n" +
-        "archive entry. The dashboard will reset to 0 α for the next period.\n\n" +
-        "Distribusi uang (total + gaji pokok) bisa di-input nanti di halaman\n" +
-        "Archive detail — tidak harus sekarang.\n\n" +
-        "Optional note (e.g., \"Week 1\"):"
+    // STEP 1: token price (required, immutable after settle)
+    const priceRaw = prompt(
+        "STEP 1/2: Token price saat period ini di-settle.\n\n" +
+        "USD per 1 α. Contoh: 5, 0.05, 1.5, 5.25\n\n" +
+        "PENTING: token price tidak bisa di-edit setelah Close Period.\n" +
+        "Kalau salah, harus Delete settlement lalu Close ulang."
     );
-    if (note === null) return;  // cancelled
+    if (priceRaw === null) return;
+    const price = _parseUsd(priceRaw);
+    if (price === null || price < 0) {
+        alert('Token price tidak valid (harus angka ≥ 0).');
+        return;
+    }
+
+    // STEP 2: optional note
+    const note = prompt(
+        "STEP 2/2: Catatan untuk settlement ini (opsional).\n\n" +
+        "Contoh: \"Week 1\""
+    );
+    if (note === null) return;
+
+    // Final confirm
+    if (!confirm(
+        "Close period dengan:\n\n" +
+        "  Token price : " + _fmtUsd(price) + " per 1 α\n" +
+        "  Note        : " + (note || "—") + "\n\n" +
+        "Personal reward 30% + kas contribution 70% akan langsung dihitung.\n" +
+        "Lanjut?"
+    )) return;
 
     this.disabled = true;
     this.textContent = 'Closing…';
@@ -52,7 +99,7 @@ document.getElementById('close-period-btn').addEventListener('click', async func
         const resp = await fetch('/api/settlements', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({note: note || null}),
+            body: JSON.stringify({token_price_usd: price, note: note || null}),
         });
         if (!resp.ok) {
             const err = await resp.json();

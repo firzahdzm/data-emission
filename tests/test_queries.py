@@ -19,7 +19,7 @@ from emission_tracker.web.queries import (
     latest_snapshot,
     list_settlements,
     person_series,
-    set_settlement_distribution,
+    set_settlement_paid,
     settlement_detail,
     snapshot_history,
 )
@@ -403,7 +403,7 @@ def test_last_settlement_returns_none_when_empty(seeded_db: sqlite3.Connection):
 
 def test_create_settlement_freezes_per_hotkey_cumulative(seeded_db: sqlite3.Connection):
     # Seed cumulative: HK_F1=6.0 (1+2+3), HK_F2=1.5 (0.5*3), HK_I1=0.6 (0.1+0.2+0.3)
-    settle = create_settlement(seeded_db, note="May payout")
+    settle = create_settlement(seeded_db, token_price_usd=1_000_000_000, note="May payout")
     assert settle["note"] == "May payout"
     assert settle["settled_through_snapshot_id"] == 3
     # Total = sum of int(cumulative) per hotkey (truncated individually).
@@ -422,13 +422,13 @@ def test_create_settlement_freezes_per_hotkey_cumulative(seeded_db: sqlite3.Conn
 
 
 def test_create_settlement_raises_when_no_new_snapshots(seeded_db: sqlite3.Connection):
-    create_settlement(seeded_db)  # first settle covers all 3 snapshots
+    create_settlement(seeded_db, token_price_usd=1_000_000_000)  # first settle covers all 3 snapshots
     with pytest.raises(ValueError, match="No new completed snapshots"):
-        create_settlement(seeded_db)  # nothing new to settle
+        create_settlement(seeded_db, token_price_usd=1_000_000_000)  # nothing new to settle
 
 
 def test_dashboard_hotkey_summary_resets_after_settlement(seeded_db: sqlite3.Connection):
-    create_settlement(seeded_db)
+    create_settlement(seeded_db, token_price_usd=1_000_000_000)
     rows = dashboard_hotkey_summary(
         seeded_db,
         from_dt=datetime(2000, 1, 1, tzinfo=timezone.utc),
@@ -440,21 +440,21 @@ def test_dashboard_hotkey_summary_resets_after_settlement(seeded_db: sqlite3.Con
 
 
 def test_captures_table_resets_after_settlement(seeded_db: sqlite3.Connection):
-    create_settlement(seeded_db)
+    create_settlement(seeded_db, token_price_usd=1_000_000_000)
     result = captures_table(seeded_db, limit=20)
     # No snapshots since settle → empty
     assert result["snapshots"] == []
 
 
 def test_snapshot_history_filters_to_current_period(seeded_db: sqlite3.Connection):
-    create_settlement(seeded_db)  # boundary = snapshot id 3
+    create_settlement(seeded_db, token_price_usd=1_000_000_000)  # boundary = snapshot id 3
     rows = snapshot_history(seeded_db, limit=20)
     # Snapshots 1,2,3 are pre-boundary → excluded
     assert rows == []
 
 
 def test_delete_settlement_revives_period(seeded_db: sqlite3.Connection):
-    settle = create_settlement(seeded_db)
+    settle = create_settlement(seeded_db, token_price_usd=1_000_000_000)
     assert delete_settlement(seeded_db, settle["id"]) is True
 
     # After delete, dashboard sees old data again
@@ -479,8 +479,34 @@ def test_delete_settlement_returns_false_for_unknown(seeded_db: sqlite3.Connecti
     assert delete_settlement(seeded_db, 9999) is False
 
 
+def test_set_settlement_paid_toggles(seeded_db: sqlite3.Connection):
+    settle = create_settlement(seeded_db, token_price_usd=1_000_000_000)
+    # Fresh settlement starts unpaid
+    assert settlement_detail(seeded_db, settle["id"])["paid_at"] is None
+
+    # Mark paid
+    result = set_settlement_paid(seeded_db, settle["id"], paid=True)
+    assert result is not None
+    assert result["paid_at"] is not None
+    # Persisted in DB
+    assert settlement_detail(seeded_db, settle["id"])["paid_at"] is not None
+    # Also visible in list view
+    listing = list_settlements(seeded_db)
+    assert listing[0]["paid_at"] is not None
+
+    # Mark unpaid again
+    result = set_settlement_paid(seeded_db, settle["id"], paid=False)
+    assert result["paid_at"] is None
+    assert settlement_detail(seeded_db, settle["id"])["paid_at"] is None
+
+
+def test_set_settlement_paid_returns_none_for_unknown(seeded_db: sqlite3.Connection):
+    assert set_settlement_paid(seeded_db, 9999, paid=True) is None
+    assert set_settlement_paid(seeded_db, 9999, paid=False) is None
+
+
 def test_list_settlements_newest_first(seeded_db: sqlite3.Connection):
-    s1 = create_settlement(seeded_db, note="first")
+    s1 = create_settlement(seeded_db, token_price_usd=1_000_000_000, note="first")
     # Add a 4th snapshot so we can settle again
     seeded_db.execute(
         "INSERT INTO snapshots (id, taken_at, status) VALUES (4, ?, 'ok')",
@@ -490,7 +516,7 @@ def test_list_settlements_newest_first(seeded_db: sqlite3.Connection):
         "INSERT INTO neuron_snapshots VALUES (4, ?, 10, 5.0, 1)", (HK_F1,)
     )
     seeded_db.commit()
-    s2 = create_settlement(seeded_db, note="second")
+    s2 = create_settlement(seeded_db, token_price_usd=1_000_000_000, note="second")
 
     rows = list_settlements(seeded_db)
     assert [r["note"] for r in rows] == ["second", "first"]
@@ -498,7 +524,7 @@ def test_list_settlements_newest_first(seeded_db: sqlite3.Connection):
 
 
 def test_settlement_detail_returns_lines(seeded_db: sqlite3.Connection):
-    settle = create_settlement(seeded_db, note="payout")
+    settle = create_settlement(seeded_db, token_price_usd=1_000_000_000, note="payout")
     detail = settlement_detail(seeded_db, settle["id"])
     assert detail is not None
     assert detail["note"] == "payout"
@@ -509,67 +535,6 @@ def test_settlement_detail_returns_lines(seeded_db: sqlite3.Connection):
 def test_settlement_detail_returns_none_for_unknown(seeded_db: sqlite3.Connection):
     assert settlement_detail(seeded_db, 9999) is None
 
-
-# ---- set_settlement_distribution (token-price scheme) ----
-
-def test_set_distribution_token_price_split_30_70(seeded_db: sqlite3.Connection):
-    """Compute distribution: 30% personal reward + 70% kas contribution."""
-    settle = create_settlement(seeded_db, note="just close")
-    assert settle["token_price_usd"] is None
-
-    # Seed cumulative: HK_F1=6.0 RAO, HK_F2=1.5 RAO, HK_I1=0.6 RAO (total 8.1 RAO)
-    updated = set_settlement_distribution(
-        seeded_db, settle["id"], token_price_usd=1_000_000_000
-    )
-    assert updated["token_price_usd"] == 1_000_000_000
-
-    # For HK_F1 with cum=6.0 RAO and price=1e9 USD/alpha:
-    #   emission_usd = 6.0 × 1e9 / 1e9 = 6.0
-    #   reward_usd   = round(6.0 × 0.3, 2) = 1.8
-    #   kas_contrib  = round(6.0 - 1.8, 2) = 4.2
-    line_hk_f1 = next(line for line in updated["lines"] if line["hotkey_ss58"] == HK_F1)
-    assert line_hk_f1["reward_usd"] == pytest.approx(1.8)
-    assert line_hk_f1["kas_contribution_usd"] == pytest.approx(4.2)
-    # Personal reward + kas contribution = emission_usd exactly
-    for line in updated["lines"]:
-        emission_usd = line["cumulative_rao"] * 1_000_000_000 / 1_000_000_000
-        assert line["reward_usd"] + line["kas_contribution_usd"] == pytest.approx(emission_usd)
-
-
-def test_set_distribution_realistic_price(seeded_db: sqlite3.Connection):
-    """Token price Rp 5jt per alpha; settlement total emission 8.1 RAO."""
-    # Seed lines have cumulative_rao stored as REAL (e.g., 6.0) — in production
-    # these would be large integers in RAO. Math should still work.
-    settle = create_settlement(seeded_db)
-    updated = set_settlement_distribution(
-        seeded_db, settle["id"], token_price_usd=5_000_000  # Rp 5jt / α
-    )
-    # Total emission ≈ 8.1 RAO → emission_usd_total = round(8.1 × 5jt / 1e9)
-    # That's effectively 0 because 8.1 RAO is sub-alpha. Real prod values are bigger.
-    # We just check shape: totals consistent
-    assert updated["total_personal_reward_usd"] >= 0
-    assert updated["total_kas_contribution_usd"] >= 0
-
-
-def test_set_distribution_recomputes_on_repeat(seeded_db: sqlite3.Connection):
-    settle = create_settlement(seeded_db)
-    a = set_settlement_distribution(seeded_db, settle["id"], token_price_usd=1_000_000_000)
-    b = set_settlement_distribution(seeded_db, settle["id"], token_price_usd=2_000_000_000)
-    # Doubling price should double both reward and kas contribution (roughly)
-    assert b["token_price_usd"] == 2_000_000_000
-    assert b["total_personal_reward_usd"] >= a["total_personal_reward_usd"]
-
-
-def test_set_distribution_returns_none_for_unknown(seeded_db: sqlite3.Connection):
-    assert (
-        set_settlement_distribution(seeded_db, 9999, token_price_usd=1_000) is None
-    )
-
-
-def test_set_distribution_rejects_negative(seeded_db: sqlite3.Connection):
-    settle = create_settlement(seeded_db)
-    with pytest.raises(ValueError, match="non-negative"):
-        set_settlement_distribution(seeded_db, settle["id"], token_price_usd=-1)
 
 
 # ---- Kas Bersama ----
@@ -583,8 +548,7 @@ def test_kas_totals_empty(memory_db: sqlite3.Connection):
 
 def test_kas_balance_after_settlement_with_distribution(seeded_db: sqlite3.Connection):
     from emission_tracker.web.queries import kas_totals
-    settle = create_settlement(seeded_db)
-    set_settlement_distribution(seeded_db, settle["id"], token_price_usd=1_000_000_000)
+    settle = create_settlement(seeded_db, token_price_usd=1_000_000_000)
     totals = kas_totals(seeded_db)
     # contributed > 0 (the 70% from each line)
     assert totals["contributed"] > 0
@@ -594,7 +558,7 @@ def test_kas_balance_after_settlement_with_distribution(seeded_db: sqlite3.Conne
 
 def test_all_time_contributions(seeded_db: sqlite3.Connection):
     from emission_tracker.web.queries import all_time_contributions
-    settle = create_settlement(seeded_db)
+    settle = create_settlement(seeded_db, token_price_usd=1_000_000_000)
     contribs = all_time_contributions(seeded_db)
     names = {c["name"] for c in contribs}
     assert names == {"Alice", "Bob"}
@@ -607,7 +571,7 @@ def test_all_time_contributions(seeded_db: sqlite3.Connection):
 
 def test_preview_kas_distribution_sums_to_amount(seeded_db: sqlite3.Connection):
     from emission_tracker.web.queries import preview_kas_distribution
-    settle = create_settlement(seeded_db)
+    settle = create_settlement(seeded_db, token_price_usd=1_000_000_000)
     shares = preview_kas_distribution(seeded_db, amount_usd=10_000_000)
     # Sum must equal amount exactly (last-person remainder fix)
     assert sum(s["share_usd"] for s in shares) == 10_000_000
@@ -623,8 +587,7 @@ def test_create_and_delete_kas_distribution(seeded_db: sqlite3.Connection):
         kas_totals,
         list_kas_distributions,
     )
-    settle = create_settlement(seeded_db)
-    set_settlement_distribution(seeded_db, settle["id"], token_price_usd=1_000_000_000)
+    settle = create_settlement(seeded_db, token_price_usd=1_000_000_000)
     before = kas_totals(seeded_db)
     assert before["balance"] > 0
 
@@ -648,8 +611,7 @@ def test_create_and_delete_kas_distribution(seeded_db: sqlite3.Connection):
 
 def test_kas_distribution_rejects_overdraw(seeded_db: sqlite3.Connection):
     from emission_tracker.web.queries import create_kas_distribution, kas_totals
-    settle = create_settlement(seeded_db)
-    set_settlement_distribution(seeded_db, settle["id"], token_price_usd=1_000_000_000)
+    settle = create_settlement(seeded_db, token_price_usd=1_000_000_000)
     balance = kas_totals(seeded_db)["balance"]
     with pytest.raises(ValueError, match="Insufficient kas balance"):
         create_kas_distribution(seeded_db, amount_usd=balance + 1)

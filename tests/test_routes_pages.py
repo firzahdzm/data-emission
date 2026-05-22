@@ -145,7 +145,7 @@ def test_archive_page_empty(app):
 
 def test_archive_page_shows_settlement(app):
     from emission_tracker.web.queries import create_settlement
-    create_settlement(app.state.db_conn, note="Week 1")
+    create_settlement(app.state.db_conn, token_price_usd=1.0, note="Week 1")
     client = TestClient(app)
     resp = client.get("/archive")
     assert resp.status_code == 200
@@ -160,7 +160,7 @@ def test_archive_detail_404_for_unknown(app):
 
 def test_archive_detail_renders_lines(app):
     from emission_tracker.web.queries import create_settlement
-    settle = create_settlement(app.state.db_conn, note="Test")
+    settle = create_settlement(app.state.db_conn, token_price_usd=1.0, note="Test")
     client = TestClient(app)
     resp = client.get(f"/archive/{settle['id']}")
     assert resp.status_code == 200

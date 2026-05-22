@@ -11,13 +11,8 @@ router = APIRouter()
 
 
 class SettlementCreateBody(BaseModel):
-    note: str | None = None
-    total_idr: int | None = None
-    base_salary_idr: int | None = None
-
-
-class SettlementDistributionBody(BaseModel):
     token_price_usd: float
+    note: str | None = None
 
 
 class KasDistributionBody(BaseModel):
@@ -111,18 +106,22 @@ def settlement_detail(request: Request, settlement_id: int):
 @router.post("/settlements", status_code=201)
 def create_settlement_endpoint(
     request: Request,
-    body: SettlementCreateBody = Body(default_factory=SettlementCreateBody),
+    body: SettlementCreateBody,
     user: str = Depends(require_admin),
 ):
-    """Admin only. Freeze per-hotkey cumulative emission since the previous
-    settlement into a new settlement record. Resets the live dashboard
-    accumulation back to 0 for the next period."""
+    """Admin only. Atomically freeze the current period AND compute payout:
+
+    - reward_usd = 30% × (emission × token_price_usd)   ← per person
+    - kas_contribution_usd = 70% × …                    ← into kas bersama
+
+    token_price_usd is captured immutably at settle time. To adjust the
+    price, the admin must delete the settlement and re-create it.
+    """
     try:
         settlement = queries.create_settlement(
             _db(request),
+            token_price_usd=body.token_price_usd,
             note=body.note,
-            total_idr=body.total_idr,
-            base_salary_idr=body.base_salary_idr,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -142,30 +141,33 @@ def delete_settlement_endpoint(
     return None
 
 
-@router.put("/settlements/{settlement_id}/distribution")
-def set_settlement_distribution_endpoint(
+@router.post("/settlements/{settlement_id}/mark-paid")
+def mark_settlement_paid_endpoint(
     request: Request,
     settlement_id: int,
-    body: SettlementDistributionBody,
     user: str = Depends(require_admin),
 ):
-    """Admin only. Compute or recompute the IDR payout distribution for an
-    existing settlement using the current token price.
-
-    Per line: reward_idr = 30% × (cum_alpha × token_price),
-              kas_contribution_idr = the remaining 70%.
-    Safe to call repeatedly — each call overwrites the previous distribution."""
-    try:
-        updated = queries.set_settlement_distribution(
-            _db(request),
-            settlement_id,
-            token_price_usd=body.token_price_usd,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    if updated is None:
+    """Admin only. Stamp `paid_at = now` on a settlement to record that the
+    payout has been disbursed to team members. Idempotent (clicking again
+    just refreshes the timestamp). Returns the updated settlement detail."""
+    result = queries.set_settlement_paid(_db(request), settlement_id, paid=True)
+    if result is None:
         raise HTTPException(status_code=404, detail="Settlement not found")
-    return updated
+    return result
+
+
+@router.post("/settlements/{settlement_id}/mark-unpaid")
+def mark_settlement_unpaid_endpoint(
+    request: Request,
+    settlement_id: int,
+    user: str = Depends(require_admin),
+):
+    """Admin only. Clear `paid_at` (set NULL) so the settlement returns to
+    'unpaid' state — useful if a mark-paid click was a mistake."""
+    result = queries.set_settlement_paid(_db(request), settlement_id, paid=False)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Settlement not found")
+    return result
 
 
 # ---- Kas Bersama endpoints ----

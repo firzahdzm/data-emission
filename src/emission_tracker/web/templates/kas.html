@@ -3,44 +3,44 @@
 
 <div class="kpi-grid">
     <article class="kpi-card kpi-ok">
-        <span class="kpi-label">Saldo kas saat ini</span>
-        <div class="kpi-value" style="font-size: 1.3rem;">{{ totals.balance | idr }}</div>
-        <div class="kpi-sub">tersedia untuk didistribusikan</div>
+        <span class="kpi-label">Current balance</span>
+        <div class="kpi-value" style="font-size: 1.3rem;">{{ totals.balance | usd }}</div>
+        <div class="kpi-sub">available to distribute</div>
     </article>
     <article class="kpi-card">
-        <span class="kpi-label">Total terkumpul</span>
-        <div class="kpi-value" style="font-size: 1.3rem;">{{ totals.contributed | idr }}</div>
-        <div class="kpi-sub">70% × emisi sejak project start</div>
+        <span class="kpi-label">Total contributed</span>
+        <div class="kpi-value" style="font-size: 1.3rem;">{{ totals.contributed | usd }}</div>
+        <div class="kpi-sub">70% × emission since project start</div>
     </article>
     <article class="kpi-card">
-        <span class="kpi-label">Total terdistribusi</span>
-        <div class="kpi-value" style="font-size: 1.3rem;">{{ totals.distributed | idr }}</div>
-        <div class="kpi-sub">sudah dibagikan ke tim</div>
+        <span class="kpi-label">Total distributed</span>
+        <div class="kpi-value" style="font-size: 1.3rem;">{{ totals.distributed | usd }}</div>
+        <div class="kpi-sub">already paid out</div>
     </article>
     {% if is_admin %}
     <article class="kpi-card"
         style="display: flex; flex-direction: column; justify-content: center; align-items: stretch;">
         <span class="kpi-label">Admin actions</span>
         <button id="distribute-btn" style="margin-top: 0.4rem;" {% if totals.balance <= 0 %}disabled{% endif %}>
-            Distribusi kas
+            Distribute kas
         </button>
         <div class="kpi-sub" style="margin-top: 0.4rem;">
-            {% if totals.balance > 0 %}split by all-time emission share{% else %}saldo kas kosong{% endif %}
+            {% if totals.balance > 0 %}split by all-time emission share{% else %}balance is empty{% endif %}
         </div>
     </article>
     {% endif %}
 </div>
 
 <section class="panel" style="padding: 0; overflow: hidden;">
-    <header style="padding: 0.85rem 1.25rem 0;">All-time contribution (untuk weighting distribusi)</header>
+    <header style="padding: 0.85rem 1.25rem 0;">All-time contribution (used to weight distribution)</header>
     <p style="padding: 0 1.25rem 0.5rem; color: var(--pico-muted-color); font-size: 0.875rem; margin: 0;">
-        Sum emisi setiap orang dari semua settlement (period) yang sudah pernah di-close.
+        Sum of each person's emission across every closed settlement.
     </p>
     <table class="kas-table">
         <thead>
             <tr>
                 <th>Name</th>
-                <th class="num">All-time emisi</th>
+                <th class="num">All-time emission</th>
                 <th class="num">% share</th>
             </tr>
         </thead>
@@ -73,78 +73,81 @@
             <tr onclick="location.href='/kas/{{ d.id }}'" style="cursor: pointer;">
                 <td class="text-mono">#{{ d.id }}</td>
                 <td>{{ d.distributed_at | dt_s }}</td>
-                <td class="num text-mono"><strong>{{ d.amount_idr | idr }}</strong></td>
+                <td class="num text-mono"><strong>{{ d.amount_usd | usd }}</strong></td>
                 <td>{{ d.note or "—" }}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
     {% else %}
-    <p style="padding: 1rem 1.25rem;">Belum ada distribusi kas.</p>
+    <p style="padding: 1rem 1.25rem;">No distributions yet.</p>
     {% endif %}
 </section>
 
 {% if is_admin %}
 <script>
-    function _parseIdr(input) {
+    function _parseUsd(input) {
         if (input === null || input === undefined) return null;
         const trimmed = String(input).trim().toLowerCase();
         if (trimmed === '') return 0;
-        if (trimmed.endsWith('jt')) {
-            const n = parseFloat(trimmed.slice(0, -2).replace(/[.,]/g, ''));
+        if (trimmed.endsWith('m')) {
+            const n = parseFloat(trimmed.slice(0, -1).replace(/,/g, ''));
             return isNaN(n) ? null : Math.round(n * 1_000_000);
         }
-        const n = parseInt(trimmed.replace(/[.,\s]/g, ''), 10);
-        return isNaN(n) ? null : n;
+        if (trimmed.endsWith('k')) {
+            const n = parseFloat(trimmed.slice(0, -1).replace(/,/g, ''));
+            return isNaN(n) ? null : Math.round(n * 1_000);
+        }
+        const n = parseFloat(trimmed.replace(/[,\s]/g, ''));
+        return isNaN(n) ? null : Math.round(n);
     }
-    function _idr(n) { return 'Rp ' + Number(n).toLocaleString('id-ID'); }
+    function _usd(n) { return '$' + Number(n).toLocaleString('en-US'); }
 
     const BALANCE = {{ totals.balance }};
     const btn = document.getElementById('distribute-btn');
     if (btn) btn.addEventListener('click', async function () {
         const raw = prompt(
-            "Distribusi kas bersama.\n\n" +
-            "Saldo tersedia: " + _idr(BALANCE) + "\n\n" +
-            "Jumlah yang dibagikan (Rp). Contoh: 50jt atau 50000000."
+            "Distribute kas bersama.\n\n" +
+            "Available balance: " + _usd(BALANCE) + "\n\n" +
+            "Amount to distribute (USD). Examples: 50000, 50k, 50,000."
         );
         if (raw === null) return;
-        const amount = _parseIdr(raw);
+        const amount = _parseUsd(raw);
         if (amount === null || amount <= 0) {
-            alert('Jumlah tidak valid.');
+            alert('Invalid amount.');
             return;
         }
         if (amount > BALANCE) {
-            alert('Jumlah melebihi saldo kas (' + _idr(BALANCE) + ').');
+            alert('Amount exceeds available balance (' + _usd(BALANCE) + ').');
             return;
         }
 
-        // Preview shares
-        const previewResp = await fetch('/api/kas/preview?amount_idr=' + amount);
+        const previewResp = await fetch('/api/kas/preview?amount_usd=' + amount);
         if (!previewResp.ok) {
-            alert('Gagal preview.');
+            alert('Preview failed.');
             return;
         }
         const preview = await previewResp.json();
         let previewLines = preview.shares
-            .map(s => '  ' + s.name + ': ' + _idr(s.share_idr))
+            .map(s => '  ' + s.name + ': ' + _usd(s.share_usd))
             .join('\n');
 
         const note = prompt(
-            "Distribusi: " + _idr(amount) + "\n\n" +
-            "Preview share per orang (by all-time emission):\n" +
+            "Distribution: " + _usd(amount) + "\n\n" +
+            "Per-person preview (by all-time emission):\n" +
             previewLines + "\n\n" +
-            "Catatan untuk distribusi ini (opsional):"
+            "Note (optional):"
         );
         if (note === null) return;
 
-        if (!confirm("Konfirmasi distribusi " + _idr(amount) + "?\n\nLanjut?")) return;
+        if (!confirm("Confirm distribution of " + _usd(amount) + "?\n\nContinue?")) return;
 
         this.disabled = true;
         this.textContent = 'Distributing…';
         const resp = await fetch('/api/kas/distributions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ amount_idr: amount, note: note || null }),
+            body: JSON.stringify({ amount_usd: amount, note: note || null }),
         });
         if (resp.ok) {
             const data = await resp.json();
@@ -153,7 +156,7 @@
             const err = await resp.json().catch(() => ({}));
             alert('Failed: ' + (err.detail || resp.statusText));
             this.disabled = false;
-            this.textContent = 'Distribusi kas';
+            this.textContent = 'Distribute kas';
         }
     });
 </script>

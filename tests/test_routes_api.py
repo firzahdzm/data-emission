@@ -256,7 +256,7 @@ def test_put_distribution_requires_admin(app_with_db):
     )
     settlement_id = create.json()["id"]
 
-    body = {"token_price_idr": 5_000_000}
+    body = {"token_price_usd": 5_000_000}
     # no auth → 401
     resp = client.put(f"/api/settlements/{settlement_id}/distribution", json=body)
     assert resp.status_code == 401
@@ -277,32 +277,32 @@ def test_put_distribution_computes_then_edits(app_with_db):
     )
     settlement_id = create.json()["id"]
     # Initially no distribution
-    assert create.json()["token_price_idr"] is None
+    assert create.json()["token_price_usd"] is None
 
     # Compute with token_price=1e9 (1 IDR per RAO)
     resp = client.put(
         f"/api/settlements/{settlement_id}/distribution",
-        json={"token_price_idr": 1_000_000_000},
+        json={"token_price_usd": 1_000_000_000},
         headers={"X-Remote-User": "alice"},
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["token_price_idr"] == 1_000_000_000
-    first_reward = data["total_personal_reward_idr"]
-    first_kas = data["total_kas_contribution_idr"]
+    assert data["token_price_usd"] == 1_000_000_000
+    first_reward = data["total_personal_reward_usd"]
+    first_kas = data["total_kas_contribution_usd"]
     # 70% kas vs 30% reward → kas ≈ 2.33 × reward (approx, rounding)
     assert first_kas > first_reward
 
     # Edit: double the price → both numbers should double (approximately)
     resp = client.put(
         f"/api/settlements/{settlement_id}/distribution",
-        json={"token_price_idr": 2_000_000_000},
+        json={"token_price_usd": 2_000_000_000},
         headers={"X-Remote-User": "alice"},
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["token_price_idr"] == 2_000_000_000
-    assert data["total_personal_reward_idr"] >= first_reward
+    assert data["token_price_usd"] == 2_000_000_000
+    assert data["total_personal_reward_usd"] >= first_reward
 
 
 def test_put_distribution_404_for_unknown(app_with_db):
@@ -310,7 +310,7 @@ def test_put_distribution_404_for_unknown(app_with_db):
     client = TestClient(app_with_db)
     resp = client.put(
         "/api/settlements/9999/distribution",
-        json={"token_price_idr": 100},
+        json={"token_price_usd": 100},
         headers={"X-Remote-User": "alice"},
     )
     assert resp.status_code == 404
@@ -325,7 +325,7 @@ def test_put_distribution_400_for_negative(app_with_db):
     settlement_id = create.json()["id"]
     resp = client.put(
         f"/api/settlements/{settlement_id}/distribution",
-        json={"token_price_idr": -100},
+        json={"token_price_usd": -100},
         headers={"X-Remote-User": "alice"},
     )
     assert resp.status_code == 400
@@ -343,7 +343,7 @@ def _settle_and_set_price(client, settlement_note="period"):
     # Settlement #1 created; set distribution to populate kas
     client.put(
         "/api/settlements/1/distribution",
-        json={"token_price_idr": 1_000_000_000},
+        json={"token_price_usd": 1_000_000_000},
         headers={"X-Remote-User": "alice"},
     )
 
@@ -366,10 +366,10 @@ def test_kas_preview_sums_to_amount(app_with_db):
     _set_admin_users(app_with_db, ["alice"])
     client = TestClient(app_with_db)
     _settle_and_set_price(client)
-    resp = client.get("/api/kas/preview?amount_idr=1000000")
+    resp = client.get("/api/kas/preview?amount_usd=1000000")
     assert resp.status_code == 200
     shares = resp.json()["shares"]
-    assert sum(s["share_idr"] for s in shares) == 1_000_000
+    assert sum(s["share_usd"] for s in shares) == 1_000_000
 
 
 def test_post_kas_distribution_requires_admin(app_with_db):
@@ -377,12 +377,12 @@ def test_post_kas_distribution_requires_admin(app_with_db):
     client = TestClient(app_with_db)
     _settle_and_set_price(client)
     # no auth → 401
-    resp = client.post("/api/kas/distributions", json={"amount_idr": 100})
+    resp = client.post("/api/kas/distributions", json={"amount_usd": 100})
     assert resp.status_code == 401
     # non-admin → 403
     resp = client.post(
         "/api/kas/distributions",
-        json={"amount_idr": 100},
+        json={"amount_usd": 100},
         headers={"X-Remote-User": "bob"},
     )
     assert resp.status_code == 403
@@ -395,13 +395,13 @@ def test_post_kas_distribution_admin_201(app_with_db):
     balance = client.get("/api/kas/balance").json()["balance"]
     resp = client.post(
         "/api/kas/distributions",
-        json={"amount_idr": balance, "note": "first payout"},
+        json={"amount_usd": balance, "note": "first payout"},
         headers={"X-Remote-User": "alice"},
     )
     assert resp.status_code == 201
     data = resp.json()
-    assert data["amount_idr"] == balance
-    assert sum(line["share_idr"] for line in data["lines"]) == balance
+    assert data["amount_usd"] == balance
+    assert sum(line["share_usd"] for line in data["lines"]) == balance
 
 
 def test_post_kas_distribution_rejects_overdraw(app_with_db):
@@ -411,7 +411,7 @@ def test_post_kas_distribution_rejects_overdraw(app_with_db):
     balance = client.get("/api/kas/balance").json()["balance"]
     resp = client.post(
         "/api/kas/distributions",
-        json={"amount_idr": balance + 999_999_999},
+        json={"amount_usd": balance + 999_999_999},
         headers={"X-Remote-User": "alice"},
     )
     assert resp.status_code == 400
@@ -425,7 +425,7 @@ def test_delete_kas_distribution_admin(app_with_db):
     balance_before = client.get("/api/kas/balance").json()["balance"]
     create = client.post(
         "/api/kas/distributions",
-        json={"amount_idr": balance_before},
+        json={"amount_usd": balance_before},
         headers={"X-Remote-User": "alice"},
     )
     dist_id = create.json()["id"]

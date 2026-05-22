@@ -81,8 +81,8 @@ def _format_dt_short(value) -> str:
     return local.strftime("%m-%d %H:%M")
 
 
-def _format_idr(value) -> str:
-    """Format an integer rupiah amount as 'Rp 1.234.567' (Indonesian convention)."""
+def _format_usd(value) -> str:
+    """Format an integer USD amount as '$1,234,567' (US convention)."""
     if value is None:
         return "—"
     try:
@@ -90,14 +90,7 @@ def _format_idr(value) -> str:
     except (TypeError, ValueError):
         return "—"
     sign = "-" if n < 0 else ""
-    s = str(abs(n))
-    # Insert thousand separators from the right
-    parts = []
-    while len(s) > 3:
-        parts.insert(0, s[-3:])
-        s = s[:-3]
-    parts.insert(0, s)
-    return f"{sign}Rp {'.'.join(parts)}"
+    return f"{sign}${abs(n):,}"
 
 
 # Register Jinja2 filters: RAO → alpha conversion + format, datetime helpers
@@ -105,7 +98,7 @@ templates.env.filters["alpha"] = format_alpha
 templates.env.filters["to_alpha"] = rao_to_alpha
 templates.env.filters["dt_s"] = _format_dt_seconds
 templates.env.filters["dt_short"] = _format_dt_short
-templates.env.filters["idr"] = _format_idr
+templates.env.filters["usd"] = _format_usd
 
 
 def _db(request: Request) -> sqlite3.Connection:
@@ -195,16 +188,16 @@ def register_pages(app: FastAPI) -> None:
                 {
                     "name": line["person_name"],
                     "cumulative_rao": 0,
-                    "reward_idr": 0,
-                    "kas_contribution_idr": 0,
+                    "reward_usd": 0,
+                    "kas_contribution_usd": 0,
                 },
             )
             bucket["cumulative_rao"] += line["cumulative_rao"]
-            bucket["reward_idr"] += line["reward_idr"]
-            bucket["kas_contribution_idr"] += line["kas_contribution_idr"]
+            bucket["reward_usd"] += line["reward_usd"]
+            bucket["kas_contribution_usd"] += line["kas_contribution_usd"]
         persons_list = sorted(
             per_person.values(),
-            key=lambda r: (-r["reward_idr"], -r["cumulative_rao"], r["name"]),
+            key=lambda r: (-r["reward_usd"], -r["cumulative_rao"], r["name"]),
         )
         latest = queries.latest_snapshot(conn)
         return templates.TemplateResponse(

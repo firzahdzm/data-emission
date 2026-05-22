@@ -13,21 +13,21 @@
         <span class="kpi-label">Total emisi frozen</span>
         <div class="kpi-value">{{ settlement.total_cumulative_rao | alpha }}</div>
     </article>
-    {% if settlement.token_price_idr is not none %}
+    {% if settlement.token_price_usd is not none %}
     <article class="kpi-card">
-        <span class="kpi-label">Token price</span>
-        <div class="kpi-value" style="font-size: 1.3rem;">{{ settlement.token_price_idr | idr }}</div>
+        <span class="kpi-label">Token price (USD)</span>
+        <div class="kpi-value" style="font-size: 1.3rem;">{{ settlement.token_price_usd | usd }}</div>
         <div class="kpi-sub">per 1 α</div>
     </article>
     <article class="kpi-card kpi-ok">
         <span class="kpi-label">Personal reward (30%)</span>
-        <div class="kpi-value" style="font-size: 1.3rem;">{{ settlement.total_personal_reward_idr | idr }}</div>
-        <div class="kpi-sub">terdistribusi ke tim</div>
+        <div class="kpi-value" style="font-size: 1.3rem;">{{ settlement.total_personal_reward_usd | usd }}</div>
+        <div class="kpi-sub">distributed to team</div>
     </article>
     <article class="kpi-card">
-        <span class="kpi-label">Kontribusi kas (70%)</span>
-        <div class="kpi-value" style="font-size: 1.3rem;">{{ settlement.total_kas_contribution_idr | idr }}</div>
-        <div class="kpi-sub">masuk ke <a href="/kas">kas bersama</a></div>
+        <span class="kpi-label">Kas contribution (70%)</span>
+        <div class="kpi-value" style="font-size: 1.3rem;">{{ settlement.total_kas_contribution_usd | usd }}</div>
+        <div class="kpi-sub">into <a href="/kas">kas bersama</a></div>
     </article>
     {% else %}
     <article class="kpi-card">
@@ -59,7 +59,7 @@
 <section class="panel">
     <header>
         Distribusi uang
-        {% if settlement.token_price_idr is not none %}
+        {% if settlement.token_price_usd is not none %}
         <span style="float: right;">
             <button id="edit-dist-btn" type="button" style="margin: 0; padding: 0.25rem 0.7rem; font-size: 0.78rem;">
                 Edit token price
@@ -67,52 +67,52 @@
         </span>
         {% endif %}
     </header>
-    {% if settlement.token_price_idr is none %}
+    {% if settlement.token_price_usd is none %}
     <p class="text-muted" style="margin: 0 0 0.75rem; font-size: 0.875rem;">
-        Belum dihitung. Input harga token saat period ini di-settle → otomatis
-        compute personal reward (30%) + kontribusi kas (70%) per orang.
+        Not yet computed. Enter the token price (USD per 1 α) when this period was settled →
+        auto-computes personal reward (30%) + kas contribution (70%) per person.
     </p>
     {% endif %}
-    <form id="dist-form" {% if settlement.token_price_idr is not none %}style="display: none;"{% endif %}
+    <form id="dist-form" {% if settlement.token_price_usd is not none %}style="display: none;"{% endif %}
           class="filter-form" style="gap: 0.85rem;">
         <label>
-            Token price (Rp per 1 α)
-            <input id="dist-price" type="text" placeholder="5jt atau 5000000"
-                   value="{{ settlement.token_price_idr or '' }}" style="width: 200px;">
+            Token price (USD per 1 α)
+            <input id="dist-price" type="text" placeholder="5, 5k, or 5000"
+                   value="{{ settlement.token_price_usd or '' }}" style="width: 200px;">
         </label>
         <button id="dist-submit-btn" type="button">
-            {% if settlement.token_price_idr is none %}Compute distribusi{% else %}Update token price{% endif %}
+            {% if settlement.token_price_usd is none %}Compute distribution{% else %}Update token price{% endif %}
         </button>
-        {% if settlement.token_price_idr is not none %}
+        {% if settlement.token_price_usd is not none %}
         <button id="dist-cancel-btn" type="button" style="background: transparent; color: var(--pico-muted-color); border-color: var(--pico-muted-border-color);">
-            Batal
+            Cancel
         </button>
         {% endif %}
     </form>
 </section>
-{% elif settlement.token_price_idr is none %}
+{% elif settlement.token_price_usd is none %}
 <section class="panel">
     <p class="text-muted" style="margin: 0; font-size: 0.875rem;">
-        Distribusi belum dihitung untuk settlement ini. Admin bisa input token price untuk compute.
+        Distribution not yet computed. Admin can enter the token price from the settlement detail page.
     </p>
 </section>
 {% endif %}
 
-{% if settlement.token_price_idr is not none %}
+{% if settlement.token_price_usd is not none %}
 <section class="panel" style="padding: 0; overflow: hidden;">
-    <header style="padding: 0.85rem 1.25rem 0;">Reward per orang</header>
+    <header style="padding: 0.85rem 1.25rem 0;">Reward per person</header>
     <p style="padding: 0 1.25rem 0.5rem; color: var(--pico-muted-color); font-size: 0.875rem; margin: 0;">
-        Formula: <code>reward = emisi × token_price × 30%</code> &middot;
-        <code>kontribusi kas = emisi × token_price × 70%</code>
+        Formula: <code>reward = emission × token_price × 30%</code> &middot;
+        <code>kas contribution = emission × token_price × 70%</code>
     </p>
     <table class="payout-table">
         <thead>
             <tr>
                 <th>Name</th>
-                <th class="num">Emisi</th>
-                <th class="num">Emisi × price</th>
+                <th class="num">Emission</th>
+                <th class="num">Emission × price</th>
                 <th class="num">Reward 30%</th>
-                <th class="num">Kontribusi kas 70%</th>
+                <th class="num">Kas contribution 70%</th>
             </tr>
         </thead>
         <tbody>
@@ -120,9 +120,9 @@
             <tr>
                 <td><strong>{{ p.name }}</strong></td>
                 <td class="num text-mono">{{ p.cumulative_rao | alpha }}</td>
-                <td class="num text-mono text-muted">{{ (p.reward_idr + p.kas_contribution_idr) | idr }}</td>
-                <td class="num text-mono"><strong>{{ p.reward_idr | idr }}</strong></td>
-                <td class="num text-mono text-muted">{{ p.kas_contribution_idr | idr }}</td>
+                <td class="num text-mono text-muted">{{ (p.reward_usd + p.kas_contribution_usd) | usd }}</td>
+                <td class="num text-mono"><strong>{{ p.reward_usd | usd }}</strong></td>
+                <td class="num text-mono text-muted">{{ p.kas_contribution_usd | usd }}</td>
             </tr>
             {% endfor %}
         </tbody>
@@ -130,9 +130,9 @@
             <tr>
                 <td><strong>Total</strong></td>
                 <td class="num text-mono">{{ settlement.total_cumulative_rao | alpha }}</td>
-                <td class="num text-mono">{{ (settlement.total_personal_reward_idr + settlement.total_kas_contribution_idr) | idr }}</td>
-                <td class="num text-mono"><strong>{{ settlement.total_personal_reward_idr | idr }}</strong></td>
-                <td class="num text-mono">{{ settlement.total_kas_contribution_idr | idr }}</td>
+                <td class="num text-mono">{{ (settlement.total_personal_reward_usd + settlement.total_kas_contribution_usd) | usd }}</td>
+                <td class="num text-mono"><strong>{{ settlement.total_personal_reward_usd | usd }}</strong></td>
+                <td class="num text-mono">{{ settlement.total_kas_contribution_usd | usd }}</td>
             </tr>
         </tfoot>
     </table>
@@ -147,7 +147,7 @@
                 <th>Hotkey</th>
                 <th>Name</th>
                 <th class="num">Emisi</th>
-                {% if settlement.token_price_idr is not none %}
+                {% if settlement.token_price_usd is not none %}
                 <th class="num">Reward (hotkey)</th>
                 <th class="num">Kontribusi kas (hotkey)</th>
                 {% endif %}
@@ -161,9 +161,9 @@
                 </td>
                 <td>{{ line.person_name }}</td>
                 <td class="num text-mono">{{ line.cumulative_rao | alpha }}</td>
-                {% if settlement.token_price_idr is not none %}
-                <td class="num text-mono">{{ line.reward_idr | idr }}</td>
-                <td class="num text-mono text-muted">{{ line.kas_contribution_idr | idr }}</td>
+                {% if settlement.token_price_usd is not none %}
+                <td class="num text-mono">{{ line.reward_usd | usd }}</td>
+                <td class="num text-mono text-muted">{{ line.kas_contribution_usd | usd }}</td>
                 {% endif %}
             </tr>
             {% endfor %}
@@ -173,16 +173,22 @@
 
 {% if is_admin %}
 <script>
-    function _parseIdr(input) {
+    function _parseUsd(input) {
+        // Accepts: "5000", "5,000", "5k" → 5000; "5m" → 5_000_000;
+        //          "1.5k" → 1500; "" → 0; null → null
         if (input === null || input === undefined) return null;
         const trimmed = String(input).trim().toLowerCase();
         if (trimmed === '') return 0;
-        if (trimmed.endsWith('jt')) {
-            const n = parseFloat(trimmed.slice(0, -2).replace(/[.,]/g, ''));
+        if (trimmed.endsWith('m')) {
+            const n = parseFloat(trimmed.slice(0, -1).replace(/,/g, ''));
             return isNaN(n) ? null : Math.round(n * 1_000_000);
         }
-        const n = parseInt(trimmed.replace(/[.,\s]/g, ''), 10);
-        return isNaN(n) ? null : n;
+        if (trimmed.endsWith('k')) {
+            const n = parseFloat(trimmed.slice(0, -1).replace(/,/g, ''));
+            return isNaN(n) ? null : Math.round(n * 1_000);
+        }
+        const n = parseFloat(trimmed.replace(/[,\s]/g, ''));
+        return isNaN(n) ? null : Math.round(n);
     }
 
     const distForm = document.getElementById('dist-form');
@@ -201,25 +207,25 @@
         });
     }
     document.getElementById('dist-submit-btn').addEventListener('click', async function () {
-        const price = _parseIdr(document.getElementById('dist-price').value);
+        const price = _parseUsd(document.getElementById('dist-price').value);
         if (price === null || price < 0) {
-            alert('Token price tidak valid (harus angka ≥ 0).');
+            alert('Invalid token price (must be a non-negative number).');
             return;
         }
-        const fmt = price.toLocaleString('id-ID');
+        const fmt = '$' + price.toLocaleString('en-US');
         if (!confirm(
-            "Set token price = Rp " + fmt + " per 1 α?\n\n" +
-            "Akan compute per line:\n" +
-            "  reward          = emisi × price × 30%\n" +
-            "  kontribusi kas  = emisi × price × 70%\n\n" +
-            "Lanjut?"
+            "Set token price = " + fmt + " per 1 α?\n\n" +
+            "Per line:\n" +
+            "  reward            = emission × price × 30%\n" +
+            "  kas contribution  = emission × price × 70%\n\n" +
+            "Continue?"
         )) return;
         this.disabled = true;
         this.textContent = 'Saving…';
         const resp = await fetch('/api/settlements/{{ settlement.id }}/distribution', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token_price_idr: price }),
+            body: JSON.stringify({ token_price_usd: price }),
         });
         if (resp.ok) {
             location.reload();
@@ -227,7 +233,7 @@
             const err = await resp.json().catch(() => ({}));
             alert('Failed: ' + (err.detail || resp.statusText));
             this.disabled = false;
-            this.textContent = '{% if settlement.token_price_idr is none %}Compute distribusi{% else %}Update token price{% endif %}';
+            this.textContent = '{% if settlement.token_price_usd is none %}Compute distribution{% else %}Update token price{% endif %}';
         }
     });
 

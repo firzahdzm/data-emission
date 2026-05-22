@@ -17,11 +17,11 @@ class SettlementCreateBody(BaseModel):
 
 
 class SettlementDistributionBody(BaseModel):
-    token_price_idr: int
+    token_price_usd: int
 
 
 class KasDistributionBody(BaseModel):
-    amount_idr: int
+    amount_usd: int
     note: str | None = None
 
 
@@ -159,7 +159,7 @@ def set_settlement_distribution_endpoint(
         updated = queries.set_settlement_distribution(
             _db(request),
             settlement_id,
-            token_price_idr=body.token_price_idr,
+            token_price_usd=body.token_price_usd,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -179,11 +179,11 @@ def get_kas_balance(request: Request):
 
 
 @router.get("/kas/preview")
-def preview_kas(request: Request, amount_idr: int = Query(ge=0)):
-    """Read-only preview of how `amount_idr` would split across all-time
+def preview_kas(request: Request, amount_usd: int = Query(ge=0)):
+    """Read-only preview of how `amount_usd` would split across all-time
     contributors. Useful for the Distribusi kas form before confirming."""
     try:
-        return {"shares": queries.preview_kas_distribution(_db(request), amount_idr)}
+        return {"shares": queries.preview_kas_distribution(_db(request), amount_usd)}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -218,7 +218,7 @@ def create_kas_distribution_endpoint(
     Decrements the running kas balance."""
     try:
         return queries.create_kas_distribution(
-            _db(request), amount_idr=body.amount_idr, note=body.note
+            _db(request), amount_usd=body.amount_usd, note=body.note
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

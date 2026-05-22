@@ -10,9 +10,9 @@
         <div class="kpi-sub">{{ distribution.distributed_at | dt_s }}</div>
     </article>
     <article class="kpi-card kpi-ok">
-        <span class="kpi-label">Total dibagikan</span>
-        <div class="kpi-value" style="font-size: 1.3rem;">{{ distribution.amount_idr | idr }}</div>
-        <div class="kpi-sub">terdistribusi ke {{ distribution.lines | length }} orang</div>
+        <span class="kpi-label">Total distributed</span>
+        <div class="kpi-value" style="font-size: 1.3rem;">{{ distribution.amount_usd | usd }}</div>
+        <div class="kpi-sub">paid out to {{ distribution.lines | length }} person(s)</div>
     </article>
     {% if is_admin %}
     <article class="kpi-card"
@@ -37,13 +37,13 @@
 <section class="panel" style="padding: 0; overflow: hidden;">
     <header style="padding: 0.85rem 1.25rem 0;">Per-person share</header>
     <p style="padding: 0 1.25rem 0.5rem; color: var(--pico-muted-color); font-size: 0.875rem; margin: 0;">
-        Share dihitung dari all-time emission per orang saat distribusi ini dibuat.
+        Share computed from each person's all-time emission at the time of this distribution.
     </p>
     <table class="kas-table">
         <thead>
             <tr>
                 <th>Name</th>
-                <th class="num">All-time emisi (saat distribusi)</th>
+                <th class="num">All-time emission (at time of distribution)</th>
                 <th class="num">Share</th>
             </tr>
         </thead>
@@ -52,7 +52,7 @@
             <tr>
                 <td><strong>{{ line.person_name }}</strong></td>
                 <td class="num text-mono">{{ line.all_time_emission_rao | alpha }}</td>
-                <td class="num text-mono"><strong>{{ line.share_idr | idr }}</strong></td>
+                <td class="num text-mono"><strong>{{ line.share_usd | usd }}</strong></td>
             </tr>
             {% endfor %}
         </tbody>
@@ -60,7 +60,7 @@
             <tr>
                 <td><strong>Total</strong></td>
                 <td></td>
-                <td class="num text-mono"><strong>{{ distribution.amount_idr | idr }}</strong></td>
+                <td class="num text-mono"><strong>{{ distribution.amount_usd | usd }}</strong></td>
             </tr>
         </tfoot>
     </table>
@@ -71,8 +71,8 @@
     document.getElementById('delete-kas-btn').addEventListener('click', async function () {
         const ok = confirm(
             "Delete kas distribution #{{ distribution.id }}?\n\n" +
-            "Jumlah {{ distribution.amount_idr | idr }} akan kembali ke saldo kas.\n\n" +
-            "Lanjut?"
+            "{{ distribution.amount_usd | usd }} will return to the kas balance.\n\n" +
+            "Continue?"
         );
         if (!ok) return;
         this.disabled = true;

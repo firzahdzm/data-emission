@@ -16,6 +16,11 @@ class SettlementCreateBody(BaseModel):
     base_salary_idr: int | None = None
 
 
+class SettlementDistributionBody(BaseModel):
+    total_idr: int
+    base_salary_idr: int
+
+
 def _db(request: Request) -> sqlite3.Connection:
     return request.app.state.db_conn
 
@@ -131,6 +136,30 @@ def delete_settlement_endpoint(
     if not queries.delete_settlement(_db(request), settlement_id):
         raise HTTPException(status_code=404, detail="Settlement not found")
     return None
+
+
+@router.put("/settlements/{settlement_id}/distribution")
+def set_settlement_distribution_endpoint(
+    request: Request,
+    settlement_id: int,
+    body: SettlementDistributionBody,
+    user: str = Depends(require_admin),
+):
+    """Admin only. Compute or recompute the IDR payout distribution for an
+    existing settlement. Safe to call repeatedly — each call overwrites the
+    previous distribution."""
+    try:
+        updated = queries.set_settlement_distribution(
+            _db(request),
+            settlement_id,
+            total_idr=body.total_idr,
+            base_salary_idr=body.base_salary_idr,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Settlement not found")
+    return updated
 
 
 @router.get("/snapshots")

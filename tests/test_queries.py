@@ -18,6 +18,7 @@ from emission_tracker.web.queries import (
     latest_snapshot,
     list_settlements,
     person_series,
+    set_settlement_distribution,
     settlement_detail,
     snapshot_history,
 )
@@ -506,3 +507,62 @@ def test_settlement_detail_returns_lines(seeded_db: sqlite3.Connection):
 
 def test_settlement_detail_returns_none_for_unknown(seeded_db: sqlite3.Connection):
     assert settlement_detail(seeded_db, 9999) is None
+
+
+# ---- set_settlement_distribution ----
+
+def test_set_distribution_on_emission_only_settlement(seeded_db: sqlite3.Connection):
+    """Settle without IDR, then set distribution afterwards."""
+    settle = create_settlement(seeded_db, note="no IDR yet")
+    assert settle["total_idr"] is None
+
+    updated = set_settlement_distribution(
+        seeded_db, settle["id"], total_idr=100_000_000, base_salary_idr=5_000_000
+    )
+    assert updated["total_idr"] == 100_000_000
+    assert updated["base_salary_idr"] == 5_000_000
+    # Total payout = N persons × 5jt + 0.3 × total = 2 × 5jt + 30jt = 40jt
+    # (rounding may shift by a rupiah)
+    assert abs(updated["total_payout_idr"] - 40_000_000) <= 2
+    # Lines now carry reward_idr > 0
+    for line in updated["lines"]:
+        assert line["reward_idr"] >= 0
+
+
+def test_set_distribution_can_be_re_run_to_edit(seeded_db: sqlite3.Connection):
+    settle = create_settlement(seeded_db)
+    # First compute
+    a = set_settlement_distribution(
+        seeded_db, settle["id"], total_idr=100_000_000, base_salary_idr=5_000_000
+    )
+    first_total = a["total_payout_idr"]
+    # Re-compute with different inputs
+    b = set_settlement_distribution(
+        seeded_db, settle["id"], total_idr=200_000_000, base_salary_idr=0
+    )
+    # New payout = 0 × N + 0.3 × 200jt = 60jt
+    assert abs(b["total_payout_idr"] - 60_000_000) <= 2
+    assert b["total_payout_idr"] != first_total
+    assert b["total_idr"] == 200_000_000
+    assert b["base_salary_idr"] == 0
+
+
+def test_set_distribution_returns_none_for_unknown(seeded_db: sqlite3.Connection):
+    assert (
+        set_settlement_distribution(
+            seeded_db, 9999, total_idr=100_000_000, base_salary_idr=0
+        )
+        is None
+    )
+
+
+def test_set_distribution_rejects_negative(seeded_db: sqlite3.Connection):
+    settle = create_settlement(seeded_db)
+    with pytest.raises(ValueError, match="non-negative"):
+        set_settlement_distribution(
+            seeded_db, settle["id"], total_idr=-1, base_salary_idr=0
+        )
+    with pytest.raises(ValueError, match="non-negative"):
+        set_settlement_distribution(
+            seeded_db, settle["id"], total_idr=100_000, base_salary_idr=-1
+        )

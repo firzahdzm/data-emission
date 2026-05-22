@@ -246,3 +246,85 @@ def test_get_settlement_detail_includes_lines(app_with_db):
     assert detail["id"] == settlement_id
     assert "lines" in detail
     assert len(detail["lines"]) == 2  # HK_F1 + HK_F2 from app_with_db fixture
+
+
+def test_put_distribution_requires_admin(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    create = client.post(
+        "/api/settlements", json={}, headers={"X-Remote-User": "alice"}
+    )
+    settlement_id = create.json()["id"]
+
+    body = {"total_idr": 100_000_000, "base_salary_idr": 5_000_000}
+    # no auth → 401
+    resp = client.put(f"/api/settlements/{settlement_id}/distribution", json=body)
+    assert resp.status_code == 401
+    # non-admin → 403
+    resp = client.put(
+        f"/api/settlements/{settlement_id}/distribution",
+        json=body,
+        headers={"X-Remote-User": "bob"},
+    )
+    assert resp.status_code == 403
+
+
+def test_put_distribution_computes_then_edits(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    create = client.post(
+        "/api/settlements", json={}, headers={"X-Remote-User": "alice"}
+    )
+    settlement_id = create.json()["id"]
+    # Initially no distribution
+    assert create.json()["total_idr"] is None
+
+    # Compute
+    resp = client.put(
+        f"/api/settlements/{settlement_id}/distribution",
+        json={"total_idr": 100_000_000, "base_salary_idr": 5_000_000},
+        headers={"X-Remote-User": "alice"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_idr"] == 100_000_000
+    assert data["base_salary_idr"] == 5_000_000
+    first_payout = data["total_payout_idr"]
+
+    # Edit (re-compute with different numbers)
+    resp = client.put(
+        f"/api/settlements/{settlement_id}/distribution",
+        json={"total_idr": 50_000_000, "base_salary_idr": 0},
+        headers={"X-Remote-User": "alice"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_idr"] == 50_000_000
+    assert data["base_salary_idr"] == 0
+    assert data["total_payout_idr"] != first_payout
+
+
+def test_put_distribution_404_for_unknown(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    resp = client.put(
+        "/api/settlements/9999/distribution",
+        json={"total_idr": 100, "base_salary_idr": 0},
+        headers={"X-Remote-User": "alice"},
+    )
+    assert resp.status_code == 404
+
+
+def test_put_distribution_400_for_negative(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    create = client.post(
+        "/api/settlements", json={}, headers={"X-Remote-User": "alice"}
+    )
+    settlement_id = create.json()["id"]
+    resp = client.put(
+        f"/api/settlements/{settlement_id}/distribution",
+        json={"total_idr": -100, "base_salary_idr": 0},
+        headers={"X-Remote-User": "alice"},
+    )
+    assert resp.status_code == 400

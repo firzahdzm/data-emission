@@ -199,6 +199,89 @@ def create_settlement(
     return settlement_detail(conn, settlement_id)
 
 
+def set_settlement_distribution(
+    conn: sqlite3.Connection,
+    settlement_id: int,
+    total_idr: int,
+    base_salary_idr: int,
+) -> dict | None:
+    """Compute (or recompute) the IDR payout distribution for an existing
+    settlement using its frozen settlement_lines as inputs.
+
+    Returns the updated settlement detail, or None if the settlement_id
+    doesn't exist. Raises ValueError on negative inputs.
+
+    The math mirrors create_settlement's distribution branch:
+        performance_pool = 0.30 * total_idr
+        per_person_share = (person_cum / total_cum) * performance_pool
+        line_share       = (line_cum / person_cum) * per_person_share
+        line_base        = (line_cum / person_cum) * base_salary_idr
+        line_reward      = line_share + line_base
+    Persons with zero emission split base_salary_idr evenly across their
+    hotkeys and get zero performance share.
+    """
+    if total_idr < 0 or base_salary_idr < 0:
+        raise ValueError("total_idr and base_salary_idr must be non-negative")
+
+    head = conn.execute(
+        "SELECT id FROM settlements WHERE id = ?", (settlement_id,)
+    ).fetchone()
+    if head is None:
+        return None
+
+    lines = conn.execute(
+        "SELECT hotkey_ss58, person_name, cumulative_rao "
+        "FROM settlement_lines WHERE settlement_id = ?",
+        (settlement_id,),
+    ).fetchall()
+
+    total_cum = sum(line["cumulative_rao"] for line in lines)
+    per_person_cum: dict[str, int] = {}
+    person_hotkey_count: dict[str, int] = {}
+    for line in lines:
+        per_person_cum[line["person_name"]] = (
+            per_person_cum.get(line["person_name"], 0) + line["cumulative_rao"]
+        )
+        person_hotkey_count[line["person_name"]] = (
+            person_hotkey_count.get(line["person_name"], 0) + 1
+        )
+
+    performance_pool_idr = int(round(total_idr * PERSONAL_SHARE_PCT))
+    person_shares: dict[str, int] = {}
+    for name, cum in per_person_cum.items():
+        person_shares[name] = (
+            int(round(cum / total_cum * performance_pool_idr))
+            if total_cum > 0
+            else 0
+        )
+
+    for line in lines:
+        person_cum = per_person_cum[line["person_name"]]
+        if person_cum > 0:
+            line_share = int(
+                round(line["cumulative_rao"] / person_cum * person_shares[line["person_name"]])
+            )
+            line_base = int(
+                round(line["cumulative_rao"] / person_cum * base_salary_idr)
+            )
+            line_reward = line_share + line_base
+        else:
+            line_share = 0
+            line_reward = base_salary_idr // person_hotkey_count[line["person_name"]]
+        conn.execute(
+            "UPDATE settlement_lines SET personal_share_idr = ?, reward_idr = ? "
+            "WHERE settlement_id = ? AND hotkey_ss58 = ?",
+            (line_share, line_reward, settlement_id, line["hotkey_ss58"]),
+        )
+
+    conn.execute(
+        "UPDATE settlements SET total_idr = ?, base_salary_idr = ? WHERE id = ?",
+        (total_idr, base_salary_idr, settlement_id),
+    )
+    conn.commit()
+    return settlement_detail(conn, settlement_id)
+
+
 def delete_settlement(conn: sqlite3.Connection, settlement_id: int) -> bool:
     """Delete a settlement (and cascade its lines). Returns True if a row
     was removed. After deletion, the previous settlement (if any) becomes

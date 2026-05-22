@@ -53,6 +53,53 @@
 </section>
 {% endif %}
 
+{% if is_admin %}
+<section class="panel">
+    <header>
+        Distribusi uang
+        {% if settlement.total_idr is not none %}
+        <span style="float: right;">
+            <button id="edit-dist-btn" type="button" style="margin: 0; padding: 0.25rem 0.7rem; font-size: 0.78rem;">
+                Edit distribusi
+            </button>
+        </span>
+        {% endif %}
+    </header>
+    {% if settlement.total_idr is none %}
+    <p class="text-muted" style="margin: 0 0 0.75rem; font-size: 0.875rem;">
+        Belum dihitung. Input total uang &amp; gaji pokok untuk compute distribusi reward.
+    </p>
+    {% endif %}
+    <form id="dist-form" {% if settlement.total_idr is not none %}style="display: none;"{% endif %}
+          class="filter-form" style="gap: 0.85rem;">
+        <label>
+            Total uang (Rp)
+            <input id="dist-total" type="text" placeholder="100jt atau 100000000"
+                   value="{{ settlement.total_idr or '' }}" style="width: 180px;">
+        </label>
+        <label>
+            Gaji pokok per orang (Rp)
+            <input id="dist-base" type="text" placeholder="5jt, 0, atau kosong"
+                   value="{{ settlement.base_salary_idr or '' }}" style="width: 180px;">
+        </label>
+        <button id="dist-submit-btn" type="button">
+            {% if settlement.total_idr is none %}Compute distribusi{% else %}Update distribusi{% endif %}
+        </button>
+        {% if settlement.total_idr is not none %}
+        <button id="dist-cancel-btn" type="button" style="background: transparent; color: var(--pico-muted-color); border-color: var(--pico-muted-border-color);">
+            Batal
+        </button>
+        {% endif %}
+    </form>
+</section>
+{% elif settlement.total_idr is none %}
+<section class="panel">
+    <p class="text-muted" style="margin: 0; font-size: 0.875rem;">
+        Distribusi uang belum dihitung untuk settlement ini. Admin bisa compute dari tombol di settlement detail.
+    </p>
+</section>
+{% endif %}
+
 {% if settlement.total_idr is not none %}
 <section class="panel" style="padding: 0; overflow: hidden;">
     <header style="padding: 0.85rem 1.25rem 0;">Reward per orang</header>
@@ -129,6 +176,73 @@
 
 {% if is_admin %}
 <script>
+    // --- IDR parser (accept "5jt", "5,000,000", "5.000.000", "5000000", "") ---
+    function _parseIdr(input) {
+        if (input === null || input === undefined) return null;
+        const trimmed = String(input).trim().toLowerCase();
+        if (trimmed === '') return 0;
+        if (trimmed.endsWith('jt')) {
+            const n = parseFloat(trimmed.slice(0, -2).replace(/[.,]/g, ''));
+            return isNaN(n) ? null : Math.round(n * 1_000_000);
+        }
+        const n = parseInt(trimmed.replace(/[.,\s]/g, ''), 10);
+        return isNaN(n) ? null : n;
+    }
+
+    // --- Distribution form (Compute / Edit) ---
+    const distForm = document.getElementById('dist-form');
+    const editBtn = document.getElementById('edit-dist-btn');
+    const cancelBtn = document.getElementById('dist-cancel-btn');
+    if (editBtn) {
+        editBtn.addEventListener('click', () => {
+            distForm.style.display = '';
+            editBtn.style.display = 'none';
+        });
+    }
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', () => {
+            distForm.style.display = 'none';
+            if (editBtn) editBtn.style.display = '';
+        });
+    }
+    document.getElementById('dist-submit-btn').addEventListener('click', async function () {
+        const totalIdr = _parseIdr(document.getElementById('dist-total').value);
+        const baseIdr = _parseIdr(document.getElementById('dist-base').value);
+        if (totalIdr === null || totalIdr < 0) {
+            alert('Total uang tidak valid (harus angka ≥ 0).');
+            return;
+        }
+        if (baseIdr === null || baseIdr < 0) {
+            alert('Gaji pokok tidak valid (harus angka ≥ 0).');
+            return;
+        }
+        const totalFmt = totalIdr.toLocaleString('id-ID');
+        const baseFmt = baseIdr.toLocaleString('id-ID');
+        if (!confirm(
+            "Konfirmasi distribusi settlement #{{ settlement.id }}:\n\n" +
+            "  Total uang  : Rp " + totalFmt + "\n" +
+            "  Gaji pokok  : Rp " + baseFmt + " per orang\n" +
+            "  Formula     : reward = gaji_pokok + (emisi_orang / total_emisi × 30% × total)\n\n" +
+            "Lanjut?"
+        )) return;
+        this.disabled = true;
+        this.textContent = 'Saving…';
+        const resp = await fetch('/api/settlements/{{ settlement.id }}/distribution', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ total_idr: totalIdr, base_salary_idr: baseIdr }),
+        });
+        if (resp.ok) {
+            location.reload();
+        } else {
+            const err = await resp.json().catch(() => ({}));
+            alert('Failed: ' + (err.detail || resp.statusText));
+            this.disabled = false;
+            this.textContent = '{% if settlement.total_idr is none %}Compute distribusi{% else %}Update distribusi{% endif %}';
+        }
+    });
+
+    // --- Delete settlement (existing) ---
     document.getElementById('delete-settlement-btn').addEventListener('click', async function () {
         const ok = confirm(
             "Delete settlement #{{ settlement.id }}?\n\n" +

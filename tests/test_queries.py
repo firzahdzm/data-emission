@@ -518,24 +518,22 @@ def test_set_distribution_token_price_split_30_70(seeded_db: sqlite3.Connection)
     assert settle["token_price_usd"] is None
 
     # Seed cumulative: HK_F1=6.0 RAO, HK_F2=1.5 RAO, HK_I1=0.6 RAO (total 8.1 RAO)
-    # Token price = 1_000_000_000 IDR per alpha (Rp 1jt × 1e9 RAO → tiny per RAO)
-    # Each emission_usd ≈ cum × price / 1e9 → ~0-6 IDR per line. Tiny but legal.
     updated = set_settlement_distribution(
         seeded_db, settle["id"], token_price_usd=1_000_000_000
     )
     assert updated["token_price_usd"] == 1_000_000_000
 
-    # For HK_F1 with cum=6.0 RAO:
-    #   emission_usd = round(6.0 × 1e9 / 1e9) = 6
-    #   reward_usd   = round(6 × 0.3) = 2
-    #   kas_contrib  = 6 - 2 = 4
+    # For HK_F1 with cum=6.0 RAO and price=1e9 USD/alpha:
+    #   emission_usd = 6.0 × 1e9 / 1e9 = 6.0
+    #   reward_usd   = round(6.0 × 0.3, 2) = 1.8
+    #   kas_contrib  = round(6.0 - 1.8, 2) = 4.2
     line_hk_f1 = next(line for line in updated["lines"] if line["hotkey_ss58"] == HK_F1)
-    assert line_hk_f1["reward_usd"] == 2
-    assert line_hk_f1["kas_contribution_usd"] == 4
+    assert line_hk_f1["reward_usd"] == pytest.approx(1.8)
+    assert line_hk_f1["kas_contribution_usd"] == pytest.approx(4.2)
     # Personal reward + kas contribution = emission_usd exactly
     for line in updated["lines"]:
-        emission_usd = round(line["cumulative_rao"] * 1_000_000_000 / 1_000_000_000)
-        assert line["reward_usd"] + line["kas_contribution_usd"] == emission_usd
+        emission_usd = line["cumulative_rao"] * 1_000_000_000 / 1_000_000_000
+        assert line["reward_usd"] + line["kas_contribution_usd"] == pytest.approx(emission_usd)
 
 
 def test_set_distribution_realistic_price(seeded_db: sqlite3.Connection):
@@ -630,22 +628,22 @@ def test_create_and_delete_kas_distribution(seeded_db: sqlite3.Connection):
     before = kas_totals(seeded_db)
     assert before["balance"] > 0
 
-    amount = before["balance"] // 2
+    amount = round(before["balance"] / 2, 2)
     if amount == 0:
-        amount = 1  # ensure non-zero for the test
+        amount = 1.0
     d = create_kas_distribution(seeded_db, amount_usd=amount, note="test")
-    assert d["amount_usd"] == amount
-    assert sum(line["share_usd"] for line in d["lines"]) == amount
+    assert d["amount_usd"] == pytest.approx(amount)
+    assert sum(line["share_usd"] for line in d["lines"]) == pytest.approx(amount)
 
     mid = kas_totals(seeded_db)
-    assert mid["distributed"] == amount
-    assert mid["balance"] == before["balance"] - amount
+    assert mid["distributed"] == pytest.approx(amount)
+    assert mid["balance"] == pytest.approx(before["balance"] - amount)
 
     # Delete reopens balance
     assert delete_kas_distribution(seeded_db, d["id"]) is True
     after = kas_totals(seeded_db)
     assert after["distributed"] == 0
-    assert after["balance"] == before["balance"]
+    assert after["balance"] == pytest.approx(before["balance"])
 
 
 def test_kas_distribution_rejects_overdraw(seeded_db: sqlite3.Connection):

@@ -17,11 +17,11 @@ class SettlementCreateBody(BaseModel):
 
 
 class SettlementDistributionBody(BaseModel):
-    token_price_usd: int
+    token_price_usd: float
 
 
 class KasDistributionBody(BaseModel):
-    amount_usd: int
+    amount_usd: float
     note: str | None = None
 
 
@@ -179,7 +179,7 @@ def get_kas_balance(request: Request):
 
 
 @router.get("/kas/preview")
-def preview_kas(request: Request, amount_usd: int = Query(ge=0)):
+def preview_kas(request: Request, amount_usd: float = Query(ge=0)):
     """Read-only preview of how `amount_usd` would split across all-time
     contributors. Useful for the Distribusi kas form before confirming."""
     try:

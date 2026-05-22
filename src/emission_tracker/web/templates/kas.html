@@ -92,16 +92,26 @@
         if (trimmed === '') return 0;
         if (trimmed.endsWith('m')) {
             const n = parseFloat(trimmed.slice(0, -1).replace(/,/g, ''));
-            return isNaN(n) ? null : Math.round(n * 1_000_000);
+            return isNaN(n) ? null : n * 1_000_000;
         }
         if (trimmed.endsWith('k')) {
             const n = parseFloat(trimmed.slice(0, -1).replace(/,/g, ''));
-            return isNaN(n) ? null : Math.round(n * 1_000);
+            return isNaN(n) ? null : n * 1_000;
         }
         const n = parseFloat(trimmed.replace(/[,\s]/g, ''));
-        return isNaN(n) ? null : Math.round(n);
+        return isNaN(n) ? null : n;
     }
-    function _usd(n) { return '$' + Number(n).toLocaleString('en-US'); }
+    function _usd(n) {
+        if (n == null) return '—';
+        const abs = Math.abs(n);
+        const sign = n < 0 ? '-' : '';
+        if (abs === Math.floor(abs)) {
+            return sign + '$' + abs.toLocaleString('en-US');
+        }
+        return sign + '$' + abs.toLocaleString('en-US', {
+            minimumFractionDigits: 2, maximumFractionDigits: 2
+        });
+    }
 
     const BALANCE = {{ totals.balance }};
     const btn = document.getElementById('distribute-btn');

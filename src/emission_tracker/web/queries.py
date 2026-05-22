@@ -219,7 +219,7 @@ def create_settlement(
 def set_settlement_distribution(
     conn: sqlite3.Connection,
     settlement_id: int,
-    token_price_usd: int,
+    token_price_usd: float,
 ) -> dict | None:
     """Compute (or recompute) per-line payout for an existing settlement
     given the current token price (USD per alpha).
@@ -256,9 +256,11 @@ def set_settlement_distribution(
     ).fetchall()
 
     for line in lines:
-        emission_usd = int(round(line["cumulative_rao"] * token_price_usd / RAO_PER_ALPHA))
-        reward = int(round(emission_usd * PERSONAL_REWARD_PCT))
-        kas = emission_usd - reward
+        # All math in float; SQLite's type affinity stores into the legacy
+        # INTEGER columns without coercing, preserving cents/sub-cent.
+        emission_usd = line["cumulative_rao"] * token_price_usd / RAO_PER_ALPHA
+        reward = round(emission_usd * PERSONAL_REWARD_PCT, 2)
+        kas = round(emission_usd - reward, 2)
         conn.execute(
             "UPDATE settlement_lines SET "
             "    reward_idr = ?, "
@@ -301,7 +303,7 @@ def all_time_contributions(conn: sqlite3.Connection) -> list[dict]:
 
 
 def kas_totals(conn: sqlite3.Connection) -> dict:
-    """Running balance of kas bersama (in USD).
+    """Running balance of kas bersama (in USD, float).
 
         contributed = SUM(kas_contribution) across all settlement_lines
         distributed = SUM(amount) across all kas_distributions
@@ -314,13 +316,13 @@ def kas_totals(conn: sqlite3.Connection) -> dict:
         "SELECT COALESCE(SUM(amount_idr), 0) AS n FROM kas_distributions"
     ).fetchone()["n"]
     return {
-        "contributed": int(contributed),
-        "distributed": int(distributed),
-        "balance": int(contributed) - int(distributed),
+        "contributed": float(contributed),
+        "distributed": float(distributed),
+        "balance": round(float(contributed) - float(distributed), 2),
     }
 
 
-def preview_kas_distribution(conn: sqlite3.Connection, amount_usd: int) -> list[dict]:
+def preview_kas_distribution(conn: sqlite3.Connection, amount_usd: float) -> list[dict]:
     """Preview how `amount_usd` would split across all-time contributors.
 
     Returns list of {name, all_time_emission_rao, share_usd} ordered by share desc.
@@ -332,16 +334,16 @@ def preview_kas_distribution(conn: sqlite3.Connection, amount_usd: int) -> list[
     total_emission = sum(c["cumulative_rao"] for c in contribs)
     if total_emission == 0 or not contribs:
         return [
-            {"name": c["name"], "all_time_emission_rao": c["cumulative_rao"], "share_usd": 0}
+            {"name": c["name"], "all_time_emission_rao": c["cumulative_rao"], "share_usd": 0.0}
             for c in contribs
         ]
     result = []
-    running_total = 0
+    running_total = 0.0
     for i, c in enumerate(contribs):
         if i == len(contribs) - 1:
-            share = amount_usd - running_total
+            share = round(amount_usd - running_total, 2)
         else:
-            share = int(round(c["cumulative_rao"] / total_emission * amount_usd))
+            share = round(c["cumulative_rao"] / total_emission * amount_usd, 2)
             running_total += share
         result.append(
             {
@@ -355,7 +357,7 @@ def preview_kas_distribution(conn: sqlite3.Connection, amount_usd: int) -> list[
 
 def create_kas_distribution(
     conn: sqlite3.Connection,
-    amount_usd: int,
+    amount_usd: float,
     note: str | None = None,
 ) -> dict:
     """Atomically: snapshot per-person shares (by all-time emission) and

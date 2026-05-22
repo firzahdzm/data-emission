@@ -16,7 +16,7 @@
     {% if settlement.token_price_usd is not none %}
     <article class="kpi-card">
         <span class="kpi-label">Token price (USD)</span>
-        <div class="kpi-value" style="font-size: 1.3rem;">{{ settlement.token_price_usd | usd }}</div>
+        <div class="kpi-value" style="font-size: 1.3rem;">{{ settlement.token_price_usd | usd(4) }}</div>
         <div class="kpi-sub">per 1 α</div>
     </article>
     <article class="kpi-card kpi-ok">
@@ -174,21 +174,32 @@
 {% if is_admin %}
 <script>
     function _parseUsd(input) {
-        // Accepts: "5000", "5,000", "5k" → 5000; "5m" → 5_000_000;
-        //          "1.5k" → 1500; "" → 0; null → null
+        // Accepts decimals: "5.25", "0.05", "5k" → 5000, "1.5k" → 1500,
+        // "5m" → 5_000_000, "" → 0; null → null
         if (input === null || input === undefined) return null;
         const trimmed = String(input).trim().toLowerCase();
         if (trimmed === '') return 0;
         if (trimmed.endsWith('m')) {
             const n = parseFloat(trimmed.slice(0, -1).replace(/,/g, ''));
-            return isNaN(n) ? null : Math.round(n * 1_000_000);
+            return isNaN(n) ? null : n * 1_000_000;
         }
         if (trimmed.endsWith('k')) {
             const n = parseFloat(trimmed.slice(0, -1).replace(/,/g, ''));
-            return isNaN(n) ? null : Math.round(n * 1_000);
+            return isNaN(n) ? null : n * 1_000;
         }
         const n = parseFloat(trimmed.replace(/[,\s]/g, ''));
-        return isNaN(n) ? null : Math.round(n);
+        return isNaN(n) ? null : n;
+    }
+    function _fmtUsd(n) {
+        if (n == null) return '—';
+        const abs = Math.abs(n);
+        const sign = n < 0 ? '-' : '';
+        if (abs === Math.floor(abs)) {
+            return sign + '$' + abs.toLocaleString('en-US');
+        }
+        return sign + '$' + abs.toLocaleString('en-US', {
+            minimumFractionDigits: 2, maximumFractionDigits: 4
+        });
     }
 
     const distForm = document.getElementById('dist-form');
@@ -212,7 +223,7 @@
             alert('Invalid token price (must be a non-negative number).');
             return;
         }
-        const fmt = '$' + price.toLocaleString('en-US');
+        const fmt = _fmtUsd(price);
         if (!confirm(
             "Set token price = " + fmt + " per 1 α?\n\n" +
             "Per line:\n" +

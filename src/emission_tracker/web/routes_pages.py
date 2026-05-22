@@ -81,16 +81,25 @@ def _format_dt_short(value) -> str:
     return local.strftime("%m-%d %H:%M")
 
 
-def _format_usd(value) -> str:
-    """Format an integer USD amount as '$1,234,567' (US convention)."""
+def _format_usd(value, decimals: int = 2) -> str:
+    """Format a USD amount as '$1,234.56' (US convention).
+
+    - Trailing zeros hidden when value is a whole number ($5 not $5.00).
+    - Sub-cent values use up to `decimals` precision (default 2, max useful
+      for general money; templates pass decimals=4 or more for token price
+      where cents may not be enough).
+    """
     if value is None:
         return "—"
     try:
-        n = int(value)
+        n = float(value)
     except (TypeError, ValueError):
         return "—"
     sign = "-" if n < 0 else ""
-    return f"{sign}${abs(n):,}"
+    n = abs(n)
+    if n == int(n):
+        return f"{sign}${int(n):,}"
+    return f"{sign}${n:,.{decimals}f}"
 
 
 # Register Jinja2 filters: RAO → alpha conversion + format, datetime helpers

@@ -485,18 +485,20 @@ def captures_table(conn: sqlite3.Connection, limit: int = 20) -> dict:
     Snapshots are the most recent N (status ok/partial), ordered ascending
     so older is on the left. A cell is None when the hotkey has no row in
     that snapshot (worker error / hotkey didn't exist yet).
+
+    Returns the latest N regardless of settlement boundary — the wide-grid
+    is the canonical per-snapshot emission audit and must keep showing
+    historical data even after Close Period freezes amounts into archive.
     """
-    settle_boundary = last_settlement_snapshot_id(conn)
     snap_rows = conn.execute(
         """
         SELECT id, CAST(taken_at AS TEXT) AS taken_at
         FROM snapshots
         WHERE status IN ('ok', 'partial')
-          AND id > ?
         ORDER BY id DESC
         LIMIT ?
         """,
-        (settle_boundary, limit),
+        (limit,),
     ).fetchall()
     snapshots = [dict(r) for r in reversed(snap_rows)]
     snap_ids = [s["id"] for s in snapshots]
@@ -558,12 +560,15 @@ def snapshot_history(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
                       (hotkeys that should have been fetched but no row exists,
                       typically per-hotkey API failures during the run)
 
+    Returns ALL snapshots (including those frozen into past settlements) —
+    the snapshot history is a worker-quality audit log, not a per-period
+    accumulator. Closing a period must not hide historical runs.
+
     Note: team_size is captured at query time, not at snapshot time. If the
     roster grew/shrank, historical rows may show a small skew in "failed"
     for snapshots taken with a different team size — acceptable for v1.
     """
     team_size = conn.execute("SELECT COUNT(*) AS n FROM hotkeys").fetchone()["n"]
-    settle_boundary = last_settlement_snapshot_id(conn)
     cursor = conn.execute(
         """
         SELECT
@@ -576,12 +581,11 @@ def snapshot_history(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
             COALESCE(SUM(CASE WHEN ns.is_registered = 0 THEN 1 ELSE 0 END), 0) AS deregistered
         FROM snapshots s
         LEFT JOIN neuron_snapshots ns ON ns.snapshot_id = s.id
-        WHERE s.id > ?
         GROUP BY s.id, s.taken_at, s.status, s.block_number
         ORDER BY s.id DESC
         LIMIT ?
         """,
-        (settle_boundary, limit),
+        (limit,),
     )
     rows = []
     for r in cursor.fetchall():

@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .env
 config.yaml
+config.local.yaml
 data/
 .pytest_cache/
 .coverage

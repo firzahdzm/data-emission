@@ -439,18 +439,23 @@ def test_dashboard_hotkey_summary_resets_after_settlement(seeded_db: sqlite3.Con
         assert r["cumulative"] == 0
 
 
-def test_captures_table_resets_after_settlement(seeded_db: sqlite3.Connection):
+def test_captures_table_keeps_pre_settlement_snapshots(seeded_db: sqlite3.Connection):
+    """After Close Period, the wide-grid must still show pre-settlement
+    snapshots — closing a period freezes amounts into archive but is not
+    a data-visibility boundary."""
     create_settlement(seeded_db, token_price_usd=1_000_000_000)
     result = captures_table(seeded_db, limit=20)
-    # No snapshots since settle → empty
-    assert result["snapshots"] == []
+    # All seeded ok/partial snapshots still visible
+    assert len(result["snapshots"]) > 0
 
 
-def test_snapshot_history_filters_to_current_period(seeded_db: sqlite3.Connection):
-    create_settlement(seeded_db, token_price_usd=1_000_000_000)  # boundary = snapshot id 3
+def test_snapshot_history_keeps_pre_settlement_snapshots(seeded_db: sqlite3.Connection):
+    """Snapshot history is the worker-quality audit log; Close Period must
+    not hide historical runs from /history."""
+    create_settlement(seeded_db, token_price_usd=1_000_000_000)
     rows = snapshot_history(seeded_db, limit=20)
-    # Snapshots 1,2,3 are pre-boundary → excluded
-    assert rows == []
+    # Pre-boundary snapshots still listed
+    assert len(rows) > 0
 
 
 def test_delete_settlement_revives_period(seeded_db: sqlite3.Connection):

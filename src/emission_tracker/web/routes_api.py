@@ -13,6 +13,9 @@ router = APIRouter()
 class SettlementCreateBody(BaseModel):
     token_price_usd: float
     note: str | None = None
+    # Optional: explicit boundary. When None, the latest ok/partial snapshot
+    # since the last settlement is used (preserves pre-existing behavior).
+    settled_through_snapshot_id: int | None = None
 
 
 class KasDistributionBody(BaseModel):
@@ -82,6 +85,22 @@ def get_latest_snapshot(request: Request):
     return snap
 
 
+@router.get("/settlements/settleable-snapshots")
+def settleable_snapshots_endpoint(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    """Snapshots that can be chosen as the boundary for the next Close Period.
+
+    A snapshot is settleable when it is past the last settlement boundary
+    AND its status is ok/partial. Returned newest first, capped by `limit`.
+    """
+    return {
+        "snapshots": queries.settleable_snapshots(_db(request), limit=limit),
+        "limit": limit,
+    }
+
+
 @router.get("/settlements")
 def list_settlements(
     request: Request,
@@ -122,6 +141,7 @@ def create_settlement_endpoint(
             _db(request),
             token_price_usd=body.token_price_usd,
             note=body.note,
+            settled_through_snapshot_id=body.settled_through_snapshot_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -86,10 +86,41 @@ def settlement_detail(conn: sqlite3.Connection, settlement_id: int) -> dict | No
 PERSONAL_SHARE_PCT = 0.30  # 30% of total_idr allocated to performers by emission share
 
 
+def settleable_snapshots(
+    conn: sqlite3.Connection,
+    limit: int = 20,
+) -> list[dict]:
+    """Snapshots that can be picked as the boundary for the next Close Period.
+
+    A snapshot is settleable when it is post-last-settlement AND its status is
+    'ok' or 'partial' (failed runs can't be boundaries — they have no neuron
+    rows to freeze).
+
+    Returns the most recent `limit` settleable snapshots, newest first, with
+    fields: id, taken_at (ISO string), block_number, status. Useful for an
+    admin UI that lets the user choose which snapshot to close through —
+    e.g. to exclude an outlier polling cycle by settling one snapshot earlier.
+    """
+    last_id = last_settlement_snapshot_id(conn)
+    cursor = conn.execute(
+        """
+        SELECT id, CAST(taken_at AS TEXT) AS taken_at, block_number, status
+        FROM snapshots
+        WHERE status IN ('ok', 'partial')
+          AND id > ?
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (last_id, limit),
+    )
+    return [dict(r) for r in cursor.fetchall()]
+
+
 def create_settlement(
     conn: sqlite3.Connection,
     token_price_usd: float,
     note: str | None = None,
+    settled_through_snapshot_id: int | None = None,
 ) -> dict:
     """Freeze per-hotkey cumulative emission AND compute payout distribution
     in one atomic step.
@@ -99,18 +130,48 @@ def create_settlement(
         reward_usd  (30%)    = round(emission_usd × 0.30, 2)
         kas_contribution     = round(emission_usd − reward_usd, 2)
 
-    Raises ValueError if there are no new completed snapshots to settle,
-    or if token_price_usd is negative.
+    `settled_through_snapshot_id` lets the admin pick a specific boundary
+    (useful for excluding the most recent in-progress / outlier snapshot).
+    When None, defaults to the latest ok/partial snapshot — same as the
+    original behavior.
+
+    Raises ValueError if:
+      - token_price_usd is negative
+      - there are no new completed snapshots since the last settlement
+      - settled_through_snapshot_id is given but is not a valid settleable
+        snapshot (must exist, be ok/partial, and be > last settlement id)
     """
     if token_price_usd < 0:
         raise ValueError("token_price_usd must be non-negative")
     last_id = last_settlement_snapshot_id(conn)
-    latest = conn.execute(
-        "SELECT MAX(id) AS id FROM snapshots "
-        "WHERE status IN ('ok', 'partial') AND id > ?",
-        (last_id,),
-    ).fetchone()
-    settled_through = latest["id"] if latest else None
+
+    if settled_through_snapshot_id is not None:
+        chosen = conn.execute(
+            "SELECT id, status FROM snapshots WHERE id = ?",
+            (settled_through_snapshot_id,),
+        ).fetchone()
+        if chosen is None:
+            raise ValueError(
+                f"Snapshot #{settled_through_snapshot_id} does not exist"
+            )
+        if chosen["status"] not in ("ok", "partial"):
+            raise ValueError(
+                f"Snapshot #{settled_through_snapshot_id} has status "
+                f"{chosen['status']!r} — only ok/partial are settleable"
+            )
+        if chosen["id"] <= last_id:
+            raise ValueError(
+                f"Snapshot #{settled_through_snapshot_id} is already covered "
+                f"by an earlier settlement (last boundary: #{last_id})"
+            )
+        settled_through = chosen["id"]
+    else:
+        latest = conn.execute(
+            "SELECT MAX(id) AS id FROM snapshots "
+            "WHERE status IN ('ok', 'partial') AND id > ?",
+            (last_id,),
+        ).fetchone()
+        settled_through = latest["id"] if latest else None
     if settled_through is None:
         raise ValueError("No new completed snapshots since last settlement")
 

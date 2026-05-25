@@ -34,89 +34,164 @@
 </div>
 
 {% if is_admin %}
+<dialog id="close-period-dialog" class="close-period-dialog">
+    <form method="dialog" id="close-period-form">
+        <h3 style="margin-top: 0; margin-bottom: 0.25rem;">Close period</h3>
+        <p class="text-muted" style="margin: 0 0 1rem; font-size: 0.85rem;">
+            Freeze akumulasi emisi sampai snapshot pilihan, lalu compute 30% reward + 70% kas.
+            Token price <strong>immutable</strong> setelah Close.
+        </p>
+
+        <label>
+            Boundary snapshot
+            <select id="close-snapshot-select" required>
+                <option value="">Loading…</option>
+            </select>
+            <small class="text-muted">Pilih sampai mana periode ini ditutup. Default: paling baru.</small>
+        </label>
+
+        <label>
+            Token price (USD per 1 α)
+            <input id="close-price-input" type="number" step="0.0001" min="0" placeholder="5.25" required>
+            <small class="text-muted">Tidak bisa di-edit setelah Close.</small>
+        </label>
+
+        <label>
+            Note <span class="text-muted">(opsional)</span>
+            <input id="close-note-input" type="text" placeholder='e.g. "Week 1"'>
+        </label>
+
+        <p id="close-error" class="text-muted" style="color: var(--pico-del-color, #c0392b); display: none;"></p>
+
+        <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.5rem;">
+            <button id="close-cancel-btn" type="button" class="secondary">Cancel</button>
+            <button id="close-confirm-btn" type="button">Close period</button>
+        </div>
+    </form>
+</dialog>
+
 <script>
-function _parseUsd(input) {
-    if (input === null || input === undefined) return null;
-    const trimmed = String(input).trim().toLowerCase();
-    if (trimmed === '') return 0;
-    if (trimmed.endsWith('m')) {
-        const n = parseFloat(trimmed.slice(0, -1).replace(/,/g, ''));
-        return isNaN(n) ? null : n * 1_000_000;
-    }
-    if (trimmed.endsWith('k')) {
-        const n = parseFloat(trimmed.slice(0, -1).replace(/,/g, ''));
-        return isNaN(n) ? null : n * 1_000;
-    }
-    const n = parseFloat(trimmed.replace(/[,\s]/g, ''));
-    return isNaN(n) ? null : n;
+const _dlg = document.getElementById('close-period-dialog');
+const _snapSel = document.getElementById('close-snapshot-select');
+const _priceIn = document.getElementById('close-price-input');
+const _noteIn  = document.getElementById('close-note-input');
+const _err     = document.getElementById('close-error');
+const _confirm = document.getElementById('close-confirm-btn');
+const _cancel  = document.getElementById('close-cancel-btn');
+const _openBtn = document.getElementById('close-period-btn');
+
+function _fmtSnapDate(iso) {
+    // "2026-05-25T16:58:38.736967+00:00" -> "2026-05-25 16:58 UTC"
+    return iso.slice(0, 16).replace('T', ' ') + ' UTC';
 }
-function _fmtUsd(n) {
-    if (n == null) return '—';
-    const abs = Math.abs(n);
-    const sign = n < 0 ? '-' : '';
-    if (abs === Math.floor(abs)) {
-        return sign + '$' + abs.toLocaleString('en-US');
+function _showErr(msg) { _err.textContent = msg; _err.style.display = 'block'; }
+function _clearErr()   { _err.textContent = '';  _err.style.display = 'none';  }
+
+async function _loadSnapshots() {
+    _snapSel.innerHTML = '<option value="">Loading…</option>';
+    _snapSel.disabled = true;
+    try {
+        const resp = await fetch('/api/settlements/settleable-snapshots?limit=20');
+        const data = await resp.json();
+        const snaps = data.snapshots || [];
+        if (snaps.length === 0) {
+            _snapSel.innerHTML = '<option value="">No settleable snapshots</option>';
+            _showErr('Tidak ada snapshot ok/partial baru sejak settlement terakhir.');
+            _confirm.disabled = true;
+            return;
+        }
+        // Newest first. Mark the latest with " (latest)" suffix.
+        _snapSel.innerHTML = snaps.map((s, i) => {
+            const label = `#${s.id} · ${_fmtSnapDate(s.taken_at)} · ${s.status}`
+                + (i === 0 ? '  (latest)' : '');
+            return `<option value="${s.id}">${label}</option>`;
+        }).join('');
+        _snapSel.value = String(snaps[0].id);  // default latest
+        _confirm.disabled = false;
+    } catch (e) {
+        _showErr('Failed to load snapshots: ' + e);
+    } finally {
+        _snapSel.disabled = false;
     }
-    return sign + '$' + abs.toLocaleString('en-US', {
-        minimumFractionDigits: 2, maximumFractionDigits: 4
-    });
 }
 
-document.getElementById('close-period-btn').addEventListener('click', async function() {
-    // STEP 1: token price (required, immutable after settle)
-    const priceRaw = prompt(
-        "STEP 1/2: Token price saat period ini di-settle.\n\n" +
-        "USD per 1 α. Contoh: 5, 0.05, 1.5, 5.25\n\n" +
-        "PENTING: token price tidak bisa di-edit setelah Close Period.\n" +
-        "Kalau salah, harus Delete settlement lalu Close ulang."
-    );
-    if (priceRaw === null) return;
-    const price = _parseUsd(priceRaw);
-    if (price === null || price < 0) {
-        alert('Token price tidak valid (harus angka ≥ 0).');
-        return;
-    }
+_openBtn.addEventListener('click', async () => {
+    _clearErr();
+    _priceIn.value = '';
+    _noteIn.value  = '';
+    _confirm.disabled = false;
+    _confirm.textContent = 'Close period';
+    await _loadSnapshots();
+    _dlg.showModal();
+});
 
-    // STEP 2: optional note
-    const note = prompt(
-        "STEP 2/2: Catatan untuk settlement ini (opsional).\n\n" +
-        "Contoh: \"Week 1\""
-    );
-    if (note === null) return;
+_cancel.addEventListener('click', () => _dlg.close());
 
-    // Final confirm
-    if (!confirm(
-        "Close period dengan:\n\n" +
-        "  Token price : " + _fmtUsd(price) + " per 1 α\n" +
-        "  Note        : " + (note || "—") + "\n\n" +
-        "Personal reward 30% + kas contribution 70% akan langsung dihitung.\n" +
-        "Lanjut?"
-    )) return;
+_confirm.addEventListener('click', async () => {
+    _clearErr();
+    const snapId = parseInt(_snapSel.value, 10);
+    const price = parseFloat(_priceIn.value);
+    const note  = _noteIn.value.trim();
+    if (!snapId)               return _showErr('Pilih boundary snapshot dulu.');
+    if (isNaN(price) || price < 0) return _showErr('Token price harus angka ≥ 0.');
 
-    this.disabled = true;
-    this.textContent = 'Closing…';
+    _confirm.disabled = true;
+    _confirm.textContent = 'Closing…';
     try {
         const resp = await fetch('/api/settlements', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({token_price_usd: price, note: note || null}),
+            body: JSON.stringify({
+                token_price_usd: price,
+                note: note || null,
+                settled_through_snapshot_id: snapId,
+            }),
         });
         if (!resp.ok) {
-            const err = await resp.json();
-            alert('Failed: ' + (err.detail || resp.statusText));
-            this.disabled = false;
-            this.textContent = 'Close period';
+            const err = await resp.json().catch(() => ({}));
+            _showErr('Failed: ' + (err.detail || resp.statusText));
+            _confirm.disabled = false;
+            _confirm.textContent = 'Close period';
             return;
         }
         const data = await resp.json();
         location.href = '/archive/' + data.id;
     } catch (e) {
-        alert('Network error: ' + e);
-        this.disabled = false;
-        this.textContent = 'Close period';
+        _showErr('Network error: ' + e);
+        _confirm.disabled = false;
+        _confirm.textContent = 'Close period';
     }
 });
 </script>
+
+<style>
+.close-period-dialog {
+    border: 1px solid var(--pico-muted-border-color);
+    border-radius: 0.5rem;
+    padding: 1.25rem;
+    min-width: min(440px, 92vw);
+    background: var(--pico-card-background-color);
+    color: var(--pico-color);
+}
+.close-period-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.5);
+}
+.close-period-dialog label {
+    display: block;
+    margin-bottom: 0.85rem;
+    font-size: 0.9rem;
+}
+.close-period-dialog small {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 0.75rem;
+}
+.close-period-dialog select,
+.close-period-dialog input {
+    margin-top: 0.2rem;
+    margin-bottom: 0;
+}
+</style>
 {% endif %}
 
 <section class="panel">

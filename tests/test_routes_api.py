@@ -162,6 +162,68 @@ def test_post_settlement_creates_record_when_admin(app_with_db):
     assert "lines" in data
 
 
+def test_get_settleable_snapshots(app_with_db):
+    """Endpoint exposes settleable snapshots for the Close Period picker."""
+    client = TestClient(app_with_db)
+    resp = client.get("/api/settlements/settleable-snapshots")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["limit"] == 20
+    # Fixture seeds one ok snapshot (#1)
+    assert [s["id"] for s in data["snapshots"]] == [1]
+    assert data["snapshots"][0]["status"] == "ok"
+
+
+def test_get_settleable_snapshots_respects_limit_query(app_with_db):
+    client = TestClient(app_with_db)
+    resp = client.get("/api/settlements/settleable-snapshots?limit=5")
+    assert resp.status_code == 200
+    assert resp.json()["limit"] == 5
+
+
+def test_post_settlement_accepts_explicit_boundary(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    # Seed a 2nd snapshot so we can settle through #1 only, leaving #2 open
+    app_with_db.state.db_conn.execute(
+        "INSERT INTO snapshots (id, taken_at, block_number, status) "
+        "VALUES (2, ?, 1001, 'ok')",
+        (datetime(2026, 5, 17, 1, 0, tzinfo=timezone.utc),),
+    )
+    app_with_db.state.db_conn.execute(
+        "INSERT INTO neuron_snapshots VALUES (2, ?, 10, 9.0, 1)", (HK_F1,)
+    )
+    app_with_db.state.db_conn.commit()
+
+    client = TestClient(app_with_db)
+    resp = client.post(
+        "/api/settlements",
+        json={
+            "token_price_usd": 1.0,
+            "note": "Through #1 only",
+            "settled_through_snapshot_id": 1,
+        },
+        headers={"X-Remote-User": "alice"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["settled_through_snapshot_id"] == 1
+    # Snapshot #2 still settleable for the next period
+    settleable = client.get("/api/settlements/settleable-snapshots").json()
+    assert [s["id"] for s in settleable["snapshots"]] == [2]
+
+
+def test_post_settlement_rejects_invalid_explicit_boundary(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    resp = client.post(
+        "/api/settlements",
+        json={"token_price_usd": 1.0, "settled_through_snapshot_id": 9999},
+        headers={"X-Remote-User": "alice"},
+    )
+    assert resp.status_code == 400
+    assert "does not exist" in resp.json()["detail"]
+
+
 def test_post_settlement_returns_400_when_nothing_to_settle(app_with_db):
     _set_admin_users(app_with_db, ["alice"])
     client = TestClient(app_with_db)

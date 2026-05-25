@@ -20,6 +20,7 @@ from emission_tracker.web.queries import (
     list_settlements,
     person_series,
     set_settlement_paid,
+    settleable_snapshots,
     settlement_detail,
     snapshot_history,
 )
@@ -508,6 +509,103 @@ def test_set_settlement_paid_toggles(seeded_db: sqlite3.Connection):
 def test_set_settlement_paid_returns_none_for_unknown(seeded_db: sqlite3.Connection):
     assert set_settlement_paid(seeded_db, 9999, paid=True) is None
     assert set_settlement_paid(seeded_db, 9999, paid=False) is None
+
+
+# ---- settleable_snapshots + create_settlement boundary picking ----
+
+def test_settleable_snapshots_returns_all_ok_when_no_settlement(
+    seeded_db: sqlite3.Connection,
+):
+    rows = settleable_snapshots(seeded_db, limit=20)
+    # All 3 seeded snapshots are 'ok', newest first
+    assert [r["id"] for r in rows] == [3, 2, 1]
+    assert all(r["status"] == "ok" for r in rows)
+
+
+def test_settleable_snapshots_excludes_failed(seeded_db: sqlite3.Connection):
+    seeded_db.execute("UPDATE snapshots SET status = 'failed' WHERE id = 2")
+    seeded_db.commit()
+    rows = settleable_snapshots(seeded_db, limit=20)
+    assert [r["id"] for r in rows] == [3, 1]
+
+
+def test_settleable_snapshots_excludes_pre_settlement(
+    seeded_db: sqlite3.Connection,
+):
+    # Settle through snapshot #2 → only #3 should remain settleable
+    create_settlement(
+        seeded_db, token_price_usd=1.0, settled_through_snapshot_id=2
+    )
+    rows = settleable_snapshots(seeded_db, limit=20)
+    assert [r["id"] for r in rows] == [3]
+
+
+def test_settleable_snapshots_respects_limit(seeded_db: sqlite3.Connection):
+    rows = settleable_snapshots(seeded_db, limit=2)
+    assert [r["id"] for r in rows] == [3, 2]
+
+
+def test_settleable_snapshots_empty_when_all_settled(
+    seeded_db: sqlite3.Connection,
+):
+    create_settlement(seeded_db, token_price_usd=1.0)  # defaults to latest = #3
+    rows = settleable_snapshots(seeded_db, limit=20)
+    assert rows == []
+
+
+def test_create_settlement_with_explicit_boundary(seeded_db: sqlite3.Connection):
+    # Settle through snapshot #2 (skipping #3) — period covers id 1..2 only
+    settle = create_settlement(
+        seeded_db,
+        token_price_usd=1.0,
+        note="Up to snap 2",
+        settled_through_snapshot_id=2,
+    )
+    assert settle["settled_through_snapshot_id"] == 2
+    # #3 should still be unsettled
+    assert last_settlement_snapshot_id(seeded_db) == 2
+    # And cumulative_rao should reflect only snapshots 1..2 (not 3)
+    # Alice HK1: 1.0 + 2.0 = 3.0 ; HK2: 0.5 + 0.5 = 1.0 ; Bob: 0.1 + 0.2 = 0.3
+    # Total = 3 + 1 + 0.3 = 4.3
+    assert settle["total_cumulative_rao"] == 4  # int truncation of 4.3
+
+
+def test_create_settlement_rejects_unknown_snapshot(seeded_db: sqlite3.Connection):
+    with pytest.raises(ValueError, match="does not exist"):
+        create_settlement(
+            seeded_db, token_price_usd=1.0, settled_through_snapshot_id=9999
+        )
+
+
+def test_create_settlement_rejects_failed_snapshot(seeded_db: sqlite3.Connection):
+    seeded_db.execute("UPDATE snapshots SET status = 'failed' WHERE id = 2")
+    seeded_db.commit()
+    with pytest.raises(ValueError, match="only ok/partial are settleable"):
+        create_settlement(
+            seeded_db, token_price_usd=1.0, settled_through_snapshot_id=2
+        )
+
+
+def test_create_settlement_rejects_already_settled_snapshot(
+    seeded_db: sqlite3.Connection,
+):
+    # First settle through #2
+    create_settlement(
+        seeded_db, token_price_usd=1.0, settled_through_snapshot_id=2
+    )
+    # Now try to settle through #1 (already covered)
+    with pytest.raises(ValueError, match="already covered"):
+        create_settlement(
+            seeded_db, token_price_usd=1.0, settled_through_snapshot_id=1
+        )
+
+
+def test_create_settlement_default_boundary_still_works(
+    seeded_db: sqlite3.Connection,
+):
+    # No explicit id → falls back to MAX(ok/partial) like the original behavior
+    settle = create_settlement(seeded_db, token_price_usd=1.0)
+    assert settle["settled_through_snapshot_id"] == 3
 
 
 def test_list_settlements_newest_first(seeded_db: sqlite3.Connection):

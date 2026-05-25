@@ -29,6 +29,12 @@ RAO_PER_ALPHA = 10**9
 PERSONAL_REWARD_PCT = 0.30  # of emission_idr per person
 KAS_CONTRIBUTION_PCT = 0.70  # complement; explicit for readability
 
+# Per-person reward floor. If the 30% calculation for a person sums (across
+# their hotkeys) to less than this many USD, that person's lines are treated
+# as noise: reward → 0, kas absorbs the full emission. Avoids tiny payouts
+# that aren't worth the bookkeeping/transfer overhead.
+NOISE_REWARD_THRESHOLD_USD = 10.0
+
 
 def last_settlement(conn: sqlite3.Connection) -> dict | None:
     """Most recent settlement row (None if no settlement has happened yet)."""
@@ -130,6 +136,12 @@ def create_settlement(
         reward_usd  (30%)    = round(emission_usd × 0.30, 2)
         kas_contribution     = round(emission_usd − reward_usd, 2)
 
+    Noise filter: if a person's summed reward (across all their hotkeys for
+    this period) is below NOISE_REWARD_THRESHOLD_USD, that person's lines
+    get reward = 0 and kas = emission_usd. This avoids tiny payouts that
+    aren't worth the bookkeeping/transfer overhead — the small contribution
+    is forwarded into the shared kas instead.
+
     `settled_through_snapshot_id` lets the admin pick a specific boundary
     (useful for excluding the most recent in-progress / outlier snapshot).
     When None, defaults to the latest ok/partial snapshot — same as the
@@ -204,6 +216,31 @@ def create_settlement(
     ]
     total_cum = sum(r["cumulative"] for r in rows_int)
 
+    # First pass: provisional per-line numbers + per-person reward totals.
+    # We need the per-person aggregate to decide whether this person clears
+    # the noise floor before writing any line.
+    provisional = []
+    per_person_reward: dict[str, float] = {}
+    for r in rows_int:
+        emission_usd = r["cumulative"] * token_price_usd / RAO_PER_ALPHA
+        line_reward = round(emission_usd * PERSONAL_REWARD_PCT, 2)
+        line_kas = round(emission_usd - line_reward, 2)
+        provisional.append(
+            {**r, "emission_usd": emission_usd,
+             "reward": line_reward, "kas": line_kas}
+        )
+        per_person_reward[r["person_name"]] = (
+            per_person_reward.get(r["person_name"], 0.0) + line_reward
+        )
+
+    # Persons whose summed reward is below the floor → treat as noise:
+    # zero out reward on all of their lines, kas absorbs the full emission.
+    noise_persons = {
+        name
+        for name, total_reward in per_person_reward.items()
+        if total_reward < NOISE_REWARD_THRESHOLD_USD
+    }
+
     now = datetime.now(timezone.utc)
     cursor = conn.execute(
         "INSERT INTO settlements "
@@ -214,10 +251,13 @@ def create_settlement(
     )
     settlement_id = cursor.lastrowid
 
-    for r in rows_int:
-        emission_usd = r["cumulative"] * token_price_usd / RAO_PER_ALPHA
-        line_reward = round(emission_usd * PERSONAL_REWARD_PCT, 2)
-        line_kas = round(emission_usd - line_reward, 2)
+    for r in provisional:
+        if r["person_name"] in noise_persons:
+            line_reward = 0.0
+            line_kas = round(r["emission_usd"], 2)
+        else:
+            line_reward = r["reward"]
+            line_kas = r["kas"]
         conn.execute(
             "INSERT INTO settlement_lines "
             "(settlement_id, hotkey_ss58, person_name, cumulative_rao, "

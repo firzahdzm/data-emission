@@ -88,6 +88,9 @@
     <p style="padding: 0 1.25rem 0.5rem; color: var(--pico-muted-color); font-size: 0.875rem; margin: 0;">
         Formula: <code>reward = emission × token_price × 30%</code> &middot;
         <code>kas contribution = emission × token_price × 70%</code>
+        <br>
+        Noise filter: jika total reward per orang &lt; <strong>$10</strong>, semua hotkey orang itu reward = 0
+        dan emission-nya full ke kas.
     </p>
     <table class="payout-table">
         <thead>

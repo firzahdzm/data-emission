@@ -608,6 +608,120 @@ def test_create_settlement_default_boundary_still_works(
     assert settle["settled_through_snapshot_id"] == 3
 
 
+# ---- Noise threshold ($10 reward floor per person) ----
+
+def _emission_setup(memory_db: sqlite3.Connection, alice_total_rao: int,
+                    bob_total_rao: int) -> sqlite3.Connection:
+    """Helper: 1 snapshot with one row per hotkey at given RAO emissions.
+
+    Hotkeys: Alice has HK_F1+HK_F2 (sum = alice_total_rao split evenly),
+             Bob has HK_I1 with bob_total_rao.
+    """
+    init_schema(memory_db)
+    sync_team(
+        memory_db,
+        [
+            PersonConfig(name="Alice", hotkeys=[HK_F1, HK_F2]),
+            PersonConfig(name="Bob", hotkeys=[HK_I1]),
+        ],
+        subnet_id=56,
+    )
+    memory_db.execute(
+        "INSERT INTO snapshots (id, taken_at, status) VALUES (1, ?, 'ok')",
+        (datetime(2026, 5, 17, 12, 0, tzinfo=timezone.utc),),
+    )
+    half_a = alice_total_rao // 2
+    memory_db.execute(
+        "INSERT INTO neuron_snapshots VALUES (1, ?, 10, ?, 1)", (HK_F1, half_a)
+    )
+    memory_db.execute(
+        "INSERT INTO neuron_snapshots VALUES (1, ?, 11, ?, 1)",
+        (HK_F2, alice_total_rao - half_a),
+    )
+    memory_db.execute(
+        "INSERT INTO neuron_snapshots VALUES (1, ?, 12, ?, 1)",
+        (HK_I1, bob_total_rao),
+    )
+    memory_db.commit()
+    return memory_db
+
+
+def test_noise_threshold_zeroes_reward_under_10usd(memory_db: sqlite3.Connection):
+    # Alice: 20 RAO @ token_price 1 USD/α  → 2e-8 USD reward (negligible)
+    # Bob:   60 RAO                         → 6e-8 USD reward
+    # Both below $10 → noise → reward = 0, kas absorbs full emission_usd.
+    _emission_setup(memory_db, alice_total_rao=20, bob_total_rao=60)
+    settle = create_settlement(memory_db, token_price_usd=1.0)
+    by_person = {line["person_name"]: line for line in settle["lines"]}
+    # Alice has 2 lines (HK_F1, HK_F2), both reward=0
+    alice_lines = [l for l in settle["lines"] if l["person_name"] == "Alice"]
+    assert len(alice_lines) == 2
+    assert all(l["reward_usd"] == 0 for l in alice_lines)
+    # Bob's line also noised
+    assert by_person["Bob"]["reward_usd"] == 0
+    # Total reward goes to zero, kas absorbs everything that could've been split
+    assert settle["total_personal_reward_usd"] == 0
+
+
+def test_noise_threshold_keeps_reward_at_or_above_10usd(
+    memory_db: sqlite3.Connection,
+):
+    # Pick emissions so the 30% reward is clearly above $10/person.
+    # Alice 2 hotkeys × 25 α = 50 α @ $1 → emission $50, reward 30% = $15.
+    # Bob 1 hotkey × 40 α = 40 α @ $1     → emission $40, reward = $12.
+    one_alpha = 1_000_000_000
+    _emission_setup(
+        memory_db,
+        alice_total_rao=50 * one_alpha,
+        bob_total_rao=40 * one_alpha,
+    )
+    settle = create_settlement(memory_db, token_price_usd=1.0)
+    # Both above $10 → standard 30/70 split applies.
+    alice_lines = [l for l in settle["lines"] if l["person_name"] == "Alice"]
+    alice_reward_total = sum(l["reward_usd"] for l in alice_lines)
+    assert alice_reward_total == pytest.approx(15.0, abs=0.01)
+    bob_line = next(l for l in settle["lines"] if l["person_name"] == "Bob")
+    assert bob_line["reward_usd"] == pytest.approx(12.0, abs=0.01)
+
+
+def test_noise_threshold_only_affects_persons_under_floor(
+    memory_db: sqlite3.Connection,
+):
+    # Alice well above (reward $30), Bob below (reward < $10) → only Bob noised.
+    one_alpha = 1_000_000_000
+    _emission_setup(
+        memory_db,
+        alice_total_rao=100 * one_alpha,   # reward = $30
+        bob_total_rao=5 * one_alpha,       # reward = $1.50 → noise
+    )
+    settle = create_settlement(memory_db, token_price_usd=1.0)
+    by_person_reward = {}
+    for l in settle["lines"]:
+        by_person_reward[l["person_name"]] = (
+            by_person_reward.get(l["person_name"], 0) + l["reward_usd"]
+        )
+    assert by_person_reward["Alice"] == pytest.approx(30.0, abs=0.01)
+    assert by_person_reward["Bob"] == 0
+    # Bob's $5 emission still tracked, just fully forwarded to kas
+    bob_line = next(l for l in settle["lines"] if l["person_name"] == "Bob")
+    assert bob_line["kas_contribution_usd"] == pytest.approx(5.0, abs=0.01)
+
+
+def test_noise_threshold_exactly_10_is_not_noise(memory_db: sqlite3.Connection):
+    # Edge case: exactly at the floor → strict less-than means it keeps reward.
+    # Need 30% × emission_usd = $10 exactly → emission_usd = $33.33...
+    # Easier: token_price = $1, emission_alpha = 33.333... → use 100/3.
+    # To avoid float fuzz: 30 α @ $1 → emission $30, reward = $9 < $10 = noise
+    # vs 34 α @ $1 → emission $34, reward = $10.20 ≥ $10 = NOT noise.
+    one_alpha = 1_000_000_000
+    _emission_setup(memory_db, alice_total_rao=34 * one_alpha, bob_total_rao=0)
+    settle = create_settlement(memory_db, token_price_usd=1.0)
+    alice_reward = sum(
+        l["reward_usd"] for l in settle["lines"] if l["person_name"] == "Alice"
+    )
+    assert alice_reward == pytest.approx(10.2, abs=0.01)
+
+
 def test_list_settlements_newest_first(seeded_db: sqlite3.Connection):
     s1 = create_settlement(seeded_db, token_price_usd=1_000_000_000, note="first")
     # Add a 4th snapshot so we can settle again

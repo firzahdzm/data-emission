@@ -66,37 +66,6 @@ def test_dashboard_per_hotkey_rows_and_status(app):
     assert HK_F2[:8] in resp.text
 
 
-def test_dashboard_accepts_date_inputs(app):
-    """from/to query params should be parsed and applied as the range."""
-    client = TestClient(app)
-    # 2026-05-17 ≤ taken_at < 2026-05-18 covers the seeded snapshot
-    resp = client.get("/?from=2026-05-17&to=2026-05-18")
-    assert resp.status_code == 200
-    assert "1.5000 α" in resp.text
-    # Period header should reflect the requested dates (in WIB display)
-    assert "2026-05-17" in resp.text
-    # Date inputs in the form should be pre-filled with the requested values
-    assert 'value="2026-05-17"' in resp.text
-    assert 'value="2026-05-18"' in resp.text
-
-
-def test_dashboard_empty_range_yields_zero(app):
-    """A date range with no snapshots should render 0 α without crashing."""
-    client = TestClient(app)
-    resp = client.get("/?from=2020-01-01&to=2020-01-02")
-    assert resp.status_code == 200
-    assert "0.0000 α" in resp.text
-
-
-def test_dashboard_with_range_preset(app):
-    client = TestClient(app)
-    resp = client.get("/?range=7d")
-    # Range "7d" may exclude the 2026-05-17 snapshot depending on wall clock;
-    # we just verify the page renders with the right shape.
-    assert resp.status_code == 200
-    assert "Alice" in resp.text
-
-
 def test_captures_page_renders(app):
     client = TestClient(app)
     resp = client.get("/captures")
@@ -117,23 +86,6 @@ def test_captures_page_limit_param(app):
     assert resp.status_code == 200
     # The numeric input echoes the limit
     assert 'value="5"' in resp.text
-
-
-def test_dashboard_period_trimmed_to_seconds_in_wib(app):
-    """Period range timestamps must be displayed in WIB (UTC+7), no microseconds."""
-    client = TestClient(app)
-    resp = client.get("/")
-    assert "Period: " in resp.text
-    period_line = next(
-        line for line in resp.text.splitlines() if "Period:" in line
-    )
-    # Must be tagged WIB
-    assert "WIB" in period_line
-    # No microsecond noise
-    assert ".000000" not in period_line
-    assert ".999999" not in period_line
-    # Epoch start in WIB = 1970-01-01 07:00:00 WIB
-    assert "1970-01-01 07:00:00 WIB" in period_line
 
 
 def test_archive_page_empty(app):

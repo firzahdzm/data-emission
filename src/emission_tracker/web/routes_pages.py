@@ -125,17 +125,13 @@ def register_pages(app: FastAPI) -> None:
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     @app.get("/", response_class=HTMLResponse)
-    def dashboard(
-        request: Request,
-        range: str | None = Query(default=None),
-        from_: str | None = Query(default=None, alias="from"),
-        to: str | None = Query(default=None),
-    ):
-        # Default to "all" only if neither preset nor explicit dates are given
-        effective_preset = range
-        if range is None and from_ is None and to is None:
-            effective_preset = "all"
-        from_dt, to_dt = _range(effective_preset, from_, to)
+    def dashboard(request: Request):
+        # No date filter on the dashboard — it always shows "since last
+        # close period". The downstream `dashboard_hotkey_summary` already
+        # filters by `snapshot.id > settle_boundary`, so passing an
+        # all-encompassing date range here is a deliberate no-op on the
+        # date dimension. Settlement boundary is what defines "this period".
+        from_dt, to_dt = _range("all", None, None)
         conn = _db(request)
         rows = queries.dashboard_hotkey_summary(conn, from_dt=from_dt, to_dt=to_dt)
         total_cumulative = sum(r["cumulative"] for r in rows)
@@ -153,11 +149,6 @@ def register_pages(app: FastAPI) -> None:
                 "total_registered": total_registered,
                 "total_hotkeys": total_hotkeys,
                 "total_deregistered": total_deregistered,
-                "from_dt": from_dt,
-                "to_dt": to_dt,
-                "from_input": from_ or "",
-                "to_input": to or "",
-                "active_range": effective_preset if (from_ is None and to is None) else "",
                 "latest": latest,
                 "last_settle": last_settle,
                 "active_page": "dashboard",

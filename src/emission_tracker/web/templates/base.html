@@ -1,10 +1,14 @@
 <!DOCTYPE html>
-<html lang="id">
+<html lang="id" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}Gradient Emission Tracker{% endblock %}</title>
+    <title>{% block title %}SUSnet Emission Tracker{% endblock %}</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
     <meta http-equiv="refresh" content="300">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
     <link rel="stylesheet" href="/static/style.css?v={{ asset_version() }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -13,7 +17,7 @@
 <main>
     <header>
         <div class="header-top">
-            <h1>Gradient Emission Tracker</h1>
+            <h1><img src="/static/logo-white.svg" alt="SUSnet" class="header-logo"></h1>
             <nav>
                 <a href="/" class="{% if active_page == 'dashboard' %}active{% endif %}">Dashboard</a>
                 <a href="/captures" class="{% if active_page == 'captures' %}active{% endif %}">Emissions</a>

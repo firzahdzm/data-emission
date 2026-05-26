@@ -4,23 +4,20 @@
 <div class="kpi-grid">
     <article class="kpi-card">
         <span class="kpi-label">Total contributed</span>
-        <div class="kpi-value" style="font-size: 2.6rem;">{{ totals.contributed | usd }}</div>
+        <div class="kpi-value">{{ totals.contributed | usd }}</div>
+        <div class="kpi-sub">70% × emission from all periods</div>
     </article>
     <article class="kpi-card">
         <span class="kpi-label">Total distributed</span>
-        <div class="kpi-value" style="font-size: 1.5rem;">{{ totals.distributed | usd }}</div>
+        <div class="kpi-value">{{ totals.distributed | usd }}</div>
         <div class="kpi-sub">already paid out</div>
     </article>
     {% if is_admin %}
-    <article class="kpi-card"
-        style="display: flex; flex-direction: column; justify-content: center; align-items: stretch;">
+    <article class="kpi-card kpi-card-action">
         <span class="kpi-label">Admin actions</span>
-        <button id="distribute-btn" style="margin-top: 0.4rem;" {% if totals.balance <= 0 %}disabled{% endif %}>
+        <button id="distribute-btn" {% if totals.balance <= 0 %}disabled{% endif %}>
             Distribute Fund
         </button>
-        <div class="kpi-sub" style="margin-top: 0.4rem;">
-            {% if totals.balance > 0 %}{% else %}balance is empty{% endif %}
-        </div>
     </article>
     {% endif %}
 </div>

@@ -3,7 +3,7 @@
 
 <p style="margin: 0 0 1rem;"><a href="/archive">← Back to archive</a></p>
 
-<div class="kpi-grid">
+<div class="kpi-grid kpi-grid-3col">
     <article class="kpi-card">
         <span class="kpi-label">Settlement</span>
         <div class="kpi-value">#{{ settlement.id }}</div>
@@ -13,59 +13,56 @@
         <span class="kpi-label">Total emisi frozen</span>
         <div class="kpi-value">{{ settlement.total_cumulative_rao | alpha }}</div>
     </article>
-    {% if settlement.token_price_usd is not none %}
+    <article class="kpi-card {% if settlement.paid_at %}kpi-ok{% else %}kpi-warn{% endif %}">
+        <span class="kpi-label">Payout status</span>
+        {% if settlement.paid_at %}
+        <div class="kpi-value">Paid</div>
+        <div class="kpi-sub">on {{ settlement.paid_at | dt_s }}</div>
+        {% else %}
+        <div class="kpi-value">Unpaid</div>
+        <div class="kpi-sub">not yet disbursed to team</div>
+        {% endif %}
+    </article>
+</div>
+
+{% if settlement.token_price_usd is not none %}
+<div class="kpi-grid kpi-grid-3col">
     <article class="kpi-card">
         <span class="kpi-label">Token price (USD)</span>
-        <div class="kpi-value" style="font-size: 1.3rem;">{{ settlement.token_price_usd | usd(4) }}</div>
+        <div class="kpi-value">{{ settlement.token_price_usd | usd(4) }}</div>
         <div class="kpi-sub">per 1 α</div>
     </article>
     <article class="kpi-card kpi-ok">
         <span class="kpi-label">Personal reward (30%)</span>
-        <div class="kpi-value" style="font-size: 1.3rem;">{{ settlement.total_personal_reward_usd | usd }}</div>
+        <div class="kpi-value">{{ settlement.total_personal_reward_usd | usd }}</div>
         <div class="kpi-sub">distributed to team</div>
     </article>
     <article class="kpi-card">
-        <span class="kpi-label">Kas contribution (70%)</span>
-        <div class="kpi-value" style="font-size: 1.3rem;">{{ settlement.total_kas_contribution_usd | usd }}</div>
+        <span class="kpi-label">Fund contribution (70%)</span>
+        <div class="kpi-value">{{ settlement.total_kas_contribution_usd | usd }}</div>
         <div class="kpi-sub">into <a href="/kas">Fund</a></div>
     </article>
-    {% else %}
+</div>
+{% else %}
+<div class="kpi-grid">
     <article class="kpi-card">
         <span class="kpi-label">Through snapshot</span>
         <div class="kpi-value">#{{ settlement.settled_through_snapshot_id }}</div>
         <div class="kpi-sub">last included in this period</div>
     </article>
-    {% endif %}
-    <article class="kpi-card {% if settlement.paid_at %}kpi-ok{% else %}kpi-warn{% endif %}">
-        <span class="kpi-label">Payout status</span>
-        {% if settlement.paid_at %}
-        <div class="kpi-value" style="font-size: 1.3rem;">Paid</div>
-        <div class="kpi-sub">on {{ settlement.paid_at | dt_s }}</div>
-        {% else %}
-        <div class="kpi-value" style="font-size: 1.3rem;">Unpaid</div>
-        <div class="kpi-sub">not yet disbursed to team</div>
-        {% endif %}
-    </article>
-    {% if is_admin %}
-    <article class="kpi-card"
-        style="display: flex; flex-direction: column; justify-content: center; align-items: stretch;">
-        <span class="kpi-label">Admin actions</span>
-        {% if settlement.paid_at %}
-        <button id="toggle-paid-btn" data-action="unpaid" style="margin-top: 0.4rem;">
-            Mark as unpaid
-        </button>
-        {% else %}
-        <button id="toggle-paid-btn" data-action="paid" style="margin-top: 0.4rem;">
-            Mark as paid
-        </button>
-        {% endif %}
-        <button id="delete-settlement-btn"
-            style="margin-top: 0.4rem; background: var(--pico-del-color, #c0392b); border-color: var(--pico-del-color, #c0392b);">
-            Delete settlement
-        </button>
-    </article>
-    {% endif %}
 </div>
+{% endif %}
+
+{% if is_admin %}
+<div class="admin-actions-bar">
+    {% if settlement.paid_at %}
+    <button id="toggle-paid-btn" data-action="unpaid" class="secondary">Mark as unpaid</button>
+    {% else %}
+    <button id="toggle-paid-btn" data-action="paid">Mark as paid</button>
+    {% endif %}
+    <button id="delete-settlement-btn" class="btn-danger">Delete settlement</button>
+</div>
+{% endif %}
 
 {% if settlement.note %}
 <section class="panel">

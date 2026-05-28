@@ -58,7 +58,8 @@ class TaoStatsClient:
         for attempt in range(self._max_retries + 1):
             try:
                 resp = self._client.request(method, path, **kw)
-                if resp.status_code < 500:
+                # Retry on 5xx and 429 (rate-limit); everything else is final.
+                if resp.status_code != 429 and resp.status_code < 500:
                     return resp
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 last_exc = exc

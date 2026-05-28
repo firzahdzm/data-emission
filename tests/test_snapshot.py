@@ -119,6 +119,7 @@ def test_confirm_fetch_exception_counts_as_fail(seeded_db: sqlite3.Connection):
         NeuronInfo(uid=10, emission=0.5, block=100),  # HK1 ok
         None,                                          # HK2 first empty
         RuntimeError("API down on confirm"),           # HK2 confirmation errors
+        RuntimeError("retry also down"),               # HK2 retry pass also errors
     ]
     result = take_snapshot(
         conn=seeded_db,
@@ -142,7 +143,8 @@ def test_take_snapshot_partial_on_one_failure(seeded_db: sqlite3.Connection):
     client = MagicMock()
     client.get_neuron.side_effect = [
         NeuronInfo(uid=10, emission=0.5, block=100),
-        RuntimeError("API down"),
+        RuntimeError("API down"),       # HK2 fails (pass 1)
+        RuntimeError("still down"),      # HK2 retry also fails
     ]
     result = take_snapshot(
         conn=seeded_db,
@@ -156,9 +158,66 @@ def test_take_snapshot_partial_on_one_failure(seeded_db: sqlite3.Connection):
     assert result.fail_count == 1
 
 
+def test_failed_hotkey_is_retried_and_recovers(seeded_db: sqlite3.Connection):
+    """A hotkey that errors on the first pass is retried; if the retry
+    succeeds the snapshot ends 'ok' with no failures recorded."""
+    client = MagicMock()
+    client.get_neuron.side_effect = [
+        NeuronInfo(uid=10, emission=0.5, block=100),  # HK1 ok (pass 1)
+        RuntimeError("transient"),                     # HK2 fails (pass 1)
+        NeuronInfo(uid=11, emission=0.4, block=100),  # HK2 retry succeeds (pass 2)
+    ]
+    result = take_snapshot(
+        conn=seeded_db,
+        client=client,
+        rate_limiter=_no_op_bucket(),
+        subnet_id=56,
+        request_interval_seconds=0,
+    )
+    assert result.status == "ok"
+    assert result.ok_count == 2
+    assert result.fail_count == 0
+
+    row = seeded_db.execute(
+        "SELECT is_registered, emission FROM neuron_snapshots WHERE hotkey_ss58 = ?",
+        (HK2,),
+    ).fetchone()
+    assert row["is_registered"] == 1
+    assert row["emission"] == 0.4
+
+
+def test_failed_hotkey_retry_still_fails_stays_partial(seeded_db: sqlite3.Connection):
+    """If the retry also errors, the hotkey stays counted as a failure."""
+    client = MagicMock()
+    client.get_neuron.side_effect = [
+        NeuronInfo(uid=10, emission=0.5, block=100),  # HK1 ok
+        RuntimeError("down"),                          # HK2 fails (pass 1)
+        RuntimeError("still down"),                    # HK2 retry fails (pass 2)
+    ]
+    result = take_snapshot(
+        conn=seeded_db,
+        client=client,
+        rate_limiter=_no_op_bucket(),
+        subnet_id=56,
+        request_interval_seconds=0,
+    )
+    assert result.status == "partial"
+    assert result.ok_count == 1
+    assert result.fail_count == 1
+
+    row = seeded_db.execute(
+        "SELECT * FROM neuron_snapshots WHERE hotkey_ss58 = ?", (HK2,)
+    ).fetchone()
+    assert row is None  # nothing written for the still-failing hotkey
+
+
 def test_take_snapshot_failed_on_all_failure(seeded_db: sqlite3.Connection):
     client = MagicMock()
-    client.get_neuron.side_effect = [RuntimeError("x"), RuntimeError("y")]
+    # Both hotkeys fail on pass 1 and again on the retry pass.
+    client.get_neuron.side_effect = [
+        RuntimeError("x"), RuntimeError("y"),  # pass 1
+        RuntimeError("x"), RuntimeError("y"),  # retry pass
+    ]
     result = take_snapshot(
         conn=seeded_db,
         client=client,

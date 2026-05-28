@@ -64,6 +64,20 @@ def test_get_neuron_retries_on_5xx_then_succeeds():
 
 
 @respx.mock
+def test_get_neuron_retries_on_429_then_succeeds():
+    route = respx.get(f"{BASE_URL}{NEURON_PATH}").mock(
+        side_effect=[
+            httpx.Response(429),
+            httpx.Response(200, json={"data": [{"uid": 7, "emission": 0.2, "block_number": 9}]}),
+        ]
+    )
+    client = TaoStatsClient(api_key="test", base_url=BASE_URL, retry_backoff=0)
+    info = client.get_neuron(subnet_id=56, hotkey=HOTKEY)
+    assert info.uid == 7
+    assert route.call_count == 2
+
+
+@respx.mock
 def test_get_neuron_raises_after_max_retries():
     respx.get(f"{BASE_URL}{NEURON_PATH}").mock(
         return_value=httpx.Response(503)

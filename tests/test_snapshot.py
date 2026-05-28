@@ -60,7 +60,8 @@ def test_take_snapshot_records_deregistered(seeded_db: sqlite3.Connection):
     client = MagicMock()
     client.get_neuron.side_effect = [
         NeuronInfo(uid=10, emission=0.5, block=100),
-        None,  # second hotkey deregistered
+        None,  # HK2 first attempt empty
+        None,  # HK2 confirmation still empty -> genuine deregistration
     ]
     result = take_snapshot(
         conn=seeded_db,
@@ -79,6 +80,62 @@ def test_take_snapshot_records_deregistered(seeded_db: sqlite3.Connection):
     ).fetchone()
     assert row["is_registered"] == 0
     assert row["emission"] is None
+
+
+def test_transient_empty_is_confirmed_not_deregistered(seeded_db: sqlite3.Connection):
+    """A one-off empty response must NOT be recorded as a deregistration if the
+    confirmation fetch shows the hotkey is still registered."""
+    client = MagicMock()
+    client.get_neuron.side_effect = [
+        NeuronInfo(uid=10, emission=0.5, block=100),  # HK1 ok
+        None,                                          # HK2 transient empty
+        NeuronInfo(uid=11, emission=0.4, block=100),  # HK2 confirmation -> still here
+    ]
+    result = take_snapshot(
+        conn=seeded_db,
+        client=client,
+        rate_limiter=_no_op_bucket(),
+        subnet_id=56,
+        request_interval_seconds=0,
+    )
+    assert result.status == "ok"
+    assert result.ok_count == 2
+    assert result.deregistered_count == 0
+    assert result.fail_count == 0
+
+    row = seeded_db.execute(
+        "SELECT is_registered, emission FROM neuron_snapshots WHERE hotkey_ss58 = ?",
+        (HK2,),
+    ).fetchone()
+    assert row["is_registered"] == 1
+    assert row["emission"] == 0.4
+
+
+def test_confirm_fetch_exception_counts_as_fail(seeded_db: sqlite3.Connection):
+    """If the confirmation fetch raises, treat as a fetch failure (partial),
+    not a deregistration."""
+    client = MagicMock()
+    client.get_neuron.side_effect = [
+        NeuronInfo(uid=10, emission=0.5, block=100),  # HK1 ok
+        None,                                          # HK2 first empty
+        RuntimeError("API down on confirm"),           # HK2 confirmation errors
+    ]
+    result = take_snapshot(
+        conn=seeded_db,
+        client=client,
+        rate_limiter=_no_op_bucket(),
+        subnet_id=56,
+        request_interval_seconds=0,
+    )
+    assert result.status == "partial"
+    assert result.ok_count == 1
+    assert result.fail_count == 1
+    assert result.deregistered_count == 0
+
+    row = seeded_db.execute(
+        "SELECT * FROM neuron_snapshots WHERE hotkey_ss58 = ?", (HK2,)
+    ).fetchone()
+    assert row is None  # no phantom row written
 
 
 def test_take_snapshot_partial_on_one_failure(seeded_db: sqlite3.Connection):

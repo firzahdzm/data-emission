@@ -47,6 +47,20 @@ def take_snapshot(
             log.warning("hotkey=%s fetch failed: %s", hk, exc)
             fail += 1
             continue
+        # A single empty/404 from the "latest neuron" endpoint is often a
+        # transient blip (indexing lag), not a real deregistration. Confirm
+        # with one more fetch before recording is_registered=0, otherwise a
+        # consistently-registered hotkey gets a phantom dereg row.
+        if info is None:
+            if request_interval_seconds > 0:
+                time.sleep(request_interval_seconds)
+            rate_limiter.acquire()
+            try:
+                info = client.get_neuron(subnet_id=subnet_id, hotkey=hk)
+            except Exception as exc:
+                log.warning("hotkey=%s confirm fetch failed: %s", hk, exc)
+                fail += 1
+                continue
         if info is None:
             conn.execute(
                 "INSERT INTO neuron_snapshots (snapshot_id, hotkey_ss58, uid, emission, is_registered) "

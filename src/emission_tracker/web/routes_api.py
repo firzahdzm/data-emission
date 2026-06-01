@@ -23,6 +23,11 @@ class KasDistributionBody(BaseModel):
     note: str | None = None
 
 
+class SalaryPaymentBody(BaseModel):
+    amount_per_person_usd: float
+    note: str | None = None
+
+
 def _db(request: Request) -> sqlite3.Connection:
     return request.app.state.db_conn
 
@@ -256,6 +261,56 @@ def delete_kas_distribution_endpoint(
     running balance."""
     if not queries.delete_kas_distribution(_db(request), distribution_id):
         raise HTTPException(status_code=404, detail="Kas distribution not found")
+    return None
+
+
+@router.get("/salary/payments")
+def list_salary(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    return {
+        "payments": queries.list_salary_payments(_db(request), limit=limit),
+        "limit": limit,
+    }
+
+
+@router.get("/salary/payments/{payment_id}")
+def salary_payment_detail_endpoint(request: Request, payment_id: int):
+    detail = queries.salary_payment_detail(_db(request), payment_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Salary payment not found")
+    return detail
+
+
+@router.post("/salary/payments", status_code=201)
+def create_salary_payment_endpoint(
+    request: Request,
+    body: SalaryPaymentBody,
+    user: str = Depends(require_admin),
+):
+    """Admin only. Pay an equal base salary to every person on the team,
+    deducted from the Fund balance. Unrelated to emission-based rewards."""
+    try:
+        return queries.create_salary_payment(
+            _db(request),
+            amount_per_person_usd=body.amount_per_person_usd,
+            note=body.note,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/salary/payments/{payment_id}", status_code=204)
+def delete_salary_payment_endpoint(
+    request: Request,
+    payment_id: int,
+    user: str = Depends(require_admin),
+):
+    """Admin only. Remove a salary payment. Its total returns to the
+    running Fund balance."""
+    if not queries.delete_salary_payment(_db(request), payment_id):
+        raise HTTPException(status_code=404, detail="Salary payment not found")
     return None
 
 

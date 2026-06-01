@@ -527,3 +527,103 @@ def test_kas_distribution_detail_404(app_with_db):
     client = TestClient(app_with_db)
     resp = client.get("/api/kas/distributions/9999")
     assert resp.status_code == 404
+
+
+# ---- Salary payment endpoints ----
+
+def test_post_salary_payment_requires_admin(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    _settle_and_set_price(client)
+    # No auth → 401
+    resp = client.post("/api/salary/payments", json={"amount_per_person_usd": 1})
+    assert resp.status_code == 401
+    # Non-admin → 403
+    resp = client.post(
+        "/api/salary/payments",
+        json={"amount_per_person_usd": 1},
+        headers={"X-Remote-User": "bob"},
+    )
+    assert resp.status_code == 403
+
+
+def test_post_salary_payment_admin_201(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    _settle_and_set_price(client)
+    balance_before = client.get("/api/kas/balance").json()["balance"]
+    per_person = round(balance_before / 10, 2)  # well under balance
+    resp = client.post(
+        "/api/salary/payments",
+        json={"amount_per_person_usd": per_person, "note": "test"},
+        headers={"X-Remote-User": "alice"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["amount_per_person_usd"] == pytest.approx(per_person)
+    assert data["headcount"] == len(data["lines"])
+    # Fund balance reduced by total
+    after = client.get("/api/kas/balance").json()
+    assert after["salary_paid"] == pytest.approx(data["total_usd"])
+    assert after["balance"] == pytest.approx(balance_before - data["total_usd"])
+
+
+def test_post_salary_payment_rejects_overdraw(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    _settle_and_set_price(client)
+    balance = client.get("/api/kas/balance").json()["balance"]
+    resp = client.post(
+        "/api/salary/payments",
+        json={"amount_per_person_usd": balance + 1},  # × headcount → definitely too much
+        headers={"X-Remote-User": "alice"},
+    )
+    assert resp.status_code == 400
+    assert "Insufficient" in resp.json()["detail"]
+
+
+def test_delete_salary_payment_requires_admin(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    _settle_and_set_price(client)
+    balance = client.get("/api/kas/balance").json()["balance"]
+    create = client.post(
+        "/api/salary/payments",
+        json={"amount_per_person_usd": round(balance / 10, 2)},
+        headers={"X-Remote-User": "alice"},
+    )
+    payment_id = create.json()["id"]
+    # No auth → 401
+    resp = client.delete(f"/api/salary/payments/{payment_id}")
+    assert resp.status_code == 401
+    # Non-admin → 403
+    resp = client.delete(
+        f"/api/salary/payments/{payment_id}",
+        headers={"X-Remote-User": "bob"},
+    )
+    assert resp.status_code == 403
+
+
+def test_delete_salary_payment_admin_reopens_balance(app_with_db):
+    _set_admin_users(app_with_db, ["alice"])
+    client = TestClient(app_with_db)
+    _settle_and_set_price(client)
+    balance_before = client.get("/api/kas/balance").json()["balance"]
+    create = client.post(
+        "/api/salary/payments",
+        json={"amount_per_person_usd": round(balance_before / 10, 2)},
+        headers={"X-Remote-User": "alice"},
+    )
+    payment_id = create.json()["id"]
+    resp = client.delete(
+        f"/api/salary/payments/{payment_id}",
+        headers={"X-Remote-User": "alice"},
+    )
+    assert resp.status_code == 204
+    assert client.get("/api/kas/balance").json()["balance"] == pytest.approx(balance_before)
+
+
+def test_salary_payment_detail_404(app_with_db):
+    client = TestClient(app_with_db)
+    resp = client.get("/api/salary/payments/9999")
+    assert resp.status_code == 404

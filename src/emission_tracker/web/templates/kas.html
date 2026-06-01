@@ -12,11 +12,19 @@
         <div class="kpi-value">{{ totals.distributed | usd }}</div>
         <div class="kpi-sub">already paid out</div>
     </article>
+    <article class="kpi-card">
+        <span class="kpi-label">Total salary paid</span>
+        <div class="kpi-value">{{ totals.salary_paid | usd }}</div>
+        <div class="kpi-sub">base salary, all-time</div>
+    </article>
     {% if is_admin %}
     <article class="kpi-card kpi-card-action">
         <span class="kpi-label">Admin actions</span>
         <button id="distribute-btn" {% if totals.balance <= 0 %}disabled{% endif %}>
             Distribute Fund
+        </button>
+        <button id="pay-salary-btn" class="secondary" {% if totals.balance <= 0 or headcount == 0 %}disabled{% endif %}>
+            Pay Salary
         </button>
     </article>
     {% endif %}
@@ -48,6 +56,50 @@
 </section>
 
 <section class="panel" style="padding: 0; overflow: hidden;">
+    <header style="padding: 0.85rem 1.25rem 0;">Salary history</header>
+    <p style="padding: 0 1.25rem 0.5rem; color: var(--pico-muted-color); font-size: 0.875rem; margin: 0;">
+        Base salary paid equally to every team member (independent of emission rewards).
+    </p>
+    {% if salary_payments %}
+    <table class="kas-table">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Paid at</th>
+                <th class="num">Per person</th>
+                <th class="num">Headcount</th>
+                <th class="num">Total</th>
+                <th>Note</th>
+                {% if is_admin %}<th></th>{% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in salary_payments %}
+            <tr>
+                <td class="text-mono">#{{ s.id }}</td>
+                <td>{{ s.paid_at | dt_s }}</td>
+                <td class="num text-mono">{{ s.amount_per_person_usd | usd }}</td>
+                <td class="num text-mono text-muted">{{ s.headcount }}</td>
+                <td class="num text-mono"><strong>{{ s.total_usd | usd }}</strong></td>
+                <td>{{ s.note or "—" }}</td>
+                {% if is_admin %}
+                <td class="num">
+                    <button class="delete-salary-btn btn-danger" data-id="{{ s.id }}"
+                            style="padding: 0.2rem 0.6rem; font-size: 0.8rem; margin: 0;">
+                        Delete
+                    </button>
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="padding: 1rem 1.25rem;">No salary payments yet.</p>
+    {% endif %}
+</section>
+
+<section class="panel" style="padding: 0; overflow: hidden;">
     <header style="padding: 0.85rem 1.25rem 0;">Distribution history</header>
     {% if distributions %}
     <table class="kas-table">
@@ -76,6 +128,33 @@
 </section>
 
 {% if is_admin %}
+<dialog id="pay-salary-dialog">
+    <article style="max-width: 32rem;">
+        <header>
+            <h3 style="margin: 0;">Pay base salary</h3>
+        </header>
+        <p style="margin: 0 0 0.75rem;">
+            Equal amount per person, deducted from the Fund. No interaction with emission rewards.
+        </p>
+        <p class="text-muted" style="font-size: 0.875rem; margin: 0 0 1rem;">
+            Headcount: <strong id="ps-headcount">{{ headcount }}</strong>
+            &middot; Fund balance: <strong id="ps-balance">{{ totals.balance | usd }}</strong>
+        </p>
+        <label>
+            Amount per person (USD)
+            <input type="text" id="ps-amount" placeholder="e.g. 500 or 1k" autocomplete="off">
+        </label>
+        <p id="ps-preview" class="text-muted" style="font-size: 0.875rem; margin: 0 0 1rem;">—</p>
+        <label>
+            Note (optional)
+            <input type="text" id="ps-note" placeholder="e.g. May 2026 base salary" autocomplete="off">
+        </label>
+        <footer style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+            <button id="ps-cancel" class="secondary" type="button">Cancel</button>
+            <button id="ps-submit" type="button" disabled>Pay salary</button>
+        </footer>
+    </article>
+</dialog>
 <script>
     function _parseUsd(input) {
         if (input === null || input === undefined) return null;
@@ -105,6 +184,89 @@
     }
 
     const BALANCE = {{ totals.balance }};
+    const HEADCOUNT = {{ headcount }};
+
+    // ----- Pay salary -----
+    const paySalaryBtn = document.getElementById('pay-salary-btn');
+    const psDialog = document.getElementById('pay-salary-dialog');
+    const psAmount = document.getElementById('ps-amount');
+    const psNote = document.getElementById('ps-note');
+    const psPreview = document.getElementById('ps-preview');
+    const psSubmit = document.getElementById('ps-submit');
+    const psCancel = document.getElementById('ps-cancel');
+
+    function updatePsPreview() {
+        const amt = _parseUsd(psAmount.value);
+        if (amt === null || amt <= 0) {
+            psPreview.textContent = 'Enter a per-person amount.';
+            psSubmit.disabled = true;
+            return;
+        }
+        const total = amt * HEADCOUNT;
+        const remaining = BALANCE - total;
+        if (total > BALANCE) {
+            psPreview.innerHTML =
+                _usd(amt) + ' × ' + HEADCOUNT + ' = <strong>' + _usd(total) + '</strong>' +
+                ' &middot; <span style="color: var(--sn-danger, #ef4444);">exceeds balance</span>';
+            psSubmit.disabled = true;
+        } else {
+            psPreview.innerHTML =
+                _usd(amt) + ' × ' + HEADCOUNT + ' = <strong>' + _usd(total) + '</strong>' +
+                ' &middot; Fund after: ' + _usd(remaining);
+            psSubmit.disabled = false;
+        }
+    }
+    if (psAmount) psAmount.addEventListener('input', updatePsPreview);
+    if (paySalaryBtn) paySalaryBtn.addEventListener('click', function () {
+        psAmount.value = '';
+        psNote.value = '';
+        updatePsPreview();
+        psDialog.showModal();
+        psAmount.focus();
+    });
+    if (psCancel) psCancel.addEventListener('click', () => psDialog.close());
+    if (psSubmit) psSubmit.addEventListener('click', async function () {
+        const amt = _parseUsd(psAmount.value);
+        if (amt === null || amt <= 0) return;
+        this.disabled = true;
+        this.textContent = 'Paying…';
+        const resp = await fetch('/api/salary/payments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                amount_per_person_usd: amt,
+                note: psNote.value || null,
+            }),
+        });
+        if (resp.ok) {
+            location.reload();
+        } else {
+            const err = await resp.json().catch(() => ({}));
+            alert('Failed: ' + (err.detail || resp.statusText));
+            this.disabled = false;
+            this.textContent = 'Pay salary';
+        }
+    });
+
+    // ----- Delete a salary payment -----
+    document.querySelectorAll('.delete-salary-btn').forEach(btn => {
+        btn.addEventListener('click', async function (e) {
+            e.stopPropagation();
+            const id = this.dataset.id;
+            if (!confirm('Delete salary payment #' + id + '?\n\nThe total returns to the Fund balance.')) return;
+            this.disabled = true;
+            const resp = await fetch('/api/salary/payments/' + id, { method: 'DELETE' });
+            if (resp.status === 204) {
+                location.reload();
+            } else {
+                const err = await resp.json().catch(() => ({}));
+                alert('Failed: ' + (err.detail || resp.statusText));
+                this.disabled = false;
+            }
+        });
+    });
+
+    // ----- Distribute Fund (existing) -----
     const btn = document.getElementById('distribute-btn');
     if (btn) btn.addEventListener('click', async function () {
         const raw = prompt(

@@ -97,6 +97,24 @@ SCHEMA_STATEMENTS = [
         PRIMARY KEY (distribution_id, person_name)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS salary_payments (
+        id                       INTEGER PRIMARY KEY,
+        paid_at                  TIMESTAMP NOT NULL,
+        amount_per_person_idr    INTEGER NOT NULL,
+        headcount                INTEGER NOT NULL,
+        total_idr                INTEGER NOT NULL,
+        note                     TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS salary_payment_lines (
+        payment_id    INTEGER NOT NULL REFERENCES salary_payments(id) ON DELETE CASCADE,
+        person_name   TEXT    NOT NULL,
+        amount_idr    INTEGER NOT NULL,
+        PRIMARY KEY (payment_id, person_name)
+    )
+    """,
     "CREATE INDEX IF NOT EXISTS idx_neuron_snap_hotkey ON neuron_snapshots(hotkey_ss58)",
     "CREATE INDEX IF NOT EXISTS idx_snapshots_taken_at ON snapshots(taken_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_settlements_through ON settlements(settled_through_snapshot_id)",

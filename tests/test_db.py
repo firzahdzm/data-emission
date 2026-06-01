@@ -23,6 +23,8 @@ def test_init_schema_creates_all_tables(memory_db: sqlite3.Connection):
         "kas_distributions",
         "neuron_snapshots",
         "persons",
+        "salary_payment_lines",
+        "salary_payments",
         "settlement_lines",
         "settlements",
         "snapshots",

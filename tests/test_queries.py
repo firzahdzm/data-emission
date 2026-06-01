@@ -760,7 +760,12 @@ def test_kas_totals_empty(memory_db: sqlite3.Connection):
     init_schema(memory_db)
     sync_team(memory_db, [PersonConfig(name="X", hotkeys=[HK_F1])], subnet_id=56)
     totals = kas_totals(memory_db)
-    assert totals == {"contributed": 0, "distributed": 0, "balance": 0}
+    assert totals == {
+        "contributed": 0,
+        "distributed": 0,
+        "salary_paid": 0,
+        "balance": 0,
+    }
 
 
 def test_kas_balance_after_settlement_with_distribution(seeded_db: sqlite3.Connection):
@@ -832,6 +837,83 @@ def test_kas_distribution_rejects_overdraw(seeded_db: sqlite3.Connection):
     balance = kas_totals(seeded_db)["balance"]
     with pytest.raises(ValueError, match="Insufficient kas balance"):
         create_kas_distribution(seeded_db, amount_usd=balance + 1)
+
+
+# ---- Base salary payments ----
+
+def test_create_salary_payment_deducts_from_fund(seeded_db: sqlite3.Connection):
+    from emission_tracker.web.queries import create_salary_payment, kas_totals
+    create_settlement(seeded_db, token_price_usd=1_000_000_000)
+    before = kas_totals(seeded_db)
+    assert before["balance"] > 0
+
+    headcount = seeded_db.execute("SELECT COUNT(*) AS n FROM persons").fetchone()["n"]
+    per_person = round(before["balance"] / (headcount * 2), 2)  # well under balance
+    payment = create_salary_payment(seeded_db, amount_per_person_usd=per_person, note="May")
+
+    expected_total = round(per_person * headcount, 2)
+    assert payment["amount_per_person_usd"] == pytest.approx(per_person)
+    assert payment["headcount"] == headcount
+    assert payment["total_usd"] == pytest.approx(expected_total)
+    assert len(payment["lines"]) == headcount
+    assert all(line["amount_usd"] == pytest.approx(per_person) for line in payment["lines"])
+
+    after = kas_totals(seeded_db)
+    assert after["salary_paid"] == pytest.approx(expected_total)
+    assert after["balance"] == pytest.approx(before["balance"] - expected_total)
+
+
+def test_salary_payment_rejects_overdraw(seeded_db: sqlite3.Connection):
+    from emission_tracker.web.queries import create_salary_payment, kas_totals
+    create_settlement(seeded_db, token_price_usd=1_000_000_000)
+    balance = kas_totals(seeded_db)["balance"]
+    headcount = seeded_db.execute("SELECT COUNT(*) AS n FROM persons").fetchone()["n"]
+    # per_person × headcount > balance
+    too_much = (balance / headcount) + 1
+    with pytest.raises(ValueError, match="Insufficient Fund balance"):
+        create_salary_payment(seeded_db, amount_per_person_usd=too_much)
+
+
+def test_salary_payment_rejects_no_persons(memory_db: sqlite3.Connection):
+    from emission_tracker.web.queries import create_salary_payment
+    init_schema(memory_db)
+    # No persons synced
+    with pytest.raises(ValueError, match="No persons configured"):
+        create_salary_payment(memory_db, amount_per_person_usd=100)
+
+
+def test_salary_payment_rejects_negative(seeded_db: sqlite3.Connection):
+    from emission_tracker.web.queries import create_salary_payment
+    with pytest.raises(ValueError, match="non-negative"):
+        create_salary_payment(seeded_db, amount_per_person_usd=-1)
+
+
+def test_delete_salary_payment_reopens_balance(seeded_db: sqlite3.Connection):
+    from emission_tracker.web.queries import (
+        create_salary_payment, delete_salary_payment, kas_totals,
+    )
+    create_settlement(seeded_db, token_price_usd=1_000_000_000)
+    before = kas_totals(seeded_db)
+    headcount = seeded_db.execute("SELECT COUNT(*) AS n FROM persons").fetchone()["n"]
+    per_person = round(before["balance"] / (headcount * 4), 2)
+    payment = create_salary_payment(seeded_db, amount_per_person_usd=per_person)
+
+    assert delete_salary_payment(seeded_db, payment["id"]) is True
+    after = kas_totals(seeded_db)
+    assert after["salary_paid"] == 0
+    assert after["balance"] == pytest.approx(before["balance"])
+
+    # Cascade: line rows gone too
+    n_lines = seeded_db.execute(
+        "SELECT COUNT(*) AS n FROM salary_payment_lines WHERE payment_id = ?",
+        (payment["id"],),
+    ).fetchone()["n"]
+    assert n_lines == 0
+
+
+def test_delete_salary_payment_missing_returns_false(seeded_db: sqlite3.Connection):
+    from emission_tracker.web.queries import delete_salary_payment
+    assert delete_salary_payment(seeded_db, 9999) is False
 
 
 def test_kas_distribution_rejects_negative(seeded_db: sqlite3.Connection):

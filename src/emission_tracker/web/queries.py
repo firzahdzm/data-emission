@@ -301,7 +301,8 @@ def kas_totals(conn: sqlite3.Connection) -> dict:
 
         contributed = SUM(kas_contribution) across all settlement_lines
         distributed = SUM(amount) across all kas_distributions
-        balance     = contributed - distributed
+        salary_paid = SUM(total) across all salary_payments
+        balance     = contributed - distributed - salary_paid
     """
     contributed = conn.execute(
         "SELECT COALESCE(SUM(kas_contribution_idr), 0) AS n FROM settlement_lines"
@@ -309,10 +310,16 @@ def kas_totals(conn: sqlite3.Connection) -> dict:
     distributed = conn.execute(
         "SELECT COALESCE(SUM(amount_idr), 0) AS n FROM kas_distributions"
     ).fetchone()["n"]
+    salary_paid = conn.execute(
+        "SELECT COALESCE(SUM(total_idr), 0) AS n FROM salary_payments"
+    ).fetchone()["n"]
     return {
         "contributed": float(contributed),
         "distributed": float(distributed),
-        "balance": round(float(contributed) - float(distributed), 2),
+        "salary_paid": float(salary_paid),
+        "balance": round(
+            float(contributed) - float(distributed) - float(salary_paid), 2
+        ),
     }
 
 
@@ -421,6 +428,91 @@ def kas_distribution_detail(conn: sqlite3.Connection, distribution_id: int) -> d
         "FROM kas_distribution_lines WHERE distribution_id = ? "
         "ORDER BY share_idr DESC, person_name ASC",
         (distribution_id,),
+    ).fetchall()
+    return {**dict(head), "lines": [dict(line) for line in lines]}
+
+
+# --- Base salary payments (paid from the Fund, equal amount per person) ---
+
+def create_salary_payment(
+    conn: sqlite3.Connection,
+    amount_per_person_usd: float,
+    note: str | None = None,
+) -> dict:
+    """Atomically pay an equal base salary to every person in the team,
+    deducting `amount_per_person × headcount` from the Fund balance.
+
+    Raises ValueError if the amount is negative, the team is empty, or the
+    Fund balance is insufficient to cover the total.
+    """
+    if amount_per_person_usd < 0:
+        raise ValueError("amount_per_person_usd must be non-negative")
+    persons = conn.execute(
+        "SELECT name FROM persons ORDER BY name"
+    ).fetchall()
+    headcount = len(persons)
+    if headcount == 0:
+        raise ValueError("No persons configured — cannot pay salary")
+    total = round(amount_per_person_usd * headcount, 2)
+    totals = kas_totals(conn)
+    if total > totals["balance"]:
+        raise ValueError(
+            f"Insufficient Fund balance: requested {total}, available {totals['balance']}"
+        )
+    now = datetime.now(timezone.utc)
+    cursor = conn.execute(
+        "INSERT INTO salary_payments "
+        "(paid_at, amount_per_person_idr, headcount, total_idr, note) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (now, amount_per_person_usd, headcount, total, note),
+    )
+    payment_id = cursor.lastrowid
+    for p in persons:
+        conn.execute(
+            "INSERT INTO salary_payment_lines (payment_id, person_name, amount_idr) "
+            "VALUES (?, ?, ?)",
+            (payment_id, p["name"], amount_per_person_usd),
+        )
+    conn.commit()
+    return salary_payment_detail(conn, payment_id)
+
+
+def delete_salary_payment(conn: sqlite3.Connection, payment_id: int) -> bool:
+    """Remove a salary payment + cascade its lines. The balance reopens
+    automatically (balance = contributed − distributed − salary_paid)."""
+    cursor = conn.execute(
+        "DELETE FROM salary_payments WHERE id = ?", (payment_id,)
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def list_salary_payments(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
+    cursor = conn.execute(
+        "SELECT id, CAST(paid_at AS TEXT) AS paid_at, "
+        "       amount_per_person_idr AS amount_per_person_usd, "
+        "       headcount, total_idr AS total_usd, note "
+        "FROM salary_payments ORDER BY id DESC LIMIT ?",
+        (limit,),
+    )
+    return [dict(r) for r in cursor.fetchall()]
+
+
+def salary_payment_detail(conn: sqlite3.Connection, payment_id: int) -> dict | None:
+    head = conn.execute(
+        "SELECT id, CAST(paid_at AS TEXT) AS paid_at, "
+        "       amount_per_person_idr AS amount_per_person_usd, "
+        "       headcount, total_idr AS total_usd, note "
+        "FROM salary_payments WHERE id = ?",
+        (payment_id,),
+    ).fetchone()
+    if head is None:
+        return None
+    lines = conn.execute(
+        "SELECT person_name, amount_idr AS amount_usd "
+        "FROM salary_payment_lines WHERE payment_id = ? "
+        "ORDER BY person_name ASC",
+        (payment_id,),
     ).fetchall()
     return {**dict(head), "lines": [dict(line) for line in lines]}
 

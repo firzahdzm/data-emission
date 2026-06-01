@@ -226,6 +226,8 @@ def register_pages(app: FastAPI) -> None:
             for c in contributions
         ]
         distributions = queries.list_kas_distributions(conn, limit=limit)
+        salary_payments = queries.list_salary_payments(conn, limit=limit)
+        headcount = conn.execute("SELECT COUNT(*) AS n FROM persons").fetchone()["n"]
         latest = queries.latest_snapshot(conn)
         return templates.TemplateResponse(
             request,
@@ -234,6 +236,8 @@ def register_pages(app: FastAPI) -> None:
                 "totals": totals,
                 "contributions": contributions_view,
                 "distributions": distributions,
+                "salary_payments": salary_payments,
+                "headcount": headcount,
                 "limit": limit,
                 "latest": latest,
                 "active_page": "kas",

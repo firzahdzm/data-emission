@@ -140,6 +140,15 @@ def test_dashboard_close_button_visible_for_admin(app):
     assert "close-period-btn" in resp.text
 
 
+def test_kas_page_renders_with_salary_section(app):
+    client = TestClient(app)
+    resp = client.get("/kas")
+    assert resp.status_code == 200
+    assert "Total salary paid" in resp.text
+    assert "Salary history" in resp.text
+    assert "No salary payments yet." in resp.text
+
+
 def test_format_dt_seconds_helper():
     from datetime import datetime, timezone
 

@@ -40,5 +40,65 @@
     </header>
     {% block content %}{% endblock %}
 </main>
+
+<dialog id="sn-modal">
+    <article style="max-width: 28rem;">
+        <header>
+            <h3 id="sn-modal-title" style="margin: 0;">Notice</h3>
+        </header>
+        <p id="sn-modal-message" style="margin: 0 0 1rem; white-space: pre-wrap; line-height: 1.5;"></p>
+        <footer id="sn-modal-actions" style="display: flex; gap: 0.5rem; justify-content: flex-end; margin: 0;"></footer>
+    </article>
+</dialog>
+<script>
+    (function () {
+        const dlg = document.getElementById('sn-modal');
+        const titleEl = document.getElementById('sn-modal-title');
+        const msgEl = document.getElementById('sn-modal-message');
+        const actionsEl = document.getElementById('sn-modal-actions');
+        let currentResolve = null;
+        function openWith(title, message, buttons) {
+            titleEl.textContent = title;
+            msgEl.textContent = message;
+            actionsEl.innerHTML = '';
+            buttons.forEach((btn, i) => {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.textContent = btn.label;
+                if (btn.className) b.className = btn.className;
+                b.addEventListener('click', () => {
+                    const r = currentResolve; currentResolve = null;
+                    dlg.close();
+                    if (r) r(btn.value);
+                });
+                actionsEl.appendChild(b);
+                if (i === buttons.length - 1) setTimeout(() => b.focus(), 0);
+            });
+            dlg.showModal();
+        }
+        dlg.addEventListener('close', () => {
+            if (currentResolve) { const r = currentResolve; currentResolve = null; r(false); }
+        });
+        window.snAlert = function (message, opts = {}) {
+            const { title = 'Notice', okText = 'OK', tone = 'info' } = opts;
+            return new Promise(resolve => {
+                currentResolve = resolve;
+                openWith(title, message, [
+                    { label: okText, value: true, className: tone === 'error' ? 'btn-danger' : '' }
+                ]);
+            });
+        };
+        window.snConfirm = function (message, opts = {}) {
+            const { title = 'Confirm', okText = 'OK', cancelText = 'Cancel', danger = false } = opts;
+            return new Promise(resolve => {
+                currentResolve = resolve;
+                openWith(title, message, [
+                    { label: cancelText, value: false, className: 'secondary' },
+                    { label: okText, value: true, className: danger ? 'btn-danger' : '' }
+                ]);
+            });
+        };
+    })();
+</script>
 </body>
 </html>

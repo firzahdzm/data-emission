@@ -69,10 +69,9 @@
 {% if is_admin %}
 <script>
     document.getElementById('delete-kas-btn').addEventListener('click', async function () {
-        const ok = confirm(
-            "Delete kas distribution #{{ distribution.id }}?\n\n" +
-            "{{ distribution.amount_usd | usd }} will return to the kas balance.\n\n" +
-            "Continue?"
+        const ok = await snConfirm(
+            "{{ distribution.amount_usd | usd }} will return to the Fund balance.",
+            { title: "Delete distribution #{{ distribution.id }}?", okText: "Delete", danger: true }
         );
         if (!ok) return;
         this.disabled = true;
@@ -82,7 +81,7 @@
             location.href = '/kas';
         } else {
             const err = await resp.json().catch(() => ({}));
-            alert('Failed: ' + (err.detail || resp.statusText));
+            await snAlert((err.detail || resp.statusText), { title: 'Failed', tone: 'error' });
             this.disabled = false;
             this.textContent = 'Delete distribution';
         }

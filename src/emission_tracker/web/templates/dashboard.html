@@ -33,40 +33,46 @@
 </div>
 
 {% if is_admin %}
-<dialog id="close-period-dialog" class="close-period-dialog">
-    <form method="dialog" id="close-period-form">
-        <h3 style="margin-top: 0; margin-bottom: 0.25rem;">Close period</h3>
-        <p class="text-muted" style="margin: 0 0 1rem; font-size: 0.85rem;">
+<dialog id="close-period-dialog">
+    <article style="max-width: 32rem;">
+        <header>
+            <h3 style="margin: 0;">Close period</h3>
+        </header>
+        <p class="text-muted" style="margin: 0 0 1rem; font-size: 0.875rem;">
             Freeze akumulasi emisi sampai snapshot pilihan, lalu compute 30% reward + 70% kas.
             Token price <strong>immutable</strong> setelah Close.
         </p>
 
         <label>
             Boundary snapshot
-            <select id="close-snapshot-select" required>
+            <select id="close-snapshot-select">
                 <option value="">Loading…</option>
             </select>
-            <small class="text-muted">Pilih sampai mana periode ini ditutup. Default: paling baru.</small>
         </label>
+        <p class="text-muted" style="font-size: 0.8rem; margin: -0.5rem 0 1rem;">
+            Pilih sampai mana periode ini ditutup. Default: paling baru.
+        </p>
 
         <label>
             Token price (USD per 1 α)
-            <input id="close-price-input" type="number" step="0.0001" min="0" placeholder="5.25" required>
-            <small class="text-muted">Tidak bisa di-edit setelah Close.</small>
+            <input id="close-price-input" type="number" step="0.0001" min="0" placeholder="5.25">
         </label>
+        <p class="text-muted" style="font-size: 0.8rem; margin: -0.5rem 0 1rem;">
+            Tidak bisa di-edit setelah Close.
+        </p>
 
         <label>
             Note <span class="text-muted">(opsional)</span>
-            <input id="close-note-input" type="text" placeholder='e.g. "Week 1"'>
+            <input id="close-note-input" type="text" placeholder='e.g. "Week 1"' autocomplete="off">
         </label>
 
-        <p id="close-error" class="text-muted" style="color: var(--pico-del-color, #c0392b); display: none;"></p>
+        <p id="close-error" style="color: var(--sn-warn, #ef4444); font-size: 0.875rem; margin: 0 0 0.75rem; display: none;"></p>
 
-        <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.5rem;">
+        <footer style="display: flex; gap: 0.5rem; justify-content: flex-end; margin: 0;">
             <button id="close-cancel-btn" type="button" class="secondary">Cancel</button>
             <button id="close-confirm-btn" type="button">Close period</button>
-        </div>
-    </form>
+        </footer>
+    </article>
 </dialog>
 
 <script>

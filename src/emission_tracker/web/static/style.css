@@ -401,48 +401,62 @@ button.secondary:hover {
     color: var(--sn-text);
 }
 
-/* ---- Dialog ---- */
-.close-period-dialog {
+/* ---- Dialog (applies to all <dialog> in the app) ---- */
+dialog {
     border: 1px solid var(--sn-border-bright);
     border-radius: var(--sn-radius);
-    padding: 1.5rem;
-    min-width: min(460px, 92vw);
-    background: var(--sn-surface-1);
+    padding: 0;
+    background: transparent;
     color: var(--sn-text);
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 40px #06d9fd08;
+    max-width: 92vw;
 }
-.close-period-dialog::backdrop {
+dialog::backdrop {
     background: rgba(6, 10, 18, 0.8);
     backdrop-filter: blur(4px);
 }
-.close-period-dialog label {
+dialog > article {
+    margin: 0;
+    background: var(--sn-surface-1);
+    border-radius: var(--sn-radius);
+    padding: 1.5rem;
+}
+dialog > article > header {
+    background: var(--sn-surface-2);
+    border-bottom: 1px solid var(--sn-border);
+    margin: -1.5rem -1.5rem 1rem;
+    padding: 0.85rem 1.5rem;
+    border-radius: var(--sn-radius) var(--sn-radius) 0 0;
+}
+dialog > article > footer {
+    background: transparent;
+    border-top: 1px solid var(--sn-border);
+    margin: 1rem -1.5rem -1.5rem;
+    padding: 0.85rem 1.5rem;
+}
+dialog h3 {
+    color: var(--sn-text-bright);
+    font-weight: 600;
+}
+dialog label {
     display: block;
-    margin-bottom: 0.85rem;
+    margin-bottom: 1rem;
     font-size: 0.88rem;
     color: var(--sn-text);
 }
-.close-period-dialog small {
-    display: block;
-    margin-top: 0.25rem;
-    font-size: 0.72rem;
-    color: var(--sn-text-dim);
-}
-.close-period-dialog select,
-.close-period-dialog input {
+dialog select,
+dialog input[type="text"],
+dialog input[type="number"] {
     margin-top: 0.3rem;
     margin-bottom: 0;
     background: var(--sn-surface-2);
     border-color: var(--sn-border);
     color: var(--sn-text);
 }
-.close-period-dialog select:focus,
-.close-period-dialog input:focus {
+dialog select:focus,
+dialog input:focus {
     border-color: var(--sn-cyan);
     box-shadow: 0 0 0 2px #06d9fd20;
-}
-.close-period-dialog h3 {
-    color: var(--sn-text-bright);
-    font-weight: 600;
 }
 
 /* ---- Per-page table overrides ---- */

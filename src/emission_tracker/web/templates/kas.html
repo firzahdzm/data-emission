@@ -23,7 +23,7 @@
         <button id="distribute-btn" {% if totals.balance <= 0 %}disabled{% endif %}>
             Distribute Fund
         </button>
-        <button id="pay-salary-btn" class="secondary" {% if totals.balance <= 0 or headcount == 0 %}disabled{% endif %}>
+        <button id="pay-salary-btn" {% if totals.balance <= 0 or headcount == 0 %}disabled{% endif %}>
             Pay Salary
         </button>
     </article>
@@ -155,6 +155,37 @@
         </footer>
     </article>
 </dialog>
+<dialog id="distribute-fund-dialog">
+    <article style="max-width: 36rem;">
+        <header>
+            <h3 style="margin: 0;">Distribute Fund</h3>
+        </header>
+        <p style="margin: 0 0 0.75rem;">
+            Per-person share weighted by all-time emission.
+        </p>
+        <p class="text-muted" style="font-size: 0.875rem; margin: 0 0 1rem;">
+            Fund balance: <strong>{{ totals.balance | usd }}</strong>
+        </p>
+        <label>
+            Amount to distribute (USD)
+            <input type="text" id="df-amount" placeholder="e.g. 50000, 50k, 50,000" autocomplete="off">
+        </label>
+        <p id="df-status" class="text-muted" style="font-size: 0.875rem; margin: 0 0 0.5rem;">—</p>
+        <div id="df-shares-wrap" style="display: none; margin: 0 0 1rem;">
+            <p class="text-muted" style="font-size: 0.8rem; margin: 0 0 0.25rem;">Per-person preview</p>
+            <ul id="df-shares" class="text-mono"
+                style="margin: 0; padding: 0.5rem 0.75rem; list-style: none; max-height: 12rem; overflow-y: auto; background: var(--sn-surface-2, #111827); border-radius: 6px; font-size: 0.85rem;"></ul>
+        </div>
+        <label>
+            Note (optional)
+            <input type="text" id="df-note" placeholder="e.g. Q1 2026 payout" autocomplete="off">
+        </label>
+        <footer style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+            <button id="df-cancel" class="secondary" type="button">Cancel</button>
+            <button id="df-submit" type="button" disabled>Distribute</button>
+        </footer>
+    </article>
+</dialog>
 <script>
     function _parseUsd(input) {
         if (input === null || input === undefined) return null;
@@ -242,7 +273,7 @@
             location.reload();
         } else {
             const err = await resp.json().catch(() => ({}));
-            alert('Failed: ' + (err.detail || resp.statusText));
+            await snAlert((err.detail || resp.statusText), { title: 'Failed', tone: 'error' });
             this.disabled = false;
             this.textContent = 'Pay salary';
         }
@@ -253,73 +284,108 @@
         btn.addEventListener('click', async function (e) {
             e.stopPropagation();
             const id = this.dataset.id;
-            if (!confirm('Delete salary payment #' + id + '?\n\nThe total returns to the Fund balance.')) return;
+            const ok = await snConfirm(
+                'The total returns to the Fund balance.',
+                { title: 'Delete salary payment #' + id + '?', okText: 'Delete', danger: true }
+            );
+            if (!ok) return;
             this.disabled = true;
             const resp = await fetch('/api/salary/payments/' + id, { method: 'DELETE' });
             if (resp.status === 204) {
                 location.reload();
             } else {
                 const err = await resp.json().catch(() => ({}));
-                alert('Failed: ' + (err.detail || resp.statusText));
+                await snAlert((err.detail || resp.statusText), { title: 'Failed', tone: 'error' });
                 this.disabled = false;
             }
         });
     });
 
-    // ----- Distribute Fund (existing) -----
-    const btn = document.getElementById('distribute-btn');
-    if (btn) btn.addEventListener('click', async function () {
-        const raw = prompt(
-            "Distribute kas bersama.\n\n" +
-            "Available balance: " + _usd(BALANCE) + "\n\n" +
-            "Amount to distribute (USD). Examples: 50000, 50k, 50,000."
-        );
-        if (raw === null) return;
-        const amount = _parseUsd(raw);
-        if (amount === null || amount <= 0) {
-            alert('Invalid amount.');
+    // ----- Distribute Fund -----
+    const distributeBtn = document.getElementById('distribute-btn');
+    const dfDialog = document.getElementById('distribute-fund-dialog');
+    const dfAmount = document.getElementById('df-amount');
+    const dfNote = document.getElementById('df-note');
+    const dfStatus = document.getElementById('df-status');
+    const dfSharesWrap = document.getElementById('df-shares-wrap');
+    const dfShares = document.getElementById('df-shares');
+    const dfSubmit = document.getElementById('df-submit');
+    const dfCancel = document.getElementById('df-cancel');
+    let dfPreviewToken = 0;
+
+    function renderShares(shares) {
+        dfShares.innerHTML = '';
+        shares.forEach(s => {
+            const li = document.createElement('li');
+            li.style.display = 'flex';
+            li.style.justifyContent = 'space-between';
+            li.style.padding = '0.15rem 0';
+            li.innerHTML = '<span>' + s.name + '</span><strong>' + _usd(s.share_usd) + '</strong>';
+            dfShares.appendChild(li);
+        });
+        dfSharesWrap.style.display = shares.length ? 'block' : 'none';
+    }
+
+    async function updateDfPreview() {
+        const amt = _parseUsd(dfAmount.value);
+        if (amt === null || amt <= 0) {
+            dfStatus.textContent = 'Enter an amount to distribute.';
+            dfSharesWrap.style.display = 'none';
+            dfSubmit.disabled = true;
             return;
         }
-        if (amount > BALANCE) {
-            alert('Amount exceeds available balance (' + _usd(BALANCE) + ').');
+        if (amt > BALANCE) {
+            dfStatus.innerHTML =
+                '<span style="color: var(--sn-warn, #ef4444);">Exceeds balance</span> &middot; ' +
+                _usd(amt) + ' > ' + _usd(BALANCE);
+            dfSharesWrap.style.display = 'none';
+            dfSubmit.disabled = true;
             return;
         }
+        dfStatus.innerHTML =
+            'Distributing <strong>' + _usd(amt) + '</strong> &middot; Fund after: ' + _usd(BALANCE - amt);
+        dfSubmit.disabled = false;
+        // Debounce shares preview API call.
+        const myToken = ++dfPreviewToken;
+        setTimeout(async () => {
+            if (myToken !== dfPreviewToken) return;
+            try {
+                const resp = await fetch('/api/kas/preview?amount_usd=' + amt);
+                if (!resp.ok || myToken !== dfPreviewToken) return;
+                const data = await resp.json();
+                if (myToken === dfPreviewToken) renderShares(data.shares || []);
+            } catch (_) { /* ignore preview failures, validation still works */ }
+        }, 250);
+    }
 
-        const previewResp = await fetch('/api/kas/preview?amount_usd=' + amount);
-        if (!previewResp.ok) {
-            alert('Preview failed.');
-            return;
-        }
-        const preview = await previewResp.json();
-        let previewLines = preview.shares
-            .map(s => '  ' + s.name + ': ' + _usd(s.share_usd))
-            .join('\n');
-
-        const note = prompt(
-            "Distribution: " + _usd(amount) + "\n\n" +
-            "Per-person preview (by all-time emission):\n" +
-            previewLines + "\n\n" +
-            "Note (optional):"
-        );
-        if (note === null) return;
-
-        if (!confirm("Confirm distribution of " + _usd(amount) + "?\n\nContinue?")) return;
-
+    if (dfAmount) dfAmount.addEventListener('input', updateDfPreview);
+    if (distributeBtn) distributeBtn.addEventListener('click', function () {
+        dfAmount.value = '';
+        dfNote.value = '';
+        dfSharesWrap.style.display = 'none';
+        updateDfPreview();
+        dfDialog.showModal();
+        dfAmount.focus();
+    });
+    if (dfCancel) dfCancel.addEventListener('click', () => dfDialog.close());
+    if (dfSubmit) dfSubmit.addEventListener('click', async function () {
+        const amt = _parseUsd(dfAmount.value);
+        if (amt === null || amt <= 0 || amt > BALANCE) return;
         this.disabled = true;
         this.textContent = 'Distributing…';
         const resp = await fetch('/api/kas/distributions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ amount_usd: amount, note: note || null }),
+            body: JSON.stringify({ amount_usd: amt, note: dfNote.value || null }),
         });
         if (resp.ok) {
             const data = await resp.json();
             location.href = '/kas/' + data.id;
         } else {
             const err = await resp.json().catch(() => ({}));
-            alert('Failed: ' + (err.detail || resp.statusText));
+            await snAlert((err.detail || resp.statusText), { title: 'Failed', tone: 'error' });
             this.disabled = false;
-            this.textContent = 'Distribute kas';
+            this.textContent = 'Distribute';
         }
     });
 </script>

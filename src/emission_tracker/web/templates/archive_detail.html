@@ -160,13 +160,18 @@
     document.getElementById('toggle-paid-btn').addEventListener('click', async function () {
         const action = this.dataset.action;  // 'paid' or 'unpaid'
         const isMarkingPaid = action === 'paid';
-        const confirmMsg = isMarkingPaid
-            ? "Mark settlement #{{ settlement.id }} as PAID?\n\n" +
-              "This records that the payout has been disbursed to the team. " +
-              "Frozen reward/kas amounts are unaffected — this is a bookkeeping flag only."
-            : "Mark settlement #{{ settlement.id }} back to UNPAID?\n\n" +
-              "The paid timestamp will be cleared.";
-        if (!confirm(confirmMsg)) return;
+        const ok = await snConfirm(
+            isMarkingPaid
+                ? "This records that the payout has been disbursed to the team. Frozen reward/kas amounts are unaffected — bookkeeping flag only."
+                : "The paid timestamp will be cleared.",
+            {
+                title: isMarkingPaid
+                    ? "Mark settlement #{{ settlement.id }} as PAID?"
+                    : "Mark settlement #{{ settlement.id }} back to UNPAID?",
+                okText: isMarkingPaid ? "Mark as paid" : "Mark as unpaid",
+            }
+        );
+        if (!ok) return;
         this.disabled = true;
         this.textContent = isMarkingPaid ? 'Marking paid…' : 'Marking unpaid…';
         const endpoint = isMarkingPaid
@@ -177,30 +182,26 @@
             location.reload();
         } else {
             const err = await resp.json().catch(() => ({}));
-            alert('Failed: ' + (err.detail || resp.statusText));
+            await snAlert((err.detail || resp.statusText), { title: 'Failed', tone: 'error' });
             this.disabled = false;
             this.textContent = isMarkingPaid ? 'Mark as paid' : 'Mark as unpaid';
         }
     });
 
     document.getElementById('delete-settlement-btn').addEventListener('click', async function () {
-        const ok = confirm(
-            "Delete settlement #{{ settlement.id }}?\n\n" +
-            "This reopens the period: the dashboard will resume accumulating\n" +
-            "from the snapshot after the previous settlement (or from the\n" +
-            "beginning if this is the only one).\n\n" +
-            "Frozen amounts in this record will be lost. Sure?"
+        const ok = await snConfirm(
+            "This reopens the period: the dashboard will resume accumulating from the snapshot after the previous settlement (or from the beginning if this is the only one).\n\nFrozen amounts in this record will be lost.",
+            { title: "Delete settlement #{{ settlement.id }}?", okText: "Delete", danger: true }
         );
         if (!ok) return;
         this.disabled = true;
         this.textContent = 'Deleting…';
         const resp = await fetch('/api/settlements/{{ settlement.id }}', { method: 'DELETE' });
         if (resp.status === 204) {
-            alert('Settlement #{{ settlement.id }} deleted. Returning to archive.');
             location.href = '/archive';
         } else {
             const err = await resp.json().catch(() => ({}));
-            alert('Failed: ' + (err.detail || resp.statusText));
+            await snAlert((err.detail || resp.statusText), { title: 'Failed', tone: 'error' });
             this.disabled = false;
             this.textContent = 'Delete settlement';
         }

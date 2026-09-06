@@ -8,7 +8,7 @@ Minimum spec (more than enough):
 - 1 vCPU
 - 1 GB RAM (2 GB nyaman)
 - 10 GB SSD
-- Outbound HTTPS to `api.taostats.io`
+- Outbound HTTPS to `api.taostats.io` and `api.gradients.io`
 
 ## 2. System prerequisites
 
@@ -60,6 +60,26 @@ sudo -u emission cp /opt/emission-tracker/config.example.yaml /opt/emission-trac
 sudo -u emission nano /opt/emission-tracker/config.yaml   # add the real team roster
 sudo chmod 640 /opt/emission-tracker/config.yaml
 ```
+
+Each entry under a person's `hotkeys` is one wallet. The mapping form
+carries the owning coldkey and a label; the bare-string form still works
+for a hotkey whose coldkey is unknown:
+
+```yaml
+team:
+  - name: Firza
+    hotkeys:
+      - hotkey: 5DXVNvDm...
+        coldkey: 5Fnhiibt...
+        label: I
+      - hotkey: 5GpcTKW7...
+        coldkey: 5HERhLCK...
+        label: (old)
+```
+
+All of a person's wallets accumulate into the same per-period total, so a
+pre-rotation hotkey that is still earning keeps counting alongside the new
+ones. Coldkeys drive the wallet-balance cards on the dashboard.
 
 `config.yaml` is gitignored; team rosters never enter the public repo. Transfer your real roster from a trusted source (your laptop, password manager) — not from a public channel.
 
@@ -145,6 +165,51 @@ sudo journalctl -u emission-tracker -f
 
 The startup cleanup will mark any snapshots stuck in `in_progress` (from the restart) as `failed`, so the `/history` view stays accurate.
 
+Schema changes apply themselves: `init_schema` runs idempotent `ALTER TABLE`
+statements at every startup, so no manual migration step exists.
+
+**When the roster format changes, the code pull is not enough.** `config.yaml`
+is gitignored, so `git pull` cannot deliver a new roster. Copy it from your
+laptop first, then restart:
+
+```bash
+# on your laptop
+scp config.yaml YOUR_USER@YOUR_VPS:/tmp/config.yaml
+
+# on the VPS
+sudo install -o emission -g emission -m 640 /tmp/config.yaml /opt/emission-tracker/config.yaml
+rm /tmp/config.yaml
+sudo systemctl restart emission-tracker
+```
+
+Skipping this leaves the tracker on the old roster: the new hotkeys are never
+polled and the coldkey cards stay empty.
+
+## 8a. Wallet and tournament balances
+
+The dashboard's coldkey cards come from a second, slower job:
+
+- **TaoStats** `account/latest/v1` — TAO balance per coldkey
+- **Gradients** `api.gradients.io/tournament/balance/{coldkey}` — tournament
+  deposit; no API key, and a 404 simply means that coldkey never paid a buy-in
+
+It runs every `polling.balance_interval_hours` (default 24) and once at
+startup when `run_on_startup` is true — without that startup run the cards
+would sit empty until the next day, since an interval job's first firing is a
+full interval away. One run is about four minutes for 15 coldkeys.
+
+Admins can also trigger it from the dashboard button. Every TaoStats caller
+shares one rate limiter, so the manual run, the daily job and the emission
+snapshot cannot together exceed 5 requests/minute; a second click during a run
+is refused with 409 rather than queued.
+
+Check it after a deploy:
+
+```bash
+sudo journalctl -u emission-tracker | grep "balance refresh"
+# → balance refresh — 15 coldkeys, wallet 15 ok / 0 fail, tournament 1 ok / 14 none / 0 fail
+```
+
 ## 9. Backups
 
 The whole state lives in one file: `/opt/emission-tracker/data/emissions.db`. A nightly cron is sufficient:
@@ -163,4 +228,7 @@ sudo crontab -e
 | 401 on browser | Basic auth file missing/wrong | Re-run `htpasswd` (step 7) |
 | All snapshots `failed` | Wrong `TAOSTATS_API_KEY` or no internet | Check `.env`, `curl api.taostats.io` from VPS |
 | `Permission denied: data/emissions.db` | Wrong ownership | `chown -R emission:emission /opt/emission-tracker/data` |
-| Dashboard shows nothing for 5+ minutes | First snapshot in progress | Wait ~6 min, check `journalctl` |
+| Dashboard shows nothing for 5+ minutes | First snapshot in progress | Wait ~10 min, check `journalctl` |
+| Coldkey cards empty | `config.yaml` on the VPS has no coldkeys, or the balance job hasn't run | Copy the roster over (step 8), restart, watch for "balance refresh" in the log |
+| All tournament balances blank | Egress to `api.gradients.io` blocked | `curl https://api.gradients.io/tournament/balance/<coldkey>` from the VPS |
+| Snapshot slower than usual right after a restart | Snapshot and balance seeds share the rate limiter at startup | Expected; ~10 min instead of ~9 |

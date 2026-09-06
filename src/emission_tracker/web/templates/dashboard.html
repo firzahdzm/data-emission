@@ -220,7 +220,7 @@ _confirm.addEventListener('click', async () => {
     {% if coldkeys %}
     <div class="coldkey-grid">
         {% for c in coldkeys %}
-        <article class="coldkey-card">
+        <article class="coldkey-card{% if c.person_count > 1 %} coldkey-card-shared{% endif %}">
             <div class="coldkey-name">
                 {{ c.name }}
                 {% if c.person_count > 1 %}

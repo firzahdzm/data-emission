@@ -712,3 +712,18 @@ a:hover {
     background: var(--sn-blue);
     transition: width 1s linear;
 }
+
+/* The shared team wallet, marked out from the personal ones. Follows the
+   same green treatment as .kpi-card.kpi-ok so the dashboard reads as one
+   system rather than two. */
+.coldkey-card-shared {
+    border-color: #22c55e30;
+    background: linear-gradient(135deg, var(--sn-surface-1), #22c55e08);
+}
+.coldkey-card-shared:hover { border-color: var(--sn-ok); }
+.coldkey-card-shared .coldkey-name { color: var(--sn-ok); }
+.coldkey-card-shared .coldkey-shared {
+    color: var(--sn-ok);
+    border-color: #22c55e40;
+}
+.coldkey-card-shared .coldkey-stat-value { color: var(--sn-ok); }

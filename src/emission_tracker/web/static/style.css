@@ -678,3 +678,18 @@ a:hover {
     font-size: 0.76rem;
     color: var(--sn-text-bright);
 }
+
+/* Secondary action sitting inside a panel header — quieter than the
+   primary blue button so it doesn't compete with "Close period". */
+.btn-subtle {
+    background: var(--sn-surface-2, transparent);
+    color: var(--sn-text-bright);
+    border: 1px solid var(--sn-border-bright);
+    border-radius: var(--sn-radius);
+    padding: 0.3rem 0.7rem;
+    font-size: 0.76rem;
+    font-weight: 500;
+    cursor: pointer;
+}
+.btn-subtle:hover:not(:disabled) { border-color: var(--sn-text-dim); }
+.btn-subtle:disabled { opacity: 0.55; cursor: default; }

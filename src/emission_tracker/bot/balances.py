@@ -1,5 +1,6 @@
 import logging
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -117,3 +118,86 @@ def refresh_balances(
         tournament_absent=tourn_absent,
         tournament_fail=tourn_fail,
     )
+
+
+class BalanceRunner:
+    """Runs `refresh_balances` on demand, one at a time.
+
+    The admin button and the daily schedule both land here, so the lock is
+    what stops a click during the nightly run from opening a second pass
+    over the same coldkeys and burning double the API quota.
+    """
+
+    def __init__(
+        self,
+        conn_factory,
+        taostats: TaoStatsClient,
+        gradients: GradientsClient,
+        rate_limiter: TokenBucket,
+        request_interval_seconds: float,
+    ):
+        self._conn_factory = conn_factory
+        self._taostats = taostats
+        self._gradients = gradients
+        self._rate_limiter = rate_limiter
+        self._request_interval_seconds = request_interval_seconds
+        self._lock = threading.Lock()
+        self._running = False
+        self._started_at: datetime | None = None
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
+
+    @property
+    def started_at(self) -> datetime | None:
+        return self._started_at
+
+    def estimate_seconds(self, coldkey_count: int) -> int:
+        """Roughly how long a run takes: the pacing gaps plus per-coldkey
+        request time (two APIs, measured at ~1.5s together)."""
+        if coldkey_count <= 0:
+            return 0
+        gaps = (coldkey_count - 1) * self._request_interval_seconds
+        return int(gaps + coldkey_count * 1.5)
+
+    def coldkey_count(self) -> int:
+        conn = self._conn_factory()
+        try:
+            return conn.execute(
+                "SELECT COUNT(DISTINCT coldkey_ss58) AS n FROM hotkeys "
+                "WHERE coldkey_ss58 IS NOT NULL"
+            ).fetchone()["n"]
+        finally:
+            conn.close()
+
+    def start(self) -> bool:
+        """Kick off a refresh in the background.
+
+        Returns False when one is already in flight — the caller should tell
+        the user to wait rather than queue a second pass.
+        """
+        with self._lock:
+            if self._running:
+                return False
+            self._running = True
+            self._started_at = datetime.now(timezone.utc)
+        threading.Thread(target=self._run, daemon=True).start()
+        return True
+
+    def _run(self) -> None:
+        conn = self._conn_factory()
+        try:
+            refresh_balances(
+                conn=conn,
+                taostats=self._taostats,
+                gradients=self._gradients,
+                rate_limiter=self._rate_limiter,
+                request_interval_seconds=self._request_interval_seconds,
+            )
+        except Exception:
+            log.exception("manual balance refresh failed")
+        finally:
+            conn.close()
+            with self._lock:
+                self._running = False

@@ -627,3 +627,85 @@ def test_salary_payment_detail_404(app_with_db):
     client = TestClient(app_with_db)
     resp = client.get("/api/salary/payments/9999")
     assert resp.status_code == 404
+
+
+class _FakeRunner:
+    """Stands in for BalanceRunner so no request ever leaves the test."""
+
+    def __init__(self, *, busy: bool = False, count: int = 3):
+        self.busy = busy
+        self.count = count
+        self.starts = 0
+        self.is_running = busy
+        self.started_at = None
+
+    def coldkey_count(self) -> int:
+        return self.count
+
+    def estimate_seconds(self, coldkey_count: int) -> int:
+        return coldkey_count * 15
+
+    def start(self) -> bool:
+        self.starts += 1
+        if self.busy:
+            return False
+        self.busy = True
+        self.is_running = True
+        return True
+
+
+class TestBalanceRefreshEndpoint:
+    def test_non_admin_cannot_trigger_a_refresh(self, app_with_db, monkeypatch):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        app = app_with_db
+        _set_admin_users(app, ["alice"])
+        runner = _FakeRunner()
+        app.state.balance_runner = runner
+
+        r = TestClient(app).post(
+            "/api/balances/refresh", headers={"X-Remote-User": "mallory"}
+        )
+        assert r.status_code == 403
+        # The expensive part must not have started.
+        assert runner.starts == 0
+
+    def test_admin_triggers_and_gets_an_estimate(self, app_with_db, monkeypatch):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        app = app_with_db
+        _set_admin_users(app, ["alice"])
+        app.state.balance_runner = _FakeRunner(count=15)
+
+        r = TestClient(app).post(
+            "/api/balances/refresh", headers={"X-Remote-User": "alice"}
+        )
+        assert r.status_code == 202
+        body = r.json()
+        assert body["coldkey_count"] == 15
+        assert body["estimated_seconds"] == 225
+
+    def test_second_trigger_while_running_is_refused(self, app_with_db, monkeypatch):
+        """A second pass over the same coldkeys costs the same API quota for
+        an identical result, so it is refused rather than queued."""
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        app = app_with_db
+        _set_admin_users(app, ["alice"])
+        app.state.balance_runner = _FakeRunner(busy=True)
+
+        r = TestClient(app).post(
+            "/api/balances/refresh", headers={"X-Remote-User": "alice"}
+        )
+        assert r.status_code == 409
+
+    def test_status_is_readable_without_admin(self, app_with_db, monkeypatch):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        app = app_with_db
+        app.state.balance_runner = _FakeRunner(busy=True, count=15)
+
+        body = TestClient(app).get("/api/balances/status").json()
+        assert body == {
+            "available": True,
+            "running": True,
+            "started_at": None,
+            "coldkey_count": 15,
+            "estimated_seconds": 225,
+        }

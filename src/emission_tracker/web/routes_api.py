@@ -1,3 +1,4 @@
+import logging
 import sqlite3
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
@@ -6,6 +7,8 @@ from pydantic import BaseModel
 from emission_tracker.web import queries
 from emission_tracker.web.auth import require_admin
 from emission_tracker.web.range_parse import parse_range
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -326,3 +329,53 @@ def list_snapshots(
         (limit,),
     )
     return {"snapshots": [dict(r) for r in cursor.fetchall()], "limit": limit}
+
+
+@router.get("/balances/status")
+def balance_refresh_status(request: Request):
+    """Whether a balance refresh is in flight, and how long one takes.
+
+    The dashboard polls this after a click so the button can show progress
+    instead of leaving the admin guessing for four minutes.
+    """
+    runner = getattr(request.app.state, "balance_runner", None)
+    if runner is None:
+        return {"available": False, "running": False}
+    coldkey_count = runner.coldkey_count()
+    return {
+        "available": True,
+        "running": runner.is_running,
+        "started_at": runner.started_at.isoformat() if runner.started_at else None,
+        "coldkey_count": coldkey_count,
+        "estimated_seconds": runner.estimate_seconds(coldkey_count),
+    }
+
+
+@router.post("/balances/refresh", status_code=202)
+def trigger_balance_refresh(
+    request: Request,
+    user: str = Depends(require_admin),
+):
+    """Start an out-of-band balance refresh. Admin only.
+
+    Returns 202 immediately — the run takes minutes, so holding the request
+    open would just time out the browser. 409 when one is already running:
+    a second pass over the same coldkeys would double the API spend for an
+    identical result.
+    """
+    runner = getattr(request.app.state, "balance_runner", None)
+    if runner is None:
+        raise HTTPException(status_code=503, detail="Balance refresh not configured")
+
+    coldkey_count = runner.coldkey_count()
+    if not runner.start():
+        raise HTTPException(
+            status_code=409,
+            detail="A balance refresh is already running",
+        )
+    log.info("balance refresh triggered by %s", user)
+    return {
+        "started": True,
+        "coldkey_count": coldkey_count,
+        "estimated_seconds": runner.estimate_seconds(coldkey_count),
+    }

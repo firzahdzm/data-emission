@@ -1013,3 +1013,10 @@ class TestColdkeyCards:
         cards = {c["coldkey"]: c for c in queries.coldkey_cards(memory_db)}
         assert cards[self.CK_SOLO]["tournament_seen"] == 1    # reached API: no account
         assert cards[self.CK_SHARED]["tournament_seen"] == 0  # fetch failed: unknown
+
+    def test_shared_coldkey_sorts_first(self, memory_db):
+        self._seed(memory_db)
+        cards = queries.coldkey_cards(memory_db)
+        # "Alice I" would win alphabetically; the shared wallet still leads.
+        assert cards[0]["coldkey"] == self.CK_SHARED
+        assert [c["name"] for c in cards[1:]] == sorted(c["name"] for c in cards[1:])

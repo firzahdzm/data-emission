@@ -5,6 +5,7 @@ import pytest
 
 from emission_tracker.config import PersonConfig
 from emission_tracker.db import init_schema, sync_team
+from emission_tracker.web import queries
 from emission_tracker.web.queries import (
     captures_table,
     create_settlement,
@@ -920,3 +921,95 @@ def test_kas_distribution_rejects_negative(seeded_db: sqlite3.Connection):
     from emission_tracker.web.queries import create_kas_distribution
     with pytest.raises(ValueError, match="non-negative"):
         create_kas_distribution(seeded_db, amount_usd=-1)
+
+
+class TestColdkeyCards:
+    CK_SHARED = "5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA9"
+    CK_SOLO = "5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8"
+
+    def _seed(self, conn):
+        init_schema(conn)
+        sync_team(
+            conn,
+            [
+                PersonConfig(
+                    name="Alice",
+                    hotkeys=[
+                        {"hotkey": HK_F1, "coldkey": self.CK_SHARED, "label": "(old)"},
+                        {"hotkey": HK_F2, "coldkey": self.CK_SOLO, "label": "I"},
+                    ],
+                ),
+                PersonConfig(
+                    name="Bob",
+                    hotkeys=[
+                        {"hotkey": HK_I1, "coldkey": self.CK_SHARED, "label": "(old)"}
+                    ],
+                ),
+            ],
+            subnet_id=56,
+        )
+
+    def test_shared_coldkey_is_not_named_after_one_person(self, memory_db):
+        self._seed(memory_db)
+        cards = {c["coldkey"]: c for c in queries.coldkey_cards(memory_db)}
+
+        shared = cards[self.CK_SHARED]
+        assert shared["person_count"] == 2
+        assert shared["hotkey_count"] == 2
+        assert "Alice" not in shared["name"] and "Bob" not in shared["name"]
+        assert shared["name"] == "Bersama (old)"
+
+        solo = cards[self.CK_SOLO]
+        assert solo["person_count"] == 1
+        assert solo["name"] == "Alice I"
+
+    def test_card_without_a_balance_row_reports_nulls(self, memory_db):
+        self._seed(memory_db)
+        card = queries.coldkey_cards(memory_db)[0]
+        assert card["balance_free_rao"] is None
+        assert card["tournament_balance_rao"] is None
+        assert card["fetched_at"] is None
+        # Never fetched, so a missing tournament balance means "unknown",
+        # not "this wallet never deposited".
+        assert card["tournament_seen"] == 0
+
+    def test_only_the_newest_balance_row_is_shown(self, memory_db):
+        self._seed(memory_db)
+        for stamp, free in (
+            (datetime(2026, 9, 1, tzinfo=timezone.utc), 111),
+            (datetime(2026, 9, 5, tzinfo=timezone.utc), 999),
+        ):
+            memory_db.execute(
+                "INSERT INTO coldkey_balances (coldkey_ss58, fetched_at, "
+                "balance_free_rao, tournament_balance_rao, tournament_seen) "
+                "VALUES (?, ?, ?, 7, 1)",
+                (self.CK_SOLO, stamp, free),
+            )
+        memory_db.commit()
+
+        card = next(
+            c for c in queries.coldkey_cards(memory_db) if c["coldkey"] == self.CK_SOLO
+        )
+        assert card["balance_free_rao"] == 999
+        assert card["tournament_seen"] == 1
+
+    def test_absent_tournament_account_differs_from_failed_fetch(self, memory_db):
+        self._seed(memory_db)
+        stamp = datetime(2026, 9, 5, tzinfo=timezone.utc)
+        memory_db.execute(
+            "INSERT INTO coldkey_balances (coldkey_ss58, fetched_at, "
+            "balance_free_rao, tournament_balance_rao, tournament_seen) "
+            "VALUES (?, ?, 5, NULL, 1)",
+            (self.CK_SOLO, stamp),
+        )
+        memory_db.execute(
+            "INSERT INTO coldkey_balances (coldkey_ss58, fetched_at, "
+            "balance_free_rao, tournament_balance_rao, tournament_seen) "
+            "VALUES (?, ?, 5, NULL, 0)",
+            (self.CK_SHARED, stamp),
+        )
+        memory_db.commit()
+
+        cards = {c["coldkey"]: c for c in queries.coldkey_cards(memory_db)}
+        assert cards[self.CK_SOLO]["tournament_seen"] == 1    # reached API: no account
+        assert cards[self.CK_SHARED]["tournament_seen"] == 0  # fetch failed: unknown

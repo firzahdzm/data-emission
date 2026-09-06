@@ -51,6 +51,9 @@ class PollingConfig(BaseModel):
     interval_minutes: int = Field(default=72, gt=0)
     request_interval_seconds: int = Field(default=15, ge=12)
     run_on_startup: bool = True
+    # Wallet and tournament balances move slowly and are read on their own
+    # schedule, so they never lengthen the emission snapshot loop.
+    balance_interval_hours: int = Field(default=24, gt=0)
 
 
 class DatabaseConfig(BaseModel):

@@ -1,0 +1,119 @@
+import logging
+import sqlite3
+import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+
+from emission_tracker.gradients_client import GradientsClient
+from emission_tracker.rate_limiter import TokenBucket
+from emission_tracker.taostats_client import TaoStatsClient
+
+log = logging.getLogger(__name__)
+
+
+@dataclass
+class BalanceRefreshResult:
+    fetched_at: datetime
+    coldkey_count: int
+    wallet_ok: int
+    wallet_fail: int
+    tournament_ok: int
+    tournament_absent: int
+    tournament_fail: int
+
+
+def refresh_balances(
+    conn: sqlite3.Connection,
+    taostats: TaoStatsClient,
+    gradients: GradientsClient,
+    rate_limiter: TokenBucket,
+    request_interval_seconds: float,
+) -> BalanceRefreshResult:
+    """Fetch wallet and tournament balances for every known coldkey.
+
+    Runs on its own schedule, well apart from the emission snapshot: balances
+    move slowly and the snapshot loop is already long, so folding these
+    requests into it would stretch it for no gain.
+
+    Every coldkey gets a row, even when a fetch fails — the row then carries
+    NULLs, which keeps the dashboard honest about what is missing instead of
+    silently showing yesterday's number as today's.
+    """
+    fetched_at = datetime.now(timezone.utc)
+    coldkeys = [
+        row["coldkey_ss58"]
+        for row in conn.execute(
+            "SELECT DISTINCT coldkey_ss58 FROM hotkeys "
+            "WHERE coldkey_ss58 IS NOT NULL ORDER BY coldkey_ss58"
+        ).fetchall()
+    ]
+
+    wallet_ok = wallet_fail = 0
+    tourn_ok = tourn_absent = tourn_fail = 0
+
+    for i, coldkey in enumerate(coldkeys):
+        if i > 0 and request_interval_seconds > 0:
+            time.sleep(request_interval_seconds)
+
+        # TaoStats is the rate-limited one; Gradients needs no key and is
+        # only throttled by the same pacing loop.
+        rate_limiter.acquire()
+        try:
+            account = taostats.get_account(coldkey)
+            wallet_ok += 1
+        except Exception as exc:
+            log.warning("coldkey=%s wallet fetch failed: %s", coldkey, exc)
+            account = None
+            wallet_fail += 1
+
+        try:
+            tournament = gradients.get_tournament_balance(coldkey)
+            tournament_seen = 1
+            if tournament is None:
+                tourn_absent += 1
+            else:
+                tourn_ok += 1
+        except Exception as exc:
+            log.warning("coldkey=%s tournament fetch failed: %s", coldkey, exc)
+            tournament = None
+            # Unknown, not "no account" — keep the two apart so the UI can
+            # show a blank rather than claiming the wallet never deposited.
+            tournament_seen = 0
+            tourn_fail += 1
+
+        conn.execute(
+            """
+            INSERT INTO coldkey_balances (
+                coldkey_ss58, fetched_at,
+                balance_free_rao, balance_staked_rao, balance_total_rao,
+                tournament_balance_rao, tournament_total_sent_rao, tournament_seen
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(coldkey_ss58, fetched_at) DO NOTHING
+            """,
+            (
+                coldkey,
+                fetched_at,
+                account.free_rao if account else None,
+                account.staked_rao if account else None,
+                account.total_rao if account else None,
+                tournament.balance_rao if tournament else None,
+                tournament.total_sent_rao if tournament else None,
+                tournament_seen,
+            ),
+        )
+        conn.commit()
+
+    log.info(
+        "balance refresh — %d coldkeys, wallet %d ok / %d fail, "
+        "tournament %d ok / %d none / %d fail",
+        len(coldkeys), wallet_ok, wallet_fail, tourn_ok, tourn_absent, tourn_fail,
+    )
+    return BalanceRefreshResult(
+        fetched_at=fetched_at,
+        coldkey_count=len(coldkeys),
+        wallet_ok=wallet_ok,
+        wallet_fail=wallet_fail,
+        tournament_ok=tourn_ok,
+        tournament_absent=tourn_absent,
+        tournament_fail=tourn_fail,
+    )

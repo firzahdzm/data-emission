@@ -607,3 +607,74 @@ a:hover {
     }
     .kpi-card .kpi-value { font-size: 1.3rem; }
 }
+
+/* --- Coldkey wallet cards -------------------------------------------- */
+/* Five across on a wide screen, as specified; the minmax floor lets the
+   count drop on narrower viewports rather than squeezing the addresses. */
+.coldkey-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.7rem;
+    padding: 0.85rem 1.25rem 1.15rem;
+}
+@media (max-width: 1400px) { .coldkey-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 1100px) { .coldkey-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 820px)  { .coldkey-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px)  { .coldkey-grid { grid-template-columns: 1fr; } }
+
+.coldkey-card {
+    background: var(--sn-surface-1);
+    border: 1px solid var(--sn-border);
+    border-radius: var(--sn-radius);
+    padding: 0.8rem 0.9rem;
+    transition: border-color 0.2s ease;
+}
+.coldkey-card:hover { border-color: var(--sn-border-bright); }
+
+.coldkey-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--sn-text-bright);
+    margin-bottom: 0.3rem;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.4rem;
+}
+.coldkey-shared {
+    font-weight: 400;
+    font-size: 0.68rem;
+    color: var(--sn-text-dim);
+    border: 1px solid var(--sn-border);
+    border-radius: 999px;
+    padding: 0.05rem 0.4rem;
+    white-space: nowrap;
+}
+.coldkey-addr {
+    display: block;
+    font-size: 0.68rem;
+    color: var(--sn-text-dim);
+    margin-bottom: 0.6rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.coldkey-stat {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.16rem 0;
+}
+.coldkey-stat-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--sn-text-dim);
+}
+.coldkey-stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.85rem;
+    color: var(--sn-text-bright);
+}

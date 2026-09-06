@@ -924,3 +924,90 @@ def current_registration_status(conn: sqlite3.Connection) -> dict[str, dict]:
         else:
             bucket["deregistered_hotkeys"].append(row["ss58"])
     return result
+
+
+def coldkey_cards(conn: sqlite3.Connection) -> list[dict]:
+    """One card per coldkey for the dashboard, newest balances only.
+
+    Each row:
+        coldkey:            ss58 address
+        name:               who the coldkey belongs to. A coldkey used by
+                            several people has no single owner, so it reads
+                            "Bersama" plus the shared label instead of a name.
+        person_count:       how many people hold hotkeys under this coldkey
+        hotkey_count:       hotkeys registered under it
+        balance_free_rao / balance_staked_rao / balance_total_rao:
+                            wallet balances, None if the last fetch failed
+        tournament_balance_rao / tournament_total_sent_rao:
+                            tournament deposit, None if absent or unfetched
+        tournament_seen:    1 if the last fetch reached the API (so None
+                            balances mean "no tournament account"), 0 if the
+                            fetch itself failed (so None means "unknown")
+        fetched_at:         when those balances were read, None if never
+
+    Ordered by wallet balance DESC so the funded wallets lead, then by name.
+    """
+    owner_rows = conn.execute(
+        """
+        SELECT h.coldkey_ss58            AS coldkey,
+               COUNT(*)                  AS hotkey_count,
+               COUNT(DISTINCT h.person_id) AS person_count,
+               MIN(p.name)               AS only_name,
+               MIN(h.label)              AS only_label
+        FROM hotkeys h
+        JOIN persons p ON p.id = h.person_id
+        WHERE h.coldkey_ss58 IS NOT NULL
+        GROUP BY h.coldkey_ss58
+        """
+    ).fetchall()
+
+    # Latest balance row per coldkey. The table keeps history, so pick the
+    # most recent fetch for each address rather than the whole series.
+    balance_rows = conn.execute(
+        """
+        SELECT cb.*
+        FROM coldkey_balances cb
+        JOIN (
+            SELECT coldkey_ss58, MAX(fetched_at) AS latest
+            FROM coldkey_balances
+            GROUP BY coldkey_ss58
+        ) newest
+          ON newest.coldkey_ss58 = cb.coldkey_ss58
+         AND newest.latest       = cb.fetched_at
+        """
+    ).fetchall()
+    balances = {r["coldkey_ss58"]: r for r in balance_rows}
+
+    cards: list[dict] = []
+    for owner in owner_rows:
+        if owner["person_count"] == 1:
+            name = owner["only_name"]
+            if owner["only_label"]:
+                name = f"{name} {owner['only_label']}"
+        else:
+            # Shared wallet: naming it after one person would be a lie.
+            name = "Bersama"
+            if owner["only_label"]:
+                name = f"{name} {owner['only_label']}"
+
+        bal = balances.get(owner["coldkey"])
+        cards.append(
+            {
+                "coldkey": owner["coldkey"],
+                "name": name,
+                "person_count": owner["person_count"],
+                "hotkey_count": owner["hotkey_count"],
+                "balance_free_rao": bal["balance_free_rao"] if bal else None,
+                "balance_staked_rao": bal["balance_staked_rao"] if bal else None,
+                "balance_total_rao": bal["balance_total_rao"] if bal else None,
+                "tournament_balance_rao": bal["tournament_balance_rao"] if bal else None,
+                "tournament_total_sent_rao": (
+                    bal["tournament_total_sent_rao"] if bal else None
+                ),
+                "tournament_seen": bal["tournament_seen"] if bal else 0,
+                "fetched_at": bal["fetched_at"] if bal else None,
+            }
+        )
+
+    cards.sort(key=lambda c: (-(c["balance_free_rao"] or 0), c["name"]))
+    return cards

@@ -122,6 +122,26 @@ SCHEMA_STATEMENTS = [
         PRIMARY KEY (payment_id, person_name)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS coldkey_balances (
+        coldkey_ss58              TEXT      NOT NULL,
+        fetched_at                TIMESTAMP NOT NULL,
+        -- Wallet balances from TaoStats, in rao. NULL when that fetch failed,
+        -- which is distinct from a real zero.
+        balance_free_rao          INTEGER,
+        balance_staked_rao        INTEGER,
+        balance_total_rao         INTEGER,
+        -- Gradients tournament deposit, in rao. NULL when the coldkey has no
+        -- tournament account at all (the API 404s) or the fetch failed;
+        -- tournament_seen tells those two apart.
+        tournament_balance_rao    INTEGER,
+        tournament_total_sent_rao INTEGER,
+        tournament_seen           INTEGER NOT NULL DEFAULT 0
+                                  CHECK (tournament_seen IN (0, 1)),
+        PRIMARY KEY (coldkey_ss58, fetched_at)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_coldkey_bal_fetched ON coldkey_balances(fetched_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_neuron_snap_hotkey ON neuron_snapshots(hotkey_ss58)",
     "CREATE INDEX IF NOT EXISTS idx_snapshots_taken_at ON snapshots(taken_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_settlements_through ON settlements(settled_through_snapshot_id)",

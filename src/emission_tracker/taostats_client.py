@@ -9,6 +9,7 @@ import httpx
 # Emission is returned as a string; _parse_neuron converts to float.
 DEFAULT_BASE_URL = "https://api.taostats.io"
 NEURON_PATH = "/api/neuron/latest/v1"
+ACCOUNT_PATH = "/api/account/latest/v1"
 AUTH_HEADER = "Authorization"
 
 
@@ -17,6 +18,15 @@ class NeuronInfo:
     uid: int
     emission: float
     block: int | None
+
+
+@dataclass(frozen=True)
+class AccountInfo:
+    """A coldkey's wallet balances, all in rao."""
+
+    free_rao: int
+    staked_rao: int
+    total_rao: int
 
 
 class TaoStatsClient:
@@ -53,6 +63,16 @@ class TaoStatsClient:
         response.raise_for_status()
         return _parse_neuron(response.json())
 
+    def get_account(self, coldkey: str) -> AccountInfo | None:
+        """Wallet balances for one coldkey. None if the address is unknown."""
+        response = self._request_with_retry(
+            "GET", ACCOUNT_PATH, params={"address": coldkey}
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return _parse_account(response.json())
+
     def _request_with_retry(self, method: str, path: str, **kw) -> httpx.Response:
         last_exc: Exception | None = None
         for attempt in range(self._max_retries + 1):
@@ -85,4 +105,17 @@ def _parse_neuron(payload: dict) -> NeuronInfo | None:
         uid=int(item["uid"]),
         emission=float(item["emission"]),
         block=item.get("block_number"),
+    )
+
+
+def _parse_account(payload: dict) -> AccountInfo | None:
+    data = payload.get("data")
+    if not data:
+        return None
+    item = data[0] if isinstance(data, list) else data
+    # Balances come back as decimal strings, not numbers.
+    return AccountInfo(
+        free_rao=int(item["balance_free"]),
+        staked_rao=int(item["balance_staked"]),
+        total_rao=int(item["balance_total"]),
     )

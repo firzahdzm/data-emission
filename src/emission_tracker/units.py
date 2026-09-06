@@ -31,3 +31,16 @@ def format_alpha(rao: float | int | None, decimals: int = 4) -> str:
     if alpha is None:
         return "— α"
     return f"{alpha:.{decimals}f} α"
+
+
+def format_tao(rao: float | int | None, decimals: int = 4) -> str:
+    """Format a RAO value as TAO. Wallet balances use the same 10^9 scale.
+
+    >>> format_tao(7480798603)
+    '7.4808 τ'
+    >>> format_tao(None)
+    '—'
+    """
+    if rao is None:
+        return "—"
+    return f"{rao / RAO_PER_ALPHA:.{decimals}f} τ"

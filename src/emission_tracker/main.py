@@ -10,6 +10,7 @@ from emission_tracker.bot.scheduler import build_scheduler
 from emission_tracker.bot.snapshot import take_snapshot
 from emission_tracker.config import AppConfig
 from emission_tracker.db import cleanup_orphaned_snapshots, init_schema, sync_team
+from emission_tracker.gradients_client import GradientsClient
 from emission_tracker.rate_limiter import TokenBucket
 from emission_tracker.taostats_client import TaoStatsClient
 from emission_tracker.web.routes_api import router as api_router
@@ -43,6 +44,7 @@ def create_app(
 
     rate_limiter = TokenBucket(capacity=5, refill_per_second=5 / 60)
     client = TaoStatsClient(api_key=config.taostats_api_key.get_secret_value())
+    gradients = GradientsClient()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -71,7 +73,9 @@ def create_app(
             c.execute("PRAGMA foreign_keys = ON")
             return c
 
-        scheduler = build_scheduler(config, conn_factory, client, rate_limiter)
+        scheduler = build_scheduler(
+            config, conn_factory, client, rate_limiter, gradients=gradients
+        )
         scheduler.start()
 
         if config.polling.run_on_startup:
@@ -88,6 +92,7 @@ def create_app(
         finally:
             scheduler.shutdown(wait=False)
             client.close()
+            gradients.close()
             long_lived_conn.close()
 
     app = FastAPI(lifespan=lifespan)

@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from emission_tracker.units import format_alpha, rao_to_alpha
+from emission_tracker.units import format_alpha, format_tao, rao_to_alpha
 from emission_tracker.web import queries
 from emission_tracker.web.auth import is_admin
 from emission_tracker.web.range_parse import parse_range
@@ -104,6 +104,7 @@ def _format_usd(value, decimals: int = 2) -> str:
 
 # Register Jinja2 filters: RAO → alpha conversion + format, datetime helpers
 templates.env.filters["alpha"] = format_alpha
+templates.env.filters["tao"] = format_tao
 templates.env.filters["to_alpha"] = rao_to_alpha
 templates.env.filters["dt_s"] = _format_dt_seconds
 templates.env.filters["dt_short"] = _format_dt_short
@@ -140,11 +141,19 @@ def register_pages(app: FastAPI) -> None:
         total_deregistered = total_hotkeys - total_registered
         latest = queries.latest_snapshot(conn)
         last_settle = queries.last_settlement(conn)
+        coldkeys = queries.coldkey_cards(conn)
+        # All cards come from one refresh run, so any non-null stamp
+        # dates the whole grid.
+        coldkey_fetched_at = next(
+            (c["fetched_at"] for c in coldkeys if c["fetched_at"]), None
+        )
         return templates.TemplateResponse(
             request,
             "dashboard.html",
             {
                 "rows": rows,
+                "coldkeys": coldkeys,
+                "coldkey_fetched_at": coldkey_fetched_at,
                 "total_cumulative": total_cumulative,
                 "total_registered": total_registered,
                 "total_hotkeys": total_hotkeys,

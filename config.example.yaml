@@ -13,10 +13,14 @@ web:
   port: 8000
 
 # Each entry under `hotkeys` is one wallet. The mapping form carries the
-# owning coldkey and an optional label ("I", "II") for people who run more
-# than one wallet. The bare-string form is still accepted for legacy
-# hotkeys registered before we tracked coldkeys — they keep earning
-# emission and accumulate under the same person until they deregister.
+# owning coldkey and a label ("I", "II", "(old)") — several wallets belong
+# to one person, and the label is how they are told apart, including which
+# rotation era a wallet comes from. The bare-string form is still accepted
+# for a wallet whose coldkey is unknown.
+#
+# All of a person's wallets accumulate under that one person name, so a
+# pre-rotation hotkey that is still earning keeps counting toward the same
+# per-period total as their new ones.
 team:
   - name: ExamplePerson
     hotkeys:
@@ -26,7 +30,7 @@ team:
       - hotkey: 5BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB2
         coldkey: 5CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC2
         label: II
-      - 5BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB3   # legacy, no coldkey
+      - 5BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB3   # coldkey unknown
 
 # Usernames (must match the Basic-Auth username forwarded by nginx via
 # X-Remote-User) that are allowed to Close / Delete settlements. Leave

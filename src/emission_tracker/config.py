@@ -11,13 +11,14 @@ SS58_REGEX = re.compile(r"^5[1-9A-HJ-NP-Za-km-z]{46,47}$")
 class WalletConfig(BaseModel):
     """One hotkey, optionally paired with the coldkey that owns it.
 
-    Legacy entries (the pre-rotation hotkeys) carry no coldkey: they were
-    registered before we tracked ownership, and they keep earning emission
-    until they deregister. `coldkey` is therefore nullable rather than
-    required, and `coldkey IS NULL` is what distinguishes legacy from new.
+    `coldkey` stays nullable so a wallet can be registered before its owner
+    is known, but every wallet currently in the roster has one: the
+    pre-rotation hotkeys all sit under a single shared coldkey.
 
-    `label` is the operator's own name for the pair ("I", "II") — several
-    wallets belong to one person, and the label is how they tell them apart.
+    `label` is the operator's own name for the wallet ("I", "II", "(old)").
+    Several wallets belong to one person, and the label is how they tell
+    them apart — including which era a wallet comes from, since a shared
+    coldkey means the address alone no longer says.
     """
 
     hotkey: str

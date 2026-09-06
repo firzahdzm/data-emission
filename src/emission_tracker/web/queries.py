@@ -806,9 +806,9 @@ def dashboard_hotkey_summary(
 
     Each row:
         hotkey:        ss58 address
-        coldkey:       ss58 of the owning coldkey, or None for legacy hotkeys
-                       registered before we tracked ownership
-        label:         operator's name for the wallet pair ("I", "II"), or None
+        coldkey:       ss58 of the owning coldkey, or None if unrecorded
+        label:         operator's name for the wallet ("I", "II", "(old)"),
+                       or None — this is what marks the rotation era
         name:          person owning the hotkey
         cumulative:    SUM(emission) in [from_dt, to_dt) over ok/partial snapshots
         is_registered: 1 if registered in the latest successful snapshot, else 0

@@ -36,9 +36,12 @@ SCHEMA_STATEMENTS = [
         ss58          TEXT PRIMARY KEY,
         person_id     INTEGER NOT NULL REFERENCES persons(id),
         subnet_id     INTEGER NOT NULL,
-        -- NULL for the pre-rotation hotkeys, which predate coldkey tracking.
+        -- Owning coldkey. Nullable so a wallet can be recorded before its
+        -- owner is known; the pre-rotation hotkeys share a single coldkey.
         coldkey_ss58  TEXT,
-        -- Operator's own name for the wallet pair ("I", "II"); NULL if unlabelled.
+        -- Operator's name for the wallet ("I", "II", "(old)"); NULL if
+        -- unlabelled. This, not the coldkey, marks which rotation era a
+        -- wallet belongs to.
         label         TEXT
     )
     """,

@@ -945,7 +945,7 @@ def coldkey_cards(conn: sqlite3.Connection) -> list[dict]:
                             fetch itself failed (so None means "unknown")
         fetched_at:         when those balances were read, None if never
 
-    Ordered by wallet balance DESC so the funded wallets lead, then by name.
+    Ordered by name, which keeps each person's wallets adjacent in the grid.
     """
     owner_rows = conn.execute(
         """
@@ -1009,5 +1009,7 @@ def coldkey_cards(conn: sqlite3.Connection) -> list[dict]:
             }
         )
 
-    cards.sort(key=lambda c: (-(c["balance_free_rao"] or 0), c["name"]))
+    # Sorted by name so one person's wallets sit side by side — ordering by
+    # balance scattered "Bimabk I" and "Bimabk II" across different rows.
+    cards.sort(key=lambda c: c["name"])
     return cards

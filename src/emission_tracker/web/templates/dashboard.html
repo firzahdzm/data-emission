@@ -223,13 +223,13 @@ _confirm.addEventListener('click', async () => {
             <code class="coldkey-addr" title="{{ c.coldkey }}">{{ c.coldkey[:10] }}…{{ c.coldkey[-6:] }}</code>
             <div class="coldkey-stat">
                 <span class="coldkey-stat-label">Wallet</span>
-                <span class="coldkey-stat-value">{{ c.balance_free_rao | tao }}</span>
+                <span class="coldkey-stat-value" title="{{ c.balance_free_rao | tao(9) }}">{{ c.balance_free_rao | tao(2) }}</span>
             </div>
             <div class="coldkey-stat">
                 <span class="coldkey-stat-label">Tournament</span>
                 <span class="coldkey-stat-value">
                     {% if c.tournament_balance_rao is not none %}
-                        {{ c.tournament_balance_rao | tao }}
+                        <span title="{{ c.tournament_balance_rao | tao(9) }}">{{ c.tournament_balance_rao | tao(2) }}</span>
                     {% elif c.tournament_seen %}
                         <span class="text-muted" title="Coldkey ini belum pernah setor ke turnamen">belum setor</span>
                     {% else %}

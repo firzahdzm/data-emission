@@ -211,7 +211,8 @@ _confirm.addEventListener('click', async () => {
         </span>
         {% if is_admin %}
         <span style="display: flex; align-items: center; gap: 0.6rem;">
-            <span id="balance-refresh-note" class="text-muted" style="font-size: 0.75rem;"></span>
+            <span id="balance-refresh-bar" class="refresh-bar" hidden><span id="balance-refresh-fill"></span></span>
+            <span id="balance-refresh-note" class="text-muted" style="font-size: 0.75rem; font-weight: 400;"></span>
             <button id="balance-refresh-btn" class="btn-subtle">Refresh balances</button>
         </span>
         {% endif %}
@@ -356,18 +357,54 @@ _confirm.addEventListener('click', async () => {
 (function() {
     const btn  = document.getElementById('balance-refresh-btn');
     const note = document.getElementById('balance-refresh-note');
+    const bar  = document.getElementById('balance-refresh-bar');
+    const fill = document.getElementById('balance-refresh-fill');
     if (!btn) return;
 
     let poller = null;
+    let ticker = null;
+    let startedAt = null;
+    let estimate = 0;
 
-    function setBusy(busy, message) {
-        btn.disabled = busy;
-        btn.textContent = busy ? 'Refreshing…' : 'Refresh balances';
-        note.textContent = message || '';
+    function fmt(sec) {
+        sec = Math.max(0, Math.round(sec));
+        const m = Math.floor(sec / 60);
+        const s = String(sec % 60).padStart(2, '0');
+        return `${m}:${s}`;
     }
 
-    // The run takes minutes, so poll until it clears and reload once —
-    // otherwise the admin has no way to tell it finished.
+    function idle(message) {
+        btn.disabled = false;
+        btn.textContent = 'Refresh balances';
+        note.textContent = message || '';
+        bar.hidden = true;
+        if (ticker) { clearInterval(ticker); ticker = null; }
+    }
+
+    // Frozen for the whole run: a second pass costs the same API quota for
+    // an identical result, and the server refuses it with 409 anyway.
+    function busy(startedIso, estimateSeconds) {
+        btn.disabled = true;
+        btn.textContent = 'Fetching…';
+        startedAt = startedIso ? new Date(startedIso) : new Date();
+        estimate = estimateSeconds || 0;
+        bar.hidden = false;
+        if (!ticker) ticker = setInterval(tick, 1000);
+        tick();
+    }
+
+    function tick() {
+        const elapsed = (Date.now() - startedAt.getTime()) / 1000;
+        const pct = estimate > 0 ? Math.min(99, (elapsed / estimate) * 100) : 0;
+        fill.style.width = pct.toFixed(1) + '%';
+        if (estimate > 0 && elapsed < estimate) {
+            note.textContent = `fetching {{ coldkeys | length }} coldkeys — ${fmt(estimate - elapsed)} left`;
+        } else {
+            // Past the estimate: say so plainly rather than showing 0:00.
+            note.textContent = `fetching — ${fmt(elapsed)} elapsed`;
+        }
+    }
+
     function watch() {
         if (poller) return;
         poller = setInterval(async () => {
@@ -375,41 +412,35 @@ _confirm.addEventListener('click', async () => {
                 const r = await fetch('/api/balances/status');
                 const s = await r.json();
                 if (!s.running) {
-                    clearInterval(poller);
-                    poller = null;
-                    setBusy(false, 'done — reloading');
-                    location.reload();
+                    clearInterval(poller); poller = null;
+                    fill.style.width = '100%';
+                    note.textContent = 'done — reloading';
+                    setTimeout(() => location.reload(), 600);
                 }
             } catch (e) { /* transient; keep polling */ }
         }, 5000);
     }
 
     btn.addEventListener('click', async () => {
-        setBusy(true, 'starting…');
+        btn.disabled = true;
+        btn.textContent = 'Starting…';
+        note.textContent = '';
         try {
             const r = await fetch('/api/balances/refresh', { method: 'POST' });
             const body = await r.json().catch(() => ({}));
-            if (r.status === 409) {
-                setBusy(true, 'already running');
-                watch();
-                return;
-            }
-            if (!r.ok) {
-                setBusy(false, body.detail || `failed (${r.status})`);
-                return;
-            }
-            const mins = Math.max(1, Math.round(body.estimated_seconds / 60));
-            setBusy(true, `${body.coldkey_count} coldkeys, ~${mins} min`);
+            if (r.status === 409) { busy(null, 0); note.textContent = 'already running'; watch(); return; }
+            if (!r.ok) { idle(body.detail || `failed (${r.status})`); return; }
+            busy(null, body.estimated_seconds);
             watch();
         } catch (e) {
-            setBusy(false, 'request failed');
+            idle('request failed');
         }
     });
 
     // A scheduled run may already be in flight when the page loads.
     fetch('/api/balances/status')
         .then(r => r.json())
-        .then(s => { if (s.running) { setBusy(true, 'already running'); watch(); } })
+        .then(s => { if (s.running) { busy(s.started_at, s.estimated_seconds); watch(); } })
         .catch(() => {});
 })();
 </script>

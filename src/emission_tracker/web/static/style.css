@@ -693,3 +693,22 @@ a:hover {
 }
 .btn-subtle:hover:not(:disabled) { border-color: var(--sn-text-dim); }
 .btn-subtle:disabled { opacity: 0.55; cursor: default; }
+
+/* Progress strip next to the refresh button. Time-based, not true progress:
+   the server reports no per-coldkey position, so it is capped at 99% until
+   the status poll confirms the run actually ended. */
+.refresh-bar {
+    display: inline-block;
+    width: 90px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--sn-border);
+    overflow: hidden;
+}
+.refresh-bar > span {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: var(--sn-blue);
+    transition: width 1s linear;
+}

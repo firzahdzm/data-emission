@@ -201,10 +201,11 @@ _confirm.addEventListener('click', async () => {
 
 <section class="panel">
     <header>Hotkey detail</header>
-    <table id="dashboard-table" data-sort-col="2" data-sort-dir="desc">
+    <table id="dashboard-table" data-sort-col="3" data-sort-dir="desc">
         <thead>
             <tr>
                 <th data-type="string">Hotkey <span class="sort-indicator"></span></th>
+                <th data-type="string">Coldkey <span class="sort-indicator"></span></th>
                 <th data-type="string">Name <span class="sort-indicator"></span></th>
                 <th data-type="number" class="num">Accumulated <span class="sort-indicator"></span></th>
                 <th data-type="string">Status <span class="sort-indicator"></span></th>
@@ -217,7 +218,16 @@ _confirm.addEventListener('click', async () => {
                 <td data-sort="{{ r.hotkey }}">
                     <code class="hotkey-pill" title="{{ r.hotkey }}">{{ r.hotkey[:8] }}…{{ r.hotkey[-4:] }}</code>
                 </td>
-                <td data-sort="{{ r.name }}">{{ r.name }}</td>
+                <td data-sort="{{ r.coldkey or '' }}">
+                    {% if r.coldkey %}
+                      <code class="hotkey-pill" title="{{ r.coldkey }}">{{ r.coldkey[:8] }}…{{ r.coldkey[-4:] }}</code>
+                    {% else %}
+                      <span class="text-muted" title="Hotkey lama — terdaftar sebelum coldkey dicatat">—</span>
+                    {% endif %}
+                </td>
+                <td data-sort="{{ r.name }}">
+                    {{ r.name }}{% if r.label %} <span class="text-muted">{{ r.label }}</span>{% endif %}
+                </td>
                 <td data-sort="{{ r.cumulative }}" class="num text-mono">{{ r.cumulative | alpha }}</td>
                 <td data-sort="{{ 'registered' if r.is_registered else 'deregistered' }}">
                     {% if r.is_registered == 1 %}

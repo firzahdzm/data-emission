@@ -806,6 +806,9 @@ def dashboard_hotkey_summary(
 
     Each row:
         hotkey:        ss58 address
+        coldkey:       ss58 of the owning coldkey, or None for legacy hotkeys
+                       registered before we tracked ownership
+        label:         operator's name for the wallet pair ("I", "II"), or None
         name:          person owning the hotkey
         cumulative:    SUM(emission) in [from_dt, to_dt) over ok/partial snapshots
         is_registered: 1 if registered in the latest successful snapshot, else 0
@@ -820,6 +823,8 @@ def dashboard_hotkey_summary(
     range_rows = conn.execute(
         """
         SELECT h.ss58 AS hotkey,
+               h.coldkey_ss58 AS coldkey,
+               h.label,
                p.name,
                COALESCE(SUM(ns.emission), 0) AS cumulative
         FROM hotkeys h
@@ -832,7 +837,7 @@ def dashboard_hotkey_summary(
                              AND s.taken_at >= ?
                              AND s.taken_at <  ?
         ) ON ns.hotkey_ss58 = h.ss58
-        GROUP BY h.ss58, p.name
+        GROUP BY h.ss58, h.coldkey_ss58, h.label, p.name
         ORDER BY cumulative DESC, p.name ASC, h.ss58 ASC
         """,
         (settle_boundary, from_dt, to_dt),

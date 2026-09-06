@@ -33,9 +33,13 @@ SCHEMA_STATEMENTS = [
     """,
     """
     CREATE TABLE IF NOT EXISTS hotkeys (
-        ss58       TEXT PRIMARY KEY,
-        person_id  INTEGER NOT NULL REFERENCES persons(id),
-        subnet_id  INTEGER NOT NULL
+        ss58          TEXT PRIMARY KEY,
+        person_id     INTEGER NOT NULL REFERENCES persons(id),
+        subnet_id     INTEGER NOT NULL,
+        -- NULL for the pre-rotation hotkeys, which predate coldkey tracking.
+        coldkey_ss58  TEXT,
+        -- Operator's own name for the wallet pair ("I", "II"); NULL if unlabelled.
+        label         TEXT
     )
     """,
     """
@@ -144,6 +148,8 @@ MIGRATIONS = [
     "ALTER TABLE settlement_lines ADD COLUMN reward_idr INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE settlement_lines ADD COLUMN kas_contribution_idr INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE settlements ADD COLUMN paid_at TIMESTAMP",
+    "ALTER TABLE hotkeys ADD COLUMN coldkey_ss58 TEXT",
+    "ALTER TABLE hotkeys ADD COLUMN label TEXT",
 ]
 
 
@@ -199,15 +205,23 @@ def sync_team(
             "SELECT id FROM persons WHERE name = ?",
             (person.name,),
         ).fetchone()["id"]
-        for ss58 in person.hotkeys:
+        for wallet in person.hotkeys:
             conn.execute(
                 """
-                INSERT INTO hotkeys (ss58, person_id, subnet_id)
-                VALUES (?, ?, ?)
+                INSERT INTO hotkeys (ss58, person_id, subnet_id, coldkey_ss58, label)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(ss58) DO UPDATE SET
-                    person_id = excluded.person_id,
-                    subnet_id = excluded.subnet_id
+                    person_id    = excluded.person_id,
+                    subnet_id    = excluded.subnet_id,
+                    coldkey_ss58 = excluded.coldkey_ss58,
+                    label        = excluded.label
                 """,
-                (ss58, person_id, subnet_id),
+                (
+                    wallet.hotkey,
+                    person_id,
+                    subnet_id,
+                    wallet.coldkey,
+                    wallet.label,
+                ),
             )
     conn.commit()

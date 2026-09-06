@@ -8,17 +8,42 @@ from pydantic import BaseModel, Field, SecretStr, field_validator, model_validat
 SS58_REGEX = re.compile(r"^5[1-9A-HJ-NP-Za-km-z]{46,47}$")
 
 
+class WalletConfig(BaseModel):
+    """One hotkey, optionally paired with the coldkey that owns it.
+
+    Legacy entries (the pre-rotation hotkeys) carry no coldkey: they were
+    registered before we tracked ownership, and they keep earning emission
+    until they deregister. `coldkey` is therefore nullable rather than
+    required, and `coldkey IS NULL` is what distinguishes legacy from new.
+
+    `label` is the operator's own name for the pair ("I", "II") — several
+    wallets belong to one person, and the label is how they tell them apart.
+    """
+
+    hotkey: str
+    coldkey: str | None = None
+    label: str | None = None
+
+    @field_validator("hotkey", "coldkey")
+    @classmethod
+    def validate_ss58(cls, v: str | None) -> str | None:
+        if v is not None and not SS58_REGEX.match(v):
+            raise ValueError(f"Invalid SS58 address: {v!r}")
+        return v
+
+
 class PersonConfig(BaseModel):
     name: str = Field(min_length=1)
-    hotkeys: list[str] = Field(min_length=1)
+    hotkeys: list[WalletConfig] = Field(min_length=1)
 
-    @field_validator("hotkeys")
+    @field_validator("hotkeys", mode="before")
     @classmethod
-    def validate_ss58(cls, v: list[str]) -> list[str]:
-        for hk in v:
-            if not SS58_REGEX.match(hk):
-                raise ValueError(f"Invalid SS58 address: {hk!r}")
-        return v
+    def coerce_bare_hotkeys(cls, v):
+        """Accept the old `hotkeys: [ss58, ...]` shorthand alongside the
+        mapping form, so existing configs and tests keep loading."""
+        if not isinstance(v, list):
+            return v
+        return [{"hotkey": item} if isinstance(item, str) else item for item in v]
 
 
 class PollingConfig(BaseModel):
@@ -56,7 +81,7 @@ class AppConfig(BaseModel):
 
         all_hotkeys: list[str] = []
         for p in self.team:
-            all_hotkeys.extend(p.hotkeys)
+            all_hotkeys.extend(w.hotkey for w in p.hotkeys)
         if len(all_hotkeys) != len(set(all_hotkeys)):
             raise ValueError("Duplicate hotkey across persons")
         return self

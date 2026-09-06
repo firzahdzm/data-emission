@@ -205,3 +205,39 @@ def test_cleanup_orphaned_snapshots_is_idempotent(memory_db: sqlite3.Connection)
     assert cleanup_orphaned_snapshots(memory_db) == 1
     # Second call: nothing left in_progress
     assert cleanup_orphaned_snapshots(memory_db) == 0
+
+
+def test_sync_team_persists_coldkey_and_label(memory_db):
+    init_schema(memory_db)
+    sync_team(
+        memory_db,
+        [
+            PersonConfig(
+                name="Firza",
+                hotkeys=[
+                    "5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1",
+                    {
+                        "hotkey": "5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2",
+                        "coldkey": "5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA3",
+                        "label": "I",
+                    },
+                ],
+            )
+        ],
+        subnet_id=56,
+    )
+    rows = {
+        r["ss58"]: r
+        for r in memory_db.execute(
+            "SELECT ss58, coldkey_ss58, label, person_id FROM hotkeys"
+        ).fetchall()
+    }
+    legacy = rows["5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1"]
+    new = rows["5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2"]
+
+    assert legacy["coldkey_ss58"] is None
+    assert legacy["label"] is None
+    assert new["coldkey_ss58"] == "5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA3"
+    assert new["label"] == "I"
+    # Both wallets hang off the same person, so per-name accumulation unites them.
+    assert legacy["person_id"] == new["person_id"]

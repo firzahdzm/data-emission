@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI
 
 from emission_tracker.bot.scheduler import build_scheduler
+from emission_tracker.bot.balances import refresh_balances
 from emission_tracker.bot.snapshot import take_snapshot
 from emission_tracker.config import AppConfig
 from emission_tracker.db import cleanup_orphaned_snapshots, init_schema, sync_team
@@ -86,6 +87,16 @@ def create_app(
                 ),
                 id="initial_run",
             )
+            # Balances refresh only once a day, and an interval job's first
+            # run is one full interval away — without this the coldkey cards
+            # would sit empty for 24 hours after every restart.
+            scheduler.add_job(
+                lambda: _safe_balance_refresh(
+                    conn_factory, client, gradients, rate_limiter,
+                    config.polling.request_interval_seconds,
+                ),
+                id="initial_balance_run",
+            )
 
         try:
             yield
@@ -114,5 +125,24 @@ def _safe_snapshot(conn_factory, client, rate_limiter, subnet_id, request_interv
         )
     except Exception:
         log.exception("initial snapshot run failed")
+    finally:
+        conn.close()
+
+
+def _safe_balance_refresh(
+    conn_factory, client, gradients, rate_limiter, request_interval_seconds
+):
+    """Run a single balance refresh, swallowing exceptions (don't crash scheduler)."""
+    conn = conn_factory()
+    try:
+        refresh_balances(
+            conn=conn,
+            taostats=client,
+            gradients=gradients,
+            rate_limiter=rate_limiter,
+            request_interval_seconds=request_interval_seconds,
+        )
+    except Exception:
+        log.exception("initial balance refresh failed")
     finally:
         conn.close()

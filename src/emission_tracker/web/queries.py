@@ -986,10 +986,10 @@ def coldkey_cards(conn: sqlite3.Connection) -> list[dict]:
             if owner["only_label"]:
                 name = f"{name} {owner['only_label']}"
         else:
-            # Shared wallet: naming it after one person would be a lie.
+            # Shared wallet: naming it after one person would be a lie, and
+            # the per-wallet label belongs to individual hotkeys, not to the
+            # wallet the whole team shares.
             name = "Bersama"
-            if owner["only_label"]:
-                name = f"{name} {owner['only_label']}"
 
         bal = balances.get(owner["coldkey"])
         cards.append(

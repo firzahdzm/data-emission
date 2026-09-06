@@ -957,7 +957,7 @@ class TestColdkeyCards:
         assert shared["person_count"] == 2
         assert shared["hotkey_count"] == 2
         assert "Alice" not in shared["name"] and "Bob" not in shared["name"]
-        assert shared["name"] == "Bersama (old)"
+        assert shared["name"] == "Bersama"
 
         solo = cards[self.CK_SOLO]
         assert solo["person_count"] == 1

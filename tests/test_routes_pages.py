@@ -171,3 +171,48 @@ def test_format_dt_seconds_helper():
     # None / empty → empty string
     assert _format_dt_seconds(None) == ""
     assert _format_dt_seconds("") == ""
+
+
+class TestDashboardAdminScripts:
+    """Jinja discards anything a child template puts outside its block, so a
+    <script> appended past {% endblock %} vanishes silently: the button still
+    renders, but nothing is ever wired to it. These tests pin the handler to
+    the response body, where a missing block is visible."""
+
+    def _html(self, app, monkeypatch, user: str | None) -> str:
+        from types import SimpleNamespace
+
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        app.state.config = SimpleNamespace(admin_users=["alice"])
+        headers = {"X-Remote-User": user} if user else {}
+        r = TestClient(app).get("/", headers=headers)
+        assert r.status_code == 200
+        return r.text
+
+    def test_admin_gets_the_refresh_button_and_its_handler(self, app, monkeypatch):
+        html = self._html(app, monkeypatch, "alice")
+        assert 'id="balance-refresh-btn"' in html
+        # The button is inert without these three.
+        assert "/api/balances/refresh" in html
+        assert "/api/balances/status" in html
+        assert "addEventListener('click'" in html
+
+    def test_every_script_block_survives_the_template_block(self, app, monkeypatch):
+        """Guards the whole file, not just this one handler: no <script> may
+        be stranded outside {% block content %}."""
+        from pathlib import Path
+
+        import emission_tracker.web.routes_pages as rp
+
+        template = (
+            Path(rp.__file__).parent / "templates" / "dashboard.html"
+        ).read_text()
+        endblock = template.index("{% endblock %}")
+        assert "<script>" not in template[endblock:], (
+            "a <script> sits after {% endblock %} and will never render"
+        )
+
+    def test_non_admin_gets_neither_button_nor_handler(self, app, monkeypatch):
+        html = self._html(app, monkeypatch, "mallory")
+        assert 'id="balance-refresh-btn"' not in html
+        assert "/api/balances/refresh" not in html

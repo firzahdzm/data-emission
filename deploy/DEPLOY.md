@@ -168,28 +168,22 @@ The startup cleanup will mark any snapshots stuck in `in_progress` (from the res
 Schema changes apply themselves: `init_schema` runs idempotent `ALTER TABLE`
 statements at every startup, so no manual migration step exists.
 
-**When the roster changes, the code pull is not enough.** `config.yaml` is
-gitignored, so `git pull` cannot deliver a new roster. Copy it over and merge:
+**When the roster format changes, the code pull is not enough.** `config.yaml`
+is gitignored, so `git pull` cannot deliver a new roster. Copy it from your
+laptop first, then restart:
 
 ```bash
 # on your laptop
 scp config.yaml YOUR_USER@YOUR_VPS:/tmp/config.yaml
 
 # on the VPS
-sudo -u emission /opt/emission-tracker/.venv/bin/python \
-    /opt/emission-tracker/deploy/merge_team.py \
-    /opt/emission-tracker/config.yaml /tmp/config.yaml
+sudo install -o emission -g emission -m 640 /tmp/config.yaml /opt/emission-tracker/config.yaml
 rm /tmp/config.yaml
 sudo systemctl restart emission-tracker
 ```
 
-`merge_team.py` replaces only `team:`, keeping the VPS's own `admin_users`,
-`polling` and `database.path`, and writes a timestamped backup first. Copying
-the whole file instead would overwrite those with whatever the laptop happens
-to hold — an easy way to lock every admin out of their own controls.
-
-Skipping the copy entirely leaves the tracker on the old roster: the new
-hotkeys are never polled and the coldkey cards stay empty.
+Skipping this leaves the tracker on the old roster: the new hotkeys are never
+polled and the coldkey cards stay empty.
 
 ## 8a. Wallet and tournament balances
 

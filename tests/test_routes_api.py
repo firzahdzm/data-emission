@@ -632,12 +632,14 @@ def test_salary_payment_detail_404(app_with_db):
 class _FakeRunner:
     """Stands in for BalanceRunner so no request ever leaves the test."""
 
-    def __init__(self, *, busy: bool = False, count: int = 3):
+    def __init__(self, *, busy: bool = False, count: int = 3, target=None):
         self.busy = busy
         self.count = count
         self.starts = 0
+        self.started_with: list | None = None
         self.is_running = busy
         self.started_at = None
+        self.target = target
 
     def coldkey_count(self) -> int:
         return self.count
@@ -645,12 +647,14 @@ class _FakeRunner:
     def estimate_seconds(self, coldkey_count: int) -> int:
         return coldkey_count * 15
 
-    def start(self) -> bool:
+    def start(self, coldkeys=None) -> bool:
         self.starts += 1
         if self.busy:
             return False
+        self.started_with = coldkeys
         self.busy = True
         self.is_running = True
+        self.target = coldkeys
         return True
 
 
@@ -708,4 +712,81 @@ class TestBalanceRefreshEndpoint:
             "started_at": None,
             "coldkey_count": 15,
             "estimated_seconds": 225,
+            "target": None,  # full run
         }
+
+
+class TestSingleColdkeyRefresh:
+    CK = "5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA7"
+
+    def _app(self, app_with_db, monkeypatch, runner):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        _set_admin_users(app_with_db, ["alice"])
+        app_with_db.state.balance_runner = runner
+        # HK_F1 already exists; give it a coldkey so the endpoint can find it.
+        app_with_db.state.db_conn.execute(
+            "UPDATE hotkeys SET coldkey_ss58 = ? WHERE ss58 = ?", (self.CK, HK_F1)
+        )
+        app_with_db.state.db_conn.commit()
+        return TestClient(app_with_db)
+
+    def test_admin_refreshes_one_coldkey(self, app_with_db, monkeypatch):
+        runner = _FakeRunner()
+        client = self._app(app_with_db, monkeypatch, runner)
+
+        r = client.post(
+            f"/api/balances/refresh/{self.CK}", headers={"X-Remote-User": "alice"}
+        )
+        assert r.status_code == 202
+        assert r.json()["coldkey"] == self.CK
+        assert r.json()["coldkey_count"] == 1
+        # Only that coldkey — a full sweep would cost 30 calls for one card.
+        assert runner.started_with == [self.CK]
+
+    def test_unknown_coldkey_is_rejected_without_fetching(
+        self, app_with_db, monkeypatch
+    ):
+        """A stale page must not be able to make the tracker query arbitrary
+        accounts on the operator's API key."""
+        runner = _FakeRunner()
+        client = self._app(app_with_db, monkeypatch, runner)
+
+        r = client.post(
+            "/api/balances/refresh/5NOTAREALCOLDKEY",
+            headers={"X-Remote-User": "alice"},
+        )
+        assert r.status_code == 404
+        assert runner.starts == 0
+
+    def test_non_admin_cannot_refresh_a_coldkey(self, app_with_db, monkeypatch):
+        runner = _FakeRunner()
+        client = self._app(app_with_db, monkeypatch, runner)
+
+        r = client.post(
+            f"/api/balances/refresh/{self.CK}", headers={"X-Remote-User": "mallory"}
+        )
+        assert r.status_code == 403
+        assert runner.starts == 0
+
+    def test_refused_while_a_full_run_is_in_flight(self, app_with_db, monkeypatch):
+        """Both draw on one TaoStats rate limiter, so they are serialised."""
+        runner = _FakeRunner(busy=True)
+        client = self._app(app_with_db, monkeypatch, runner)
+
+        r = client.post(
+            f"/api/balances/refresh/{self.CK}", headers={"X-Remote-User": "alice"}
+        )
+        assert r.status_code == 409
+
+    def test_status_reports_the_run_in_flight_not_the_roster(
+        self, app_with_db, monkeypatch
+    ):
+        """A single-coldkey run must not advertise the full count, or the
+        dashboard shows a four-minute countdown for seconds of work."""
+        runner = _FakeRunner(busy=True, count=15, target=[self.CK])
+        client = self._app(app_with_db, monkeypatch, runner)
+
+        body = client.get("/api/balances/status").json()
+        assert body["target"] == [self.CK]
+        assert body["coldkey_count"] == 1
+        assert body["estimated_seconds"] == 15

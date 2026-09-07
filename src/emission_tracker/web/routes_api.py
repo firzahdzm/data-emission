@@ -341,13 +341,20 @@ def balance_refresh_status(request: Request):
     runner = getattr(request.app.state, "balance_runner", None)
     if runner is None:
         return {"available": False, "running": False}
-    coldkey_count = runner.coldkey_count()
+    target = runner.target
+    # Report the run in flight, not the roster: a single-coldkey refresh that
+    # advertised the full count would show a four-minute countdown for work
+    # that finishes in seconds.
+    coldkey_count = len(target) if target else runner.coldkey_count()
     return {
         "available": True,
         "running": runner.is_running,
         "started_at": runner.started_at.isoformat() if runner.started_at else None,
         "coldkey_count": coldkey_count,
         "estimated_seconds": runner.estimate_seconds(coldkey_count),
+        # Which coldkeys the running refresh covers; null means all of them.
+        # Lets the dashboard spin one card instead of freezing every card.
+        "target": target,
     }
 
 
@@ -378,4 +385,42 @@ def trigger_balance_refresh(
         "started": True,
         "coldkey_count": coldkey_count,
         "estimated_seconds": runner.estimate_seconds(coldkey_count),
+    }
+
+
+@router.post("/balances/refresh/{coldkey}", status_code=202)
+def trigger_single_balance_refresh(
+    request: Request,
+    coldkey: str,
+    user: str = Depends(require_admin),
+):
+    """Re-read one coldkey's balances. Admin only.
+
+    Two API calls instead of thirty, so this returns in seconds rather than
+    minutes — the point of the per-card button. It still takes the same lock
+    as a full run: both share one TaoStats rate limiter, and letting them
+    overlap would only make each slower.
+    """
+    runner = getattr(request.app.state, "balance_runner", None)
+    if runner is None:
+        raise HTTPException(status_code=503, detail="Balance refresh not configured")
+
+    conn = _db(request)
+    known = conn.execute(
+        "SELECT 1 FROM hotkeys WHERE coldkey_ss58 = ? LIMIT 1", (coldkey,)
+    ).fetchone()
+    if known is None:
+        raise HTTPException(status_code=404, detail=f"Unknown coldkey {coldkey!r}")
+
+    if not runner.start([coldkey]):
+        raise HTTPException(
+            status_code=409,
+            detail="A balance refresh is already running",
+        )
+    log.info("balance refresh for %s triggered by %s", coldkey, user)
+    return {
+        "started": True,
+        "coldkey": coldkey,
+        "coldkey_count": 1,
+        "estimated_seconds": runner.estimate_seconds(1),
     }

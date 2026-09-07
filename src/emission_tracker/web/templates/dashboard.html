@@ -229,7 +229,13 @@ _confirm.addEventListener('click', async () => {
                 </span>
                 {% endif %}
             </div>
-            <code class="coldkey-addr" title="{{ c.coldkey }}">{{ c.coldkey[:10] }}…{{ c.coldkey[-6:] }}</code>
+            <div class="coldkey-addr-row">
+                <code class="coldkey-addr" title="{{ c.coldkey }}">{{ c.coldkey[:10] }}…{{ c.coldkey[-6:] }}</code>
+                {% if is_admin %}
+                <button class="coldkey-refresh" data-coldkey="{{ c.coldkey }}"
+                        title="Refresh saldo wallet ini saja">&#8635;</button>
+                {% endif %}
+            </div>
             <div class="coldkey-stat">
                 <span class="coldkey-stat-label">Wallet</span>
                 <span class="coldkey-stat-value" title="{{ c.balance_free_rao | tao(9) }}">{{ c.balance_free_rao | tao(2) }}</span>
@@ -372,6 +378,7 @@ _confirm.addEventListener('click', async () => {
     }
 
     function idle(message) {
+        setCardsIdle();
         btn.disabled = false;
         btn.textContent = 'Refresh balances';
         note.textContent = message || '';
@@ -382,6 +389,7 @@ _confirm.addEventListener('click', async () => {
     // Frozen for the whole run: a second pass costs the same API quota for
     // an identical result, and the server refuses it with 409 anyway.
     function busy(startedIso, estimateSeconds) {
+        setCardsBusy(null);
         btn.disabled = true;
         btn.textContent = 'Fetching…';
         startedAt = startedIso ? new Date(startedIso) : new Date();
@@ -435,10 +443,56 @@ _confirm.addEventListener('click', async () => {
         }
     });
 
+    // --- per-card refresh -------------------------------------------
+    // One coldkey is two API calls, so this returns in seconds. It shares
+    // the server-side lock with the full run, hence the same disabled
+    // treatment across every card while any refresh is in flight.
+    const cardButtons = Array.from(document.querySelectorAll('.coldkey-refresh'));
+
+    function setCardsBusy(activeColdkey) {
+        cardButtons.forEach(b => {
+            b.disabled = true;
+            b.classList.toggle('spinning', b.dataset.coldkey === activeColdkey);
+        });
+    }
+
+    function setCardsIdle() {
+        cardButtons.forEach(b => {
+            b.disabled = false;
+            b.classList.remove('spinning');
+        });
+    }
+
+    cardButtons.forEach(b => {
+        b.addEventListener('click', async () => {
+            const ck = b.dataset.coldkey;
+            setCardsBusy(ck);
+            note.textContent = 'refreshing 1 coldkey…';
+            try {
+                const r = await fetch(`/api/balances/refresh/${encodeURIComponent(ck)}`,
+                                      { method: 'POST' });
+                const body = await r.json().catch(() => ({}));
+                if (!r.ok) {
+                    setCardsIdle();
+                    note.textContent = body.detail || `failed (${r.status})`;
+                    return;
+                }
+                watch();
+            } catch (e) {
+                setCardsIdle();
+                note.textContent = 'request failed';
+            }
+        });
+    });
+
     // A scheduled run may already be in flight when the page loads.
     fetch('/api/balances/status')
         .then(r => r.json())
-        .then(s => { if (s.running) { busy(s.started_at, s.estimated_seconds); watch(); } })
+        .then(s => { if (s.running) {
+            busy(s.started_at, s.estimated_seconds);
+            if (s.target && s.target.length === 1) setCardsBusy(s.target[0]);
+            watch();
+        } })
         .catch(() => {});
 })();
 </script>

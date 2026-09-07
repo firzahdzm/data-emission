@@ -727,3 +727,32 @@ a:hover {
     border-color: #22c55e40;
 }
 .coldkey-card-shared .coldkey-stat-value { color: var(--sn-ok); }
+
+/* Per-card refresh. Sits with the address rather than the figures, so it
+   reads as an action on the wallet, not on one of its numbers. */
+.coldkey-addr-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+    margin-bottom: 0.6rem;
+}
+.coldkey-addr-row .coldkey-addr { margin-bottom: 0; }
+.coldkey-refresh {
+    flex: none;
+    background: none;
+    border: 1px solid var(--sn-border);
+    border-radius: var(--sn-radius-sm);
+    color: var(--sn-text-dim);
+    font-size: 0.8rem;
+    line-height: 1;
+    padding: 0.15rem 0.35rem;
+    cursor: pointer;
+}
+.coldkey-refresh:hover:not(:disabled) {
+    color: var(--sn-text-bright);
+    border-color: var(--sn-border-bright);
+}
+.coldkey-refresh:disabled { opacity: 0.5; cursor: default; }
+.coldkey-refresh.spinning { animation: coldkey-spin 1s linear infinite; }
+@keyframes coldkey-spin { to { transform: rotate(360deg); } }

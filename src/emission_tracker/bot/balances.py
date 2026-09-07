@@ -29,8 +29,14 @@ def refresh_balances(
     gradients: GradientsClient,
     rate_limiter: TokenBucket,
     request_interval_seconds: float,
+    coldkeys: list[str] | None = None,
 ) -> BalanceRefreshResult:
-    """Fetch wallet and tournament balances for every known coldkey.
+    """Fetch wallet and tournament balances for known coldkeys.
+
+    `coldkeys` narrows the run to those addresses — the per-card refresh
+    button uses it to re-read one wallet in seconds instead of minutes.
+    Unknown addresses are dropped rather than fetched, so a stale page
+    cannot make the tracker query arbitrary accounts. None means all.
 
     Runs on its own schedule, well apart from the emission snapshot: balances
     move slowly and the snapshot loop is already long, so folding these
@@ -41,13 +47,18 @@ def refresh_balances(
     silently showing yesterday's number as today's.
     """
     fetched_at = datetime.now(timezone.utc)
-    coldkeys = [
+    known = [
         row["coldkey_ss58"]
         for row in conn.execute(
             "SELECT DISTINCT coldkey_ss58 FROM hotkeys "
             "WHERE coldkey_ss58 IS NOT NULL ORDER BY coldkey_ss58"
         ).fetchall()
     ]
+    if coldkeys is None:
+        coldkeys = known
+    else:
+        wanted = set(coldkeys)
+        coldkeys = [ck for ck in known if ck in wanted]
 
     wallet_ok = wallet_fail = 0
     tourn_ok = tourn_absent = tourn_fail = 0
@@ -144,6 +155,8 @@ class BalanceRunner:
         self._lock = threading.Lock()
         self._running = False
         self._started_at: datetime | None = None
+        # Which coldkeys the in-flight run covers; None means all of them.
+        self._target: list[str] | None = None
 
     @property
     def is_running(self) -> bool:
@@ -152,6 +165,15 @@ class BalanceRunner:
     @property
     def started_at(self) -> datetime | None:
         return self._started_at
+
+    @property
+    def target(self) -> list[str] | None:
+        """Coldkeys the running refresh covers, or None for a full run.
+
+        The dashboard uses this to spin only the card being refreshed
+        instead of freezing all fifteen.
+        """
+        return self._target
 
     def estimate_seconds(self, coldkey_count: int) -> int:
         """Roughly how long a run takes: the pacing gaps plus per-coldkey
@@ -171,21 +193,28 @@ class BalanceRunner:
         finally:
             conn.close()
 
-    def start(self) -> bool:
+    def start(self, coldkeys: list[str] | None = None) -> bool:
         """Kick off a refresh in the background.
 
+        `coldkeys` limits the run to those addresses; None refreshes all.
         Returns False when one is already in flight — the caller should tell
-        the user to wait rather than queue a second pass.
+        the user to wait rather than queue a second pass. A single-coldkey
+        run takes the same lock as a full one, because both draw on the one
+        TaoStats rate limiter and overlapping them would only make each
+        slower.
         """
         with self._lock:
             if self._running:
                 return False
             self._running = True
             self._started_at = datetime.now(timezone.utc)
-        threading.Thread(target=self._run, daemon=True).start()
+            # `is not None`, not truthiness: an empty selection means
+            # "nothing", and must never widen into a full sweep.
+            self._target = list(coldkeys) if coldkeys is not None else None
+        threading.Thread(target=self._run, args=(coldkeys,), daemon=True).start()
         return True
 
-    def _run(self) -> None:
+    def _run(self, coldkeys: list[str] | None = None) -> None:
         conn = self._conn_factory()
         try:
             refresh_balances(
@@ -194,6 +223,7 @@ class BalanceRunner:
                 gradients=self._gradients,
                 rate_limiter=self._rate_limiter,
                 request_interval_seconds=self._request_interval_seconds,
+                coldkeys=coldkeys,
             )
         except Exception:
             log.exception("manual balance refresh failed")
@@ -201,3 +231,4 @@ class BalanceRunner:
             conn.close()
             with self._lock:
                 self._running = False
+                self._target = None

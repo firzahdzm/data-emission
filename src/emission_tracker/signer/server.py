@@ -150,9 +150,18 @@ class Signer:
             return _DaySpend()
 
     def _save_spend(self) -> None:
+        """Best-effort. The transfer has already gone through by the time
+        this runs, so a write failure here must never turn a successful
+        payment into a reported failure — that would push the caller
+        straight into paying twice. Losing the on-disk counter for a
+        restart is a far smaller problem than that.
+        """
         path = Path(self._config.state_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"day": self._spent.day, "rao": self._spent.rao}))
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"day": self._spent.day, "rao": self._spent.rao}))
+        except Exception as exc:
+            log.warning("could not persist spend state to %s: %s", path, exc)
 
     def _passphrase_for(self, wallet_name: str) -> str:
         """Read one passphrase from the systemd credentials directory.

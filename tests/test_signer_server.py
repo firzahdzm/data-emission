@@ -157,3 +157,19 @@ def test_corrupt_state_file_starts_clean_without_raising(tmp_path):
     signer = _signer(rec, tmp_path, daily_cap_tao=1.0, state_path=str(state_path))
     res = signer.handle(SignRequest(OP_PAY, CK, ("text",)))  # 0.7, under 1.0
     assert res.ok
+
+
+def test_unwritable_state_path_does_not_turn_a_success_into_a_failure(tmp_path):
+    """The transfer already happened by the time _save_spend() runs. A disk
+    error there must never be reported back as a failed payment — that's
+    the fast path to double-paying a tournament fee."""
+    rec = _Recorder()
+    # Point state_path at the tmp_path directory itself: writing a file
+    # there fails because it is a directory, not a file.
+    signer = _signer(rec, tmp_path, state_path=str(tmp_path))
+    res = signer.handle(SignRequest(OP_PAY, CK, ("text",)))
+    assert res.ok
+    assert res.amount_rao == 700_000_000
+    # The in-memory counter still advanced, so the cap keeps working for
+    # the rest of the process's life even though nothing landed on disk.
+    assert signer._spent.rao == 700_000_000

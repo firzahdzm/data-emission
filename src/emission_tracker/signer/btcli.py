@@ -8,6 +8,7 @@ out to btcli would either prompt for a passphrase or move real funds.
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 
@@ -100,7 +101,28 @@ def base_env() -> dict:
             "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
         ),
         "HOME": os.environ.get("HOME", "/tmp"),
+        # On a pseudo-terminal btcli's rich output turns on colour and a
+        # redrawing spinner, and the escape sequences land in the middle
+        # of the very words the result is read from. A finalized transfer
+        # then parses as "unknown" — which is how a payment that had
+        # actually gone through got recorded as one nobody could vouch
+        # for. These two ask rich for plain text.
+        "TERM": "dumb",
+        "NO_COLOR": "1",
     }
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b[()][A-B]|\r")
+
+
+def strip_ansi(text: str) -> str:
+    """Remove terminal control sequences.
+
+    Belt and braces beside TERM=dumb: anything that slips through would
+    otherwise sit inside the words the outcome is read from, and a
+    finalized transfer would be reported as unknown.
+    """
+    return _ANSI.sub("", text or "")
 
 
 def tidy(text: str, limit: int = 300) -> str:
@@ -110,7 +132,8 @@ def tidy(text: str, limit: int = 300) -> str:
     Stored raw, that text wrecks any table it is later shown in, and the
     useful sentence is buried among the borders.
     """
-    cleaned = "".join(" " if ch in "│╭╮╰╯─━┃┏┓┗┛" else ch for ch in text or "")
+    text = strip_ansi(text)
+    cleaned = "".join(" " if ch in "│╭╮╰╯─━┃┏┓┗┛" else ch for ch in text)
     cleaned = " ".join(cleaned.split())
     return cleaned[:limit].strip()
 
@@ -294,7 +317,7 @@ def parse_transfer_output(text: str) -> str | None:
     transfer, guessing wrong in that direction records a payment that
     never happened.
     """
-    flat = tidy(text, limit=4000)
+    flat = tidy(strip_ansi(text), limit=4000)
     ok = any(marker in flat for marker in _OK_MARKERS)
     failed = _FAIL_MARKER in flat
 

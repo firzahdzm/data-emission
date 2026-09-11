@@ -192,7 +192,7 @@ def test_list_wallets_passes_a_usable_PATH():
 def test_base_env_carries_only_what_btcli_needs():
     from emission_tracker.signer.btcli import base_env
 
-    assert set(base_env()) == {"PATH", "HOME"}
+    assert set(base_env()) == {"PATH", "HOME", "TERM", "NO_COLOR"}
 
 
 def test_success_false_is_a_failure_even_though_btcli_exits_zero():
@@ -535,3 +535,50 @@ def test_a_repeated_password_prompt_is_reported_at_once(tmp_path):
         )
     assert "rejected the unlock value" in str(exc.value)
     assert _time.monotonic() - started < 15, "should not wait for the timeout"
+
+
+class TestTerminalNoiseDoesNotHideTheResult:
+    """On a pseudo-terminal btcli turns on colour and a redrawing spinner,
+    and the escape sequences land inside the very words the outcome is
+    read from. A finalized transfer then parsed as "unknown" — which is
+    how a payment that had gone through got recorded as one nobody could
+    vouch for, inviting exactly the retry that pays twice."""
+
+    NOISY_OK = (
+        "\x1b[0m\x1b[91mInitiating transfer on network: finney\x1b[0m\r\n"
+        "\x1b[?25l⠋ Checking balance and fees on chain\r"
+        "\x1b[2K⠙ Checking balance and fees on chain\r\x1b[2K"
+        "\x1b[32m✅ Finalized. Block Hash: "
+        "0x14fa5dba1c7a4c048cdc979c5b4f0ddbd75e9440620adf9326bf80498c7d873f"
+        "\x1b[0m\r\n\x1b[?25h"
+    )
+
+    def test_a_finalized_transfer_is_still_recognised(self):
+        from emission_tracker.signer.btcli import parse_transfer_output
+
+        assert parse_transfer_output(self.NOISY_OK).startswith("0x14fa5dba")
+
+    def test_a_refusal_is_still_recognised(self):
+        from emission_tracker.signer.btcli import parse_transfer_output
+
+        noisy_fail = (
+            "\x1b[?25l⠋ Checking balance\r\x1b[2K"
+            "\x1b[31m❌ Failed: Coldkey Keyfile is corrupt\x1b[0m\r\n"
+        )
+        with pytest.raises(BtcliError) as exc:
+            parse_transfer_output(noisy_fail)
+        assert "Keyfile is corrupt" in str(exc.value)
+
+    def test_stored_text_carries_no_escape_sequences(self):
+        """Raw, they wreck the history table and read as mojibake."""
+        from emission_tracker.signer.btcli import tidy
+
+        assert "\x1b" not in tidy(self.NOISY_OK, limit=4000)
+        assert "[0m" not in tidy(self.NOISY_OK, limit=4000)
+
+    def test_the_environment_asks_btcli_for_plain_output(self):
+        from emission_tracker.signer.btcli import base_env
+
+        env = base_env()
+        assert env["TERM"] == "dumb"
+        assert env["NO_COLOR"] == "1"

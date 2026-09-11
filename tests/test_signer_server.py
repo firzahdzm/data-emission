@@ -101,7 +101,7 @@ def test_the_environment_carries_no_unlock_value_at_all(tmp_path):
     s = _signer(_Recorder(), tmp_path)
     env = s._env_for("prj1", UNLOCK)
 
-    assert set(env) == {"PATH", "HOME"}
+    assert set(env) == {"PATH", "HOME", "TERM", "NO_COLOR"}
     assert UNLOCK not in "".join(env.values())
     assert coldkey_password_env_var("/root/.bittensor/wallets", "prj1") not in env
     assert "BT_WALLET_PASSWORD" not in env

@@ -375,3 +375,50 @@ class TestActionStatusSurface:
         html = TestClient(app).get("/", headers={"X-Remote-User": "alice"}).text
         assert "coldkey-last-pending" in html
         assert "sedang proses" in html
+
+
+class TestStrandedActionsAreReaped:
+    """A row goes pending before the signer is called. If the tracker dies
+    or the signer is killed in between, nothing resolves it — and the
+    duplicate guard then refuses every future action on that coldkey, so
+    one crash silently retires a wallet."""
+
+    def test_startup_fails_any_pending_row(self, app):
+        from emission_tracker.db import cleanup_stranded_actions
+
+        conn = app.state.db_conn
+        queries.record_action(conn, CK, OP_PAY, ["text"], 700_000_000, "alice")
+        assert queries.pending_action(conn, CK) is not None
+
+        assert cleanup_stranded_actions(conn) == 1
+        assert queries.pending_action(conn, CK) is None
+
+        row = queries.recent_actions(conn)[0]
+        assert row["status"] == "failed"
+        # The honest record: the attempt happened, the outcome is unknown.
+        assert "unknown" in row["error"]
+        assert row["finished_at"] is not None
+
+    def test_the_wallet_is_usable_again_afterwards(self, app, monkeypatch):
+        from emission_tracker.db import cleanup_stranded_actions
+
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        queries.record_action(app.state.db_conn, CK, OP_PAY, ["text"],
+                              700_000_000, "alice")
+        cleanup_stranded_actions(app.state.db_conn)
+
+        fake = _FakeSigner()
+        app.state.signer = fake
+        r = _post(app, f"/api/tournament/pay/{CK}", {"types": ["text"]})
+        assert r.status_code == 200
+        assert len(fake.sent) == 1
+
+    def test_it_does_not_touch_settled_rows(self, app):
+        from emission_tracker.db import cleanup_stranded_actions
+
+        conn = app.state.db_conn
+        done = queries.record_action(conn, CK, OP_PAY, ["text"], 1, "alice")
+        queries.finish_action(conn, done, True, "0xabc", None)
+
+        assert cleanup_stranded_actions(conn) == 0
+        assert queries.recent_actions(conn)[0]["status"] == "ok"

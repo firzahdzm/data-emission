@@ -34,7 +34,16 @@ from emission_tracker.signer.protocol import (
 log = logging.getLogger("emission_signer")
 
 RAO = 10**9
-BTCLI_TIMEOUT = 300
+# Measured on the target host: a refused transfer returns in ~1.3s and a
+# wallet list in ~0.4s. 300s was chosen with no evidence and cost us a
+# four-minute hang that blocked every other wallet, because the signer
+# handles one request at a time. These are generous against the observed
+# numbers while keeping a stuck call from holding the queue for minutes.
+TRANSFER_TIMEOUT = 90
+# Unstake can wait on chain submission and slippage checks, so it gets
+# more room than a transfer — but still far less than five minutes.
+UNSTAKE_TIMEOUT = 180
+BTCLI_TIMEOUT = UNSTAKE_TIMEOUT
 
 
 @dataclass
@@ -99,7 +108,7 @@ class Signer:
             log.info("unstake_all coldkey=%s wallet=%s", request.coldkey, name)
             payload = run_btcli(
                 unstake_argv(name, self._config.netuid, self._config.wallet_path),
-                env=env, timeout=BTCLI_TIMEOUT, run=self._run,
+                env=env, timeout=UNSTAKE_TIMEOUT, run=self._run,
             )
             return SignResult(True, request.op, request.coldkey,
                               tx_hash=_tx_hash(payload))
@@ -140,7 +149,7 @@ class Signer:
         payload = run_btcli(
             transfer_argv(name, self._config.destination, amount_tao,
                           self._config.wallet_path),
-            env=env, timeout=BTCLI_TIMEOUT, run=self._run,
+            env=env, timeout=TRANSFER_TIMEOUT, run=self._run,
         )
         self._record_spend(amount_rao)
         return SignResult(True, request.op, request.coldkey,

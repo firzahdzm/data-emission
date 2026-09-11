@@ -10,7 +10,12 @@ from emission_tracker.bot.scheduler import build_scheduler
 from emission_tracker.bot.balances import BalanceRunner
 from emission_tracker.bot.snapshot import take_snapshot
 from emission_tracker.config import AppConfig
-from emission_tracker.db import cleanup_orphaned_snapshots, init_schema, sync_team
+from emission_tracker.db import (
+    cleanup_orphaned_snapshots,
+    cleanup_stranded_actions,
+    init_schema,
+    sync_team,
+)
 from emission_tracker.gradients_client import GradientsClient
 from emission_tracker.rate_limiter import TokenBucket
 from emission_tracker.taostats_client import TaoStatsClient
@@ -65,6 +70,15 @@ def create_app(
         cleaned = cleanup_orphaned_snapshots(long_lived_conn)
         if cleaned:
             log.info("marked %d orphaned in_progress snapshot(s) as failed", cleaned)
+        stranded = cleanup_stranded_actions(long_lived_conn)
+        if stranded:
+            # Warning, not info: each one is a money-moving call whose
+            # outcome nobody knows, and the chain is the only place to
+            # find out.
+            log.warning(
+                "marked %d interrupted signed action(s) as failed — "
+                "verify on-chain what actually happened", stranded,
+            )
         sync_team(long_lived_conn, config.team, subnet_id=config.subnet_id)
         app.state.db_conn = long_lived_conn
         # Expose config so admin gating (web/auth.py) can read admin_users

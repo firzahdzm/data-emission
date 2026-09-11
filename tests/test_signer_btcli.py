@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 import pytest
 
@@ -92,8 +93,11 @@ def test_list_wallets_command_is_non_interactive_and_machine_readable():
     """list_wallets constructs the argv with all required flags."""
     captured_argv = []
 
-    def capture_and_return(argv, capture_output=True, text=True, timeout=None, env=None):
+    def capture_and_return(argv, **kwargs):
         captured_argv.append(argv)
+        # stdin must be closed off, not inherited: from a shell btcli would
+        # otherwise get a terminal and could block on a prompt.
+        assert kwargs.get("stdin") is subprocess.DEVNULL
         return _Completed(stdout=json.dumps({"wallets": []}))
 
     list_wallets(WP, run=capture_and_return)

@@ -279,3 +279,28 @@ def sync_team(
                 ),
             )
     conn.commit()
+
+
+def cleanup_stranded_actions(conn: sqlite3.Connection) -> int:
+    """Fail any signed action still 'pending' at startup.
+
+    Mirrors cleanup_orphaned_snapshots, for the same reason and with a
+    sharper consequence. A row goes 'pending' before the signer is called
+    and is resolved when it answers; if the tracker dies in between — or
+    the signer hangs and is killed — nothing will ever resolve it. The
+    duplicate-click guard then refuses every future action on that coldkey,
+    so one crash silently retires a wallet.
+
+    Marking it failed is the honest record: we know the attempt was made
+    and do not know its outcome. Returns the number of rows updated so the
+    caller can log it, since a non-zero count means someone should check
+    the chain for what actually happened.
+    """
+    cursor = conn.execute(
+        "UPDATE signed_actions SET status = 'failed', finished_at = ?, "
+        "error = COALESCE(error, 'interrupted — outcome unknown, check the chain') "
+        "WHERE status = 'pending'",
+        (datetime.now(timezone.utc),),
+    )
+    conn.commit()
+    return cursor.rowcount

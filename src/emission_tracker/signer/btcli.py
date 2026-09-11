@@ -102,7 +102,14 @@ def tidy(text: str, limit: int = 300) -> str:
 
 def run_btcli(argv: list[str], env: dict, timeout: int, run=subprocess.run) -> dict:
     try:
-        proc = run(argv, capture_output=True, text=True, timeout=timeout, env=env)
+        # stdin=DEVNULL explicitly rather than inheriting: systemd happens to
+        # give this unit /dev/null, but a run from a shell would hand btcli a
+        # terminal, and a prompt we did not anticipate would then block until
+        # the timeout with no indication why.
+        proc = run(
+            argv, capture_output=True, text=True, timeout=timeout, env=env,
+            stdin=subprocess.DEVNULL,
+        )
     except subprocess.TimeoutExpired as exc:
         raise BtcliError(f"btcli timed out after {timeout}s") from exc
     if proc.returncode != 0:

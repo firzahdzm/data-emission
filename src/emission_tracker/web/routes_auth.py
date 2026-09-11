@@ -112,7 +112,12 @@ LOGIN_PAGE = """<!DOCTYPE html>
 <title>Masuk · SUSnet Emission Tracker</title>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<!-- Same two sheets as every other page, in the same order. Without
+     pico the form fell back to the browser's own controls: white boxes
+     on a dark card. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
 <link rel="stylesheet" href="/static/style.css?v={version}">
 </head>
 <body class="login-body">
@@ -155,7 +160,12 @@ LOGGED_OUT_PAGE = """<!DOCTYPE html>
 <title>Keluar · SUSnet Emission Tracker</title>
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<!-- Same two sheets as every other page, in the same order. Without
+     pico the form fell back to the browser's own controls: white boxes
+     on a dark card. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css">
 <link rel="stylesheet" href="/static/style.css?v={version}">
 </head>
 <body class="login-body">

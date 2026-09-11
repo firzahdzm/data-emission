@@ -899,31 +899,45 @@ details.panel {
 }
 .login-card {
     width: 100%;
-    max-width: 21rem;
+    max-width: 22rem;
     background: var(--sn-surface-1);
     border: 1px solid var(--sn-border);
     border-radius: var(--sn-radius);
-    padding: 2rem 1.75rem 1.75rem;
+    padding: 2rem 1.75rem;
 }
-.login-logo { height: 1.6rem; display: block; }
+.login-logo { height: 1.5rem; display: block; }
 .login-sub {
-    margin: 0.6rem 0 1.5rem;
-    font-size: 0.75rem;
+    margin: 0.75rem 0 1.75rem;
+    padding-bottom: 1.25rem;
+    border-bottom: 1px solid var(--sn-border);
+    font-size: 0.72rem;
     color: var(--sn-text-dim);
+    letter-spacing: 0.02em;
 }
 .login-card label {
-    display: block;
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     color: var(--sn-text-dim);
-    margin-bottom: 0.3rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 0.35rem;
 }
-.login-card input { margin-bottom: 1rem; }
-.login-card button { width: 100%; margin: 0; }
+.login-card input {
+    margin-bottom: 1.1rem;
+    font-size: 0.9rem;
+}
+.login-card button,
+.login-card [role="button"] {
+    width: 100%;
+    margin: 0.35rem 0 0;
+    font-size: 0.85rem;
+    letter-spacing: 0.04em;
+}
 .login-error {
-    margin: 0 0 1rem;
-    padding: 0.55rem 0.7rem;
+    margin: 0 0 1.25rem;
+    padding: 0.6rem 0.75rem;
     border-radius: var(--sn-radius-sm);
-    font-size: 0.8rem;
+    font-size: 0.78rem;
+    line-height: 1.45;
     color: var(--sn-warn);
     background: var(--sn-warn-dim);
 }

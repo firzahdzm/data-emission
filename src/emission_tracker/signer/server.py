@@ -165,8 +165,18 @@ class Signer:
 
         env = self._env_for(name, request.secret)
 
-        log.info("pay_tournament coldkey=%s wallet=%s types=%s amount=%s",
-                 request.coldkey, name, ",".join(request.types), amount_tao)
+        # Length and shape only — never the value. When btcli rejects an
+        # unlock value the operator is sure of, the question is whether
+        # what arrived is what they typed; a browser autofilling a saved
+        # password over the field looks exactly like a wrong passphrase
+        # from here, and the length is enough to tell them apart.
+        secret = request.secret
+        log.info(
+            "pay_tournament coldkey=%s wallet=%s types=%s amount=%s "
+            "unlock_len=%d leading_space=%s trailing_space=%s",
+            request.coldkey, name, ",".join(request.types), amount_tao,
+            len(secret), secret[:1].isspace(), secret[-1:].isspace(),
+        )
         output = run_btcli_text(
             transfer_argv(name, self._config.destination, amount_tao,
                           self._config.wallet_path),

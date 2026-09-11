@@ -263,6 +263,28 @@ _confirm.addEventListener('click', async () => {
                     {% endif %}
                 </span>
             </div>
+            {% if is_admin and tournament %}
+            <div class="coldkey-actions">
+                <div class="tournament-types">
+                    {% for t, fee in tournament.fees_tao.items() %}
+                    <label class="tournament-type">
+                        <input type="checkbox" data-coldkey="{{ c.coldkey }}"
+                               data-fee="{{ fee }}" value="{{ t }}">
+                        {{ t }} <span class="text-muted">{{ fee }} τ</span>
+                    </label>
+                    {% endfor %}
+                </div>
+                <div class="coldkey-action-row">
+                    <span class="tournament-total text-muted"
+                          data-coldkey="{{ c.coldkey }}"
+                          data-free="{{ c.balance_free_rao or 0 }}">—</span>
+                    <button class="btn-subtle pay-fee" data-coldkey="{{ c.coldkey }}"
+                            disabled>Pay fee</button>
+                </div>
+                <button class="btn-subtle unstake-all" data-coldkey="{{ c.coldkey }}"
+                        data-label="{{ c.name }}">Unstake all</button>
+            </div>
+            {% endif %}
         </article>
         {% endfor %}
     </div>
@@ -505,6 +527,101 @@ _confirm.addEventListener('click', async () => {
             watch();
         } })
         .catch(() => {});
+
+    // --- tournament fees and unstake --------------------------------
+    const moneyButtons = Array.from(
+        document.querySelectorAll('.pay-fee, .unstake-all')
+    );
+
+    function totalFor(coldkey) {
+        return Array.from(document.querySelectorAll(
+            `.tournament-type input[data-coldkey="${coldkey}"]:checked`
+        )).reduce((sum, el) => sum + parseFloat(el.dataset.fee), 0);
+    }
+
+    function refreshTotals() {
+        document.querySelectorAll('.tournament-total').forEach(el => {
+            const ck = el.dataset.coldkey;
+            const total = totalFor(ck);
+            const freeTao = parseInt(el.dataset.free || '0', 10) / 1e9;
+            const btn = document.querySelector(`.pay-fee[data-coldkey="${ck}"]`);
+            if (total === 0) {
+                el.textContent = '—';
+                btn.disabled = true;
+                return;
+            }
+            const short = total > freeTao;
+            el.textContent = short
+                ? `${total.toFixed(2)} τ — saldo kurang`
+                : `${total.toFixed(2)} τ`;
+            el.classList.toggle('is-short', short);
+            btn.disabled = short;
+        });
+    }
+
+    document.querySelectorAll('.tournament-type input').forEach(el => {
+        el.addEventListener('change', refreshTotals);
+    });
+    refreshTotals();
+
+    async function runMoneyAction(url, body, button) {
+        moneyButtons.forEach(b => { b.disabled = true; });
+        const original = button.textContent;
+        button.textContent = 'Sending…';
+        try {
+            const r = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: body ? JSON.stringify(body) : undefined,
+            });
+            const payload = await r.json().catch(() => ({}));
+            if (!r.ok) {
+                note.textContent = payload.detail || `failed (${r.status})`;
+                button.textContent = original;
+                moneyButtons.forEach(b => { b.disabled = false; });
+                refreshTotals();
+                return;
+            }
+            note.textContent = 'done — reloading';
+            location.reload();
+        } catch (e) {
+            note.textContent = 'request failed';
+            button.textContent = original;
+            moneyButtons.forEach(b => { b.disabled = false; });
+            refreshTotals();
+        }
+    }
+
+    document.querySelectorAll('.pay-fee').forEach(b => {
+        b.addEventListener('click', () => {
+            const ck = b.dataset.coldkey;
+            const types = Array.from(document.querySelectorAll(
+                `.tournament-type input[data-coldkey="${ck}"]:checked`
+            )).map(el => el.value);
+            if (!types.length) return;
+            if (!window.confirm(
+                `Kirim ${totalFor(ck).toFixed(2)} τ fee turnamen `
+                + `(${types.join(', ')}) dari wallet ini?`)) return;
+            runMoneyAction(`/api/tournament/pay/${encodeURIComponent(ck)}`,
+                           { types }, b);
+        });
+    });
+
+    document.querySelectorAll('.unstake-all').forEach(b => {
+        b.addEventListener('click', () => {
+            // Typed confirmation, not a yes/no: this is irreversible and
+            // costs slippage, so it should be hard to do by reflex.
+            const label = b.dataset.label;
+            const typed = window.prompt(
+                `Unstake SEMUA di subnet 56 untuk wallet ini?\n`
+                + `Tidak bisa dibatalkan dan kena slippage.\n\n`
+                + `Ketik "${label}" untuk melanjutkan:`);
+            if (typed !== label) return;
+            runMoneyAction(
+                `/api/stake/unstake-all/${encodeURIComponent(b.dataset.coldkey)}`,
+                null, b);
+        });
+    });
 })();
 </script>
 {% endif %}

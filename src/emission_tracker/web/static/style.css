@@ -756,3 +756,33 @@ a:hover {
 .coldkey-refresh:disabled { opacity: 0.5; cursor: default; }
 .coldkey-refresh.spinning { animation: coldkey-spin 1s linear infinite; }
 @keyframes coldkey-spin { to { transform: rotate(360deg); } }
+
+/* Money controls, set apart from the read-only figures above them so a
+   click here never feels like the same kind of act as a refresh. */
+.coldkey-actions {
+    margin-top: 0.6rem;
+    padding-top: 0.55rem;
+    border-top: 1px solid var(--sn-border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+.tournament-types { display: flex; flex-direction: column; gap: 0.15rem; }
+.tournament-type {
+    font-size: 0.7rem;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    cursor: pointer;
+}
+.tournament-type input { margin: 0; }
+.coldkey-action-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+}
+.tournament-total { font-size: 0.72rem; font-variant-numeric: tabular-nums; }
+.tournament-total.is-short { color: var(--sn-warn); }
+.unstake-all { width: 100%; color: var(--sn-warn); }
+.unstake-all:hover:not(:disabled) { border-color: var(--sn-warn); }

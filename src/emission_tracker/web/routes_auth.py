@@ -148,6 +148,39 @@ def _render_login(request: Request, next_url: str, error: str = "", status=200):
     return HTMLResponse(html, status_code=status)
 
 
+LOGGED_OUT_PAGE = """<!DOCTYPE html>
+<html lang="id" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keluar · SUSnet Emission Tracker</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap">
+<link rel="stylesheet" href="/static/style.css?v={version}">
+</head>
+<body class="login-body">
+<main class="login-card">
+    <img src="/static/logo-white.svg" alt="SUSnet" class="login-logo">
+    <p class="login-sub">{message}</p>
+    <a href="/login" role="button" style="display:block;text-align:center;">Masuk lagi</a>
+</main>
+</body>
+</html>
+"""
+
+
+def _render_logged_out(request: Request, message: str) -> HTMLResponse:
+    from emission_tracker.web.routes_pages import _asset_version
+    from html import escape
+
+    html = (
+        LOGGED_OUT_PAGE.replace("{version}", _asset_version())
+        .replace("{message}", escape(message))
+    )
+    return HTMLResponse(html)
+
+
 def register_auth(app: FastAPI) -> None:
     throttle = LoginThrottle()
     app.state.login_throttle = throttle
@@ -222,7 +255,24 @@ def register_auth(app: FastAPI) -> None:
     @app.post("/logout")
     @app.get("/logout")
     def logout(request: Request):
-        response = RedirectResponse("/login", status_code=303)
+        # A page, not a redirect to /login. Redirecting looks broken in
+        # the one case that matters most: while nginx Basic Auth is still
+        # in front, the browser re-sends its credentials, /login sees an
+        # authenticated visitor and bounces straight back to the
+        # dashboard — the click appears to do nothing at all. A page says
+        # what happened, and says the part the app cannot do anything
+        # about: only the browser can forget Basic Auth credentials.
+        still_basic_auth = not login_required(request) and bool(
+            request.headers.get("x-remote-user")
+        )
+        message = (
+            "Sesi di aplikasi sudah dihapus. Tapi situs ini masih dijaga "
+            "login bawaan browser, dan hanya browser yang bisa melupakan "
+            "itu — tutup semua jendela browser untuk keluar sepenuhnya."
+            if still_basic_auth
+            else "Kamu sudah keluar."
+        )
+        response = _render_logged_out(request, message)
         response.delete_cookie(sessions.COOKIE_NAME, path="/")
         return response
 

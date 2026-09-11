@@ -136,10 +136,23 @@ class TestLoggingOut:
         assert client.get("/").status_code == 200
 
         r = client.post("/logout")
-        assert r.status_code == 303
-        assert r.headers["location"] == "/login"
+        assert r.status_code == 200
+        assert "sudah keluar" in r.text.lower()
 
         assert client.get("/").status_code == 303
+
+
+def test_logout_says_so_even_while_basic_auth_is_still_in_front(app, client):
+    """The click that looked broken. With nginx Basic Auth still there
+    and no users configured yet, redirecting to /login bounced straight
+    back to the dashboard — indistinguishable from a dead button. And
+    the app genuinely cannot clear those credentials, so it has to say
+    who can: the browser."""
+    app.state.config.auth = AuthConfig()
+    r = client.post("/logout", headers={"X-Remote-User": "admin"})
+
+    assert r.status_code == 200
+    assert "browser" in r.text.lower()
 
 
 class TestSessionsAreNotForgeable:

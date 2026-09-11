@@ -28,6 +28,7 @@ def test_init_schema_creates_all_tables(memory_db: sqlite3.Connection):
         "salary_payments",
         "settlement_lines",
         "settlements",
+        "signed_actions",
         "snapshots",
     ]
 

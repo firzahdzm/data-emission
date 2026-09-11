@@ -65,6 +65,13 @@ class WebConfig(BaseModel):
     port: int = Field(default=8000, gt=0, lt=65536)
 
 
+class TournamentConfig(BaseModel):
+    address: str
+    # Display and the balance check only — the signer keeps the copy that
+    # actually decides what gets transferred.
+    fees_tao: dict[str, float]
+
+
 class AppConfig(BaseModel):
     subnet_id: int = Field(gt=0)
     polling: PollingConfig
@@ -79,6 +86,8 @@ class AppConfig(BaseModel):
     # Shared secret nginx sends as X-Auth-Proxy. Empty disables the check,
     # which is what a deployment without the matching nginx block needs.
     proxy_secret: str = ""
+    tournament: TournamentConfig | None = None
+    signer_socket: str = "/run/emission-signer.sock"
 
     @model_validator(mode="after")
     def _validate_unique_names_and_hotkeys(self) -> "AppConfig":

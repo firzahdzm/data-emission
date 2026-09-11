@@ -1024,3 +1024,58 @@ def coldkey_cards(conn: sqlite3.Connection) -> list[dict]:
     # "Bimabk II" across different rows.
     cards.sort(key=lambda c: (0 if c["person_count"] > 1 else 1, c["name"]))
     return cards
+
+
+def pending_action(conn: sqlite3.Connection, coldkey: str) -> dict | None:
+    """An in-flight action for this coldkey, if any.
+
+    Used to refuse a second request: paying twice because someone clicked
+    twice is the failure this guards against.
+    """
+    row = conn.execute(
+        "SELECT * FROM signed_actions WHERE coldkey_ss58 = ? AND status = 'pending' "
+        "ORDER BY id DESC LIMIT 1",
+        (coldkey,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def record_action(
+    conn: sqlite3.Connection,
+    coldkey: str,
+    op: str,
+    types: list[str],
+    amount_rao: int,
+    requested_by: str,
+) -> int:
+    cursor = conn.execute(
+        "INSERT INTO signed_actions (coldkey_ss58, op, types, amount_rao, status, "
+        "requested_by, requested_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
+        (coldkey, op, ",".join(types), amount_rao, requested_by,
+         datetime.now(timezone.utc)),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def finish_action(
+    conn: sqlite3.Connection,
+    action_id: int,
+    ok: bool,
+    tx_hash: str | None,
+    error: str | None,
+) -> None:
+    conn.execute(
+        "UPDATE signed_actions SET status = ?, tx_hash = ?, error = ?, "
+        "finished_at = ? WHERE id = ?",
+        ("ok" if ok else "failed", tx_hash, error,
+         datetime.now(timezone.utc), action_id),
+    )
+    conn.commit()
+
+
+def recent_actions(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM signed_actions ORDER BY id DESC LIMIT ?", (limit,)
+    ).fetchall()
+    return [dict(r) for r in rows]

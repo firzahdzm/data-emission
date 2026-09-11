@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import subprocess
+import time
 
 log = logging.getLogger("emission_signer.btcli")
 
@@ -261,6 +262,10 @@ def transfer_answers(secret: str) -> str:
 class TransferUnknown(Exception):
     """btcli's output said neither success nor failure.
 
+    Carries whatever output was seen, so the caller can still tell a
+    transfer stuck at the password prompt (nothing submitted) from one
+    that may have reached the chain.
+
     Raised instead of guessing. The money may or may not have moved, and
     the only way to find out is the chain — so the caller must surface
     that, never record an outcome it does not know.
@@ -364,3 +369,98 @@ def run_btcli_text(
         log.warning("btcli exchange (no success marker): %s",
                     tidy(redacted, limit=1200))
     return combined
+
+
+# What btcli asks during a transfer, and what to answer. Matched against
+# the output as it arrives, because the prompts appear one at a time and
+# each must be answered before the next is printed.
+TRANSFER_PROMPTS = (
+    ("Proceed with transfer?", "y"),
+    ("Enter your password", None),   # None = the wallet unlock value
+)
+
+
+def classify_timeout(partial: str, timeout: int):
+    """Decide what a timeout means, from whatever btcli had printed.
+
+    Still sitting at the password prompt with no sign of submission means
+    nothing reached the chain — a plain failure, and saying so keeps
+    "unknown" rare enough to be believed. Anything else is genuinely
+    unknown.
+    """
+    if "Enter your password" in partial and not any(
+        m in partial for m in (*_OK_MARKERS, "Submitting", "Extrinsic")
+    ):
+        raise BtcliError(
+            "btcli kept asking for the unlock value and never accepted it "
+            f"(timed out after {timeout}s) — nothing was submitted"
+        )
+    raise TransferUnknown(
+        f"btcli timed out after {timeout}s — check the chain"
+    )
+
+
+def run_btcli_pty(
+    argv: list[str],
+    env: dict,
+    timeout: int,
+    secret: str,
+    prompts=TRANSFER_PROMPTS,
+) -> str:
+    """Run btcli attached to a pseudo-terminal, answering its prompts.
+
+    Piping stdin does not work. btcli reads its password through getpass,
+    which opens /dev/tty directly when a terminal exists and otherwise
+    gets nothing, because the buffered read behind the preceding prompt
+    has already swallowed the line. Observed both ways on the host: piped
+    from a shell it hangs waiting on the terminal, and under systemd it
+    re-asks forever, each round receiving an empty string.
+
+    So give it a terminal. Each prompt is answered when it appears, once,
+    in order — not written ahead — because a terminal has no queue and
+    anything sent early is simply lost.
+    """
+    import fcntl
+    import pty
+    import select
+
+    pending = list(prompts)
+    out: list[str] = []
+    deadline = time.monotonic() + timeout
+
+    pid, fd = pty.fork()
+    if pid == 0:  # child
+        try:
+            os.execvpe(argv[0], argv, env)
+        finally:
+            os._exit(127)
+
+    flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+    fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                classify_timeout("".join(out), timeout)
+            ready, _, _ = select.select([fd], [], [], min(remaining, 1.0))
+            if ready:
+                try:
+                    chunk = os.read(fd, 4096)
+                except OSError:
+                    break           # child closed the pty: it has finished
+                if not chunk:
+                    break
+                out.append(chunk.decode(errors="replace"))
+            seen = "".join(out)
+            if pending and pending[0][0] in seen:
+                _, answer = pending.pop(0)
+                os.write(fd, ((secret if answer is None else answer) + "\n").encode())
+            if not ready and os.waitpid(pid, os.WNOHANG)[0]:
+                break
+    finally:
+        os.close(fd)
+        try:
+            os.waitpid(pid, 0)
+        except ChildProcessError:
+            pass
+    return "".join(out)

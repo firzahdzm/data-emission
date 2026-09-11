@@ -22,7 +22,7 @@ from emission_tracker.signer.btcli import (
     TransferUnknown,
     parse_transfer_output,
     run_btcli,
-    run_btcli_text,
+    run_btcli_pty,
     transfer_answers,
     transfer_argv,
     unstake_argv,
@@ -177,16 +177,21 @@ class Signer:
             request.coldkey, name, ",".join(request.types), amount_tao,
             len(secret), secret[:1].isspace(), secret[-1:].isspace(),
         )
-        output = run_btcli_text(
+        # A pseudo-terminal, not a pipe: btcli reads its password through
+        # getpass, which never sees piped stdin. See run_btcli_pty.
+        output = self._run_transfer(
             transfer_argv(name, self._config.destination, amount_tao,
                           self._config.wallet_path),
-            env=env, timeout=TRANSFER_TIMEOUT, run=self._run,
-            answers=transfer_answers(request.secret),
+            env, request.secret,
         )
         tx_hash = parse_transfer_output(output)
         self._record_spend(amount_rao)
         return SignResult(True, request.op, request.coldkey,
                           amount_rao=amount_rao, tx_hash=tx_hash)
+
+    def _run_transfer(self, argv, env, secret) -> str:
+        """Seam for tests, which must never spawn a real pty."""
+        return run_btcli_pty(argv, env, TRANSFER_TIMEOUT, secret)
 
     def _within_daily_cap(self, amount_rao: int) -> bool:
         today = time.strftime("%Y-%m-%d", time.gmtime(self._clock()))

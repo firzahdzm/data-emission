@@ -70,7 +70,26 @@ def _config(tmp_path, **over):
 
 
 def _signer(run, tmp_path, **over):
-    return Signer(_config(tmp_path, **over), run=run)
+    s = Signer(_config(tmp_path, **over), run=run)
+
+    # Transfers go through a pseudo-terminal in production, because btcli
+    # reads its password with getpass and never sees a pipe. Tests must
+    # not spawn one — they stub the seam and still record the argv, so
+    # the assertions about destination, amount and flags keep working.
+    def _fake_transfer(argv, env, secret):
+        # `run` is a bare function in the tests that exercise a failing
+        # btcli; route through it so those still see the failure.
+        result = run(argv)
+        if getattr(result, "returncode", 0) != 0:
+            from emission_tracker.signer.btcli import BtcliError
+
+            raise BtcliError(
+                f"btcli exited {result.returncode}: {result.stderr}"
+            )
+        return getattr(run, "transfer_output", TRANSFER_OK)
+
+    s._run_transfer = _fake_transfer
+    return s
 
 
 def test_the_environment_carries_no_unlock_value_at_all(tmp_path):

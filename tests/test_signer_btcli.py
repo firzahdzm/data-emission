@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 
 import pytest
 
@@ -459,3 +460,51 @@ class TestTimeoutClassification:
 
         with pytest.raises(TransferUnknown):
             self._timeout("")()
+
+
+class TestPseudoTerminalDriver:
+    """btcli reads its password with getpass, which opens /dev/tty and
+    never sees a pipe — piped from a shell it waits on the terminal, and
+    under systemd it re-asks forever on an empty string. These run a stand
+    -in that prompts exactly the way btcli does."""
+
+    FAKE = """
+import getpass, sys
+print("Initiating transfer on network: finney", flush=True)
+if input("Proceed with transfer? [y/n] (n): ").strip().lower() != "y":
+    print("Aborted."); sys.exit(0)
+if getpass.getpass("Enter your password: ") == "rahasia-benar":
+    print("Finalized. Block Hash: 0xdeadbeef0123456789abcdef")
+else:
+    print("\\u274c Failed: Coldkey Keyfile is corrupt")
+"""
+
+    def _argv(self, tmp_path):
+        script = tmp_path / "fake_btcli.py"
+        script.write_text(self.FAKE)
+        return [sys.executable, str(script)]
+
+    def _run(self, tmp_path, secret):
+        from emission_tracker.signer.btcli import run_btcli_pty
+
+        return run_btcli_pty(
+            self._argv(tmp_path), {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+            timeout=20, secret=secret,
+        )
+
+    def test_the_right_value_gets_through_and_the_transfer_finalizes(self, tmp_path):
+        from emission_tracker.signer.btcli import parse_transfer_output
+
+        out = self._run(tmp_path, "rahasia-benar")
+        assert parse_transfer_output(out).startswith("0xdeadbeef")
+
+    def test_a_wrong_value_comes_back_as_btclis_own_refusal(self, tmp_path):
+        from emission_tracker.signer.btcli import parse_transfer_output
+
+        out = self._run(tmp_path, "salah")
+        with pytest.raises(BtcliError) as exc:
+            parse_transfer_output(out)
+        assert "Keyfile is corrupt" in str(exc.value)
+
+    def test_the_confirmation_is_answered_so_it_is_never_aborted(self, tmp_path):
+        assert "Aborted" not in self._run(tmp_path, "rahasia-benar")

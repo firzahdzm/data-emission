@@ -44,6 +44,10 @@ server {
         # AppConfig.admin_users list.
         proxy_set_header X-Remote-User     $remote_user;
 
+        # Proves the request came through nginx. Must equal proxy_secret in
+        # config.yaml. Without it the app ignores X-Remote-User entirely.
+        proxy_set_header X-Auth-Proxy       "REPLACE_WITH_A_LONG_RANDOM_STRING";
+
         # The dashboard auto-refreshes every 5 minutes; long polling not used.
         proxy_read_timeout  60s;
         proxy_send_timeout  60s;

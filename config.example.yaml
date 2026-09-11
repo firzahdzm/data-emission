@@ -37,3 +37,15 @@ team:
 # the list empty if nobody should have admin powers.
 admin_users:
   - replace-with-your-htpasswd-username
+
+# Tournament buy-ins. These drive the dashboard's arithmetic and its
+# balance check; the signer holds its own authoritative copy and ignores
+# this one.
+tournament:
+  address: 5Ef5JgNv14LY4UEQFHbRQkf8TnegDV3AfAbcsJe5T2w6VQdo
+  fees_tao:
+    text: 0.7
+    image: 0.4
+    env: 0.6
+
+signer_socket: /run/emission-signer/emission-signer.sock

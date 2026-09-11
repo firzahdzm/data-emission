@@ -4,9 +4,16 @@ import sqlite3
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
+from emission_tracker.signer.protocol import (
+    OP_PAY,
+    OP_UNSTAKE,
+    TOURNAMENT_TYPES,
+    SignRequest,
+)
 from emission_tracker.web import queries
 from emission_tracker.web.auth import require_admin
 from emission_tracker.web.range_parse import parse_range
+from emission_tracker.web.signer_client import SignerUnavailable
 
 log = logging.getLogger(__name__)
 
@@ -444,3 +451,125 @@ def get_alpha_price(request: Request):
     if price is None:
         return {"available": False, "reason": "price feed unavailable"}
     return {"available": True, **price}
+def _signer(request: Request):
+    client = getattr(request.app.state, "signer", None)
+    if client is None:
+        raise HTTPException(status_code=503, detail="Signer not configured")
+    return client
+
+
+def _known_coldkey(request: Request, coldkey: str) -> None:
+    row = _db(request).execute(
+        "SELECT 1 FROM hotkeys WHERE coldkey_ss58 = ? LIMIT 1", (coldkey,)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"Unknown coldkey {coldkey!r}")
+
+
+def _run_signed_action(request: Request, sign_request, amount_rao: int, user: str):
+    """Record, send, record the outcome. Shared by both endpoints so the
+    audit row can never be skipped by one of them."""
+    conn = _db(request)
+    # Resolved before any row is written: if the signer isn't configured,
+    # raising here leaves no pending row behind to strand the coldkey.
+    signer = _signer(request)
+
+    if queries.pending_action(conn, sign_request.coldkey):
+        raise HTTPException(
+            status_code=409, detail="An action for this coldkey is already running"
+        )
+    try:
+        action_id = queries.record_action(
+            conn, sign_request.coldkey, sign_request.op,
+            list(sign_request.types), amount_rao, user,
+        )
+    except sqlite3.IntegrityError:
+        # The partial unique index caught a concurrent request that slipped
+        # past the check above — the same 409 the explicit check gives.
+        raise HTTPException(
+            status_code=409, detail="An action for this coldkey is already running"
+        )
+
+    try:
+        result = signer.send(sign_request)
+    except SignerUnavailable as exc:
+        queries.finish_action(conn, action_id, False, None, str(exc))
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception:
+        # Belt and braces: any other unanticipated failure must still
+        # resolve the row, or the coldkey is blocked forever.
+        queries.finish_action(conn, action_id, False, None, "unexpected error")
+        raise
+
+    queries.finish_action(
+        conn, action_id, result.ok, result.tx_hash, result.error,
+        # On success, replace our estimate with the signer's actual amount.
+        amount_rao=result.amount_rao if result.ok else None,
+    )
+    if not result.ok:
+        raise HTTPException(status_code=502, detail=result.error or "signing failed")
+    return {
+        "ok": True,
+        "action_id": action_id,
+        "amount_rao": result.amount_rao,
+        "tx_hash": result.tx_hash,
+    }
+
+
+class TournamentPayBody(BaseModel):
+    types: list[str]
+
+
+@router.post("/tournament/pay/{coldkey}")
+def pay_tournament(
+    request: Request,
+    coldkey: str,
+    body: TournamentPayBody,
+    user: str = Depends(require_admin),
+):
+    _known_coldkey(request, coldkey)
+    config = getattr(request.app.state, "config", None)
+    tournament = getattr(config, "tournament", None) if config else None
+    if tournament is None:
+        raise HTTPException(status_code=503, detail="Tournament fees not configured")
+
+    for t in body.types:
+        if t not in TOURNAMENT_TYPES:
+            raise HTTPException(status_code=400, detail=f"Unknown type {t!r}")
+        if t not in tournament.fees_tao:
+            raise HTTPException(
+                status_code=400, detail=f"Type {t!r} has no configured fee"
+            )
+    if not body.types or len(set(body.types)) != len(body.types):
+        raise HTTPException(status_code=400, detail="Pick each type at most once")
+
+    amount_rao = sum(round(tournament.fees_tao[t] * 10**9) for t in body.types)
+
+    # Pre-flight only. The signer re-decides the amount and btcli checks the
+    # real balance; this exists so the common case fails fast and visibly
+    # rather than as a chain error.
+    row = _db(request).execute(
+        "SELECT balance_free_rao FROM coldkey_balances WHERE coldkey_ss58 = ? "
+        "ORDER BY fetched_at DESC LIMIT 1",
+        (coldkey,),
+    ).fetchone()
+    free = (row["balance_free_rao"] if row else None) or 0
+    if free < amount_rao:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Balance {free / 1e9:.4f} τ is short of {amount_rao / 1e9:.4f} τ",
+        )
+
+    return _run_signed_action(
+        request, SignRequest(OP_PAY, coldkey, tuple(body.types)), amount_rao, user
+    )
+
+
+@router.post("/stake/unstake-all/{coldkey}")
+def unstake_all(
+    request: Request, coldkey: str, user: str = Depends(require_admin)
+):
+    _known_coldkey(request, coldkey)
+    return _run_signed_action(
+        request, SignRequest(OP_UNSTAKE, coldkey), 0, user
+    )

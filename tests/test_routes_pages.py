@@ -12,6 +12,7 @@ from emission_tracker.web.routes_pages import register_pages
 
 HK_F1 = "5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1"
 HK_F2 = "5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2"
+CK_F1 = "5CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC1"
 
 
 @pytest.fixture
@@ -24,7 +25,15 @@ def app(memory_db: sqlite3.Connection):
     init_schema(conn)
     sync_team(
         conn,
-        [PersonConfig(name="Alice", hotkeys=[HK_F1, HK_F2])],
+        [
+            PersonConfig(
+                name="Alice",
+                hotkeys=[
+                    {"hotkey": HK_F1, "coldkey": CK_F1},
+                    {"hotkey": HK_F2, "coldkey": CK_F1},
+                ],
+            )
+        ],
         subnet_id=56,
     )
     # Use midnight UTC to avoid future-timestamp issues vs sandbox clock
@@ -183,7 +192,13 @@ class TestDashboardAdminScripts:
         from types import SimpleNamespace
 
         monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
-        app.state.config = SimpleNamespace(admin_users=["alice"])
+        app.state.config = SimpleNamespace(
+            admin_users=["alice"],
+            tournament=SimpleNamespace(
+                address="5Ef5",
+                fees_tao={"text": 0.7, "image": 0.4, "env": 0.6},
+            ),
+        )
         headers = {"X-Remote-User": user} if user else {}
         r = TestClient(app).get("/", headers=headers)
         assert r.status_code == 200
@@ -216,3 +231,19 @@ class TestDashboardAdminScripts:
         html = self._html(app, monkeypatch, "mallory")
         assert 'id="balance-refresh-btn"' not in html
         assert "/api/balances/refresh" not in html
+
+    def test_admin_sees_the_tournament_controls_and_their_handler(
+        self, app, monkeypatch
+    ):
+        html = self._html(app, monkeypatch, "alice")
+        assert 'class="tournament-type"' in html
+        assert "/api/tournament/pay/" in html
+        assert "/api/stake/unstake-all/" in html
+        # Irreversible and slippage-bearing: must not be a bare click.
+        assert "confirm" in html.lower()
+
+    def test_non_admin_sees_no_money_controls(self, app, monkeypatch):
+        html = self._html(app, monkeypatch, "mallory")
+        assert 'class="tournament-type"' not in html
+        assert "/api/tournament/pay/" not in html
+        assert "/api/stake/unstake-all/" not in html

@@ -16,6 +16,7 @@ from emission_tracker.rate_limiter import TokenBucket
 from emission_tracker.taostats_client import TaoStatsClient
 from emission_tracker.web.price import AlphaPriceCache
 from emission_tracker.web.routes_api import router as api_router
+from emission_tracker.web.signer_client import SignerClient
 from emission_tracker.web.routes_pages import register_pages
 
 log = logging.getLogger(__name__)
@@ -90,6 +91,7 @@ def create_app(
             request_interval_seconds=config.polling.request_interval_seconds,
             subnet_id=config.subnet_id,
         )
+        app.state.signer = SignerClient(config.signer_socket)
 
         scheduler = build_scheduler(
             config, conn_factory, client, rate_limiter, gradients=gradients

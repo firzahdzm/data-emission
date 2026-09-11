@@ -1,0 +1,18 @@
+# Must sit inside RuntimeDirectory=emission-signer (see the unit file):
+# under ProtectSystem=strict the tracker cannot write anywhere in /run
+# that is not listed in its own ReadWritePaths=, and connect() needs write.
+socket_path: /run/emission-signer/emission-signer.sock
+destination: 5Ef5JgNv14LY4UEQFHbRQkf8TnegDV3AfAbcsJe5T2w6VQdo
+fees_tao:
+  text: 0.7
+  image: 0.4
+  env: 0.6
+netuid: 56
+wallet_path: /root/.bittensor/wallets
+# Hard ceilings enforced here, where a buggy or compromised web app
+# cannot reach them.
+max_transfer_tao: 2.0
+daily_cap_tao: 30.0
+# Persists the running daily spend across restarts/crashes — must be on
+# disk, not tmpfs (see StateDirectory= in emission-signer.service).
+state_path: /var/lib/emission-signer/spend.json

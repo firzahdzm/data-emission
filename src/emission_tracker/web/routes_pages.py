@@ -146,6 +146,9 @@ def register_pages(app: FastAPI) -> None:
         subnet_id = getattr(
             getattr(request.app.state, "config", None), "subnet_id", None
         )
+        tournament = getattr(
+            getattr(request.app.state, "config", None), "tournament", None
+        )
         # All cards come from one refresh run, so any non-null stamp
         # dates the whole grid.
         coldkey_fetched_at = next(
@@ -159,6 +162,7 @@ def register_pages(app: FastAPI) -> None:
                 "coldkeys": coldkeys,
                 "coldkey_fetched_at": coldkey_fetched_at,
                 "subnet_id": subnet_id,
+                "tournament": tournament,
                 "total_cumulative": total_cumulative,
                 "total_registered": total_registered,
                 "total_hotkeys": total_hotkeys,

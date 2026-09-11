@@ -47,6 +47,12 @@
             <h3 id="sn-modal-title" style="margin: 0;">Notice</h3>
         </header>
         <p id="sn-modal-message" style="margin: 0 0 1rem; white-space: pre-wrap; line-height: 1.5;"></p>
+        <div id="sn-modal-input-wrap" hidden style="margin: 0 0 1rem;">
+            <label id="sn-modal-input-label" for="sn-modal-input"
+                   style="display: block; font-size: 0.8rem; margin-bottom: 0.3rem;"></label>
+            <input id="sn-modal-input" type="text" autocomplete="off" spellcheck="false"
+                   style="margin: 0;">
+        </div>
         <footer id="sn-modal-actions" style="display: flex; gap: 0.5rem; justify-content: flex-end; margin: 0;"></footer>
     </article>
 </dialog>
@@ -56,11 +62,23 @@
         const titleEl = document.getElementById('sn-modal-title');
         const msgEl = document.getElementById('sn-modal-message');
         const actionsEl = document.getElementById('sn-modal-actions');
+        const inputWrap = document.getElementById('sn-modal-input-wrap');
+        const inputEl = document.getElementById('sn-modal-input');
+        const inputLabel = document.getElementById('sn-modal-input-label');
         let currentResolve = null;
-        function openWith(title, message, buttons) {
+        function openWith(title, message, buttons, typed) {
             titleEl.textContent = title;
             msgEl.textContent = message;
             actionsEl.innerHTML = '';
+            // `typed` turns the shared dialog into a type-to-confirm: the OK
+            // button stays disabled until the exact word is entered, so a
+            // destructive action cannot be completed by reflex.
+            inputWrap.hidden = !typed;
+            inputEl.value = '';
+            if (typed) {
+                inputLabel.textContent = typed.label;
+                inputEl.placeholder = typed.required;
+            }
             buttons.forEach((btn, i) => {
                 const b = document.createElement('button');
                 b.type = 'button';
@@ -71,10 +89,21 @@
                     dlg.close();
                     if (r) r(btn.value);
                 });
+                if (typed && btn.value === true) {
+                    b.disabled = true;
+                    const sync = () => {
+                        b.disabled = inputEl.value.trim() !== typed.required;
+                    };
+                    inputEl.oninput = sync;
+                    inputEl.onkeydown = (e) => {
+                        if (e.key === 'Enter' && !b.disabled) { e.preventDefault(); b.click(); }
+                    };
+                }
                 actionsEl.appendChild(b);
-                if (i === buttons.length - 1) setTimeout(() => b.focus(), 0);
+                if (i === buttons.length - 1 && !typed) setTimeout(() => b.focus(), 0);
             });
             dlg.showModal();
+            if (typed) setTimeout(() => inputEl.focus(), 0);
         }
         dlg.addEventListener('close', () => {
             if (currentResolve) { const r = currentResolve; currentResolve = null; r(false); }
@@ -86,6 +115,19 @@
                 openWith(title, message, [
                     { label: okText, value: true, className: tone === 'error' ? 'btn-danger' : '' }
                 ]);
+            });
+        };
+        window.snConfirmTyped = function (message, opts = {}) {
+            const {
+                title = 'Confirm', okText = 'OK', cancelText = 'Cancel',
+                danger = true, required = 'confirm', label = `Ketik "${required}" untuk melanjutkan:`,
+            } = opts;
+            return new Promise(resolve => {
+                currentResolve = resolve;
+                openWith(title, message, [
+                    { label: cancelText, value: false, className: 'secondary' },
+                    { label: okText, value: true, className: danger ? 'btn-danger' : '' },
+                ], { required, label });
             });
         };
         window.snConfirm = function (message, opts = {}) {

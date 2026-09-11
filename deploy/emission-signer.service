@@ -1,0 +1,45 @@
+[Unit]
+Description=Gradient Emission Tracker — transaction signer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=signer
+Group=emission
+WorkingDirectory=/opt/emission-tracker
+ExecStart=/opt/emission-tracker/.venv/bin/python -m emission_tracker.signer \
+    /etc/emission-signer/config.yaml
+
+# One credential per wallet. systemd exposes these as files under
+# $CREDENTIALS_DIRECTORY, readable only by this unit — unlike environment
+# variables, they do not appear in /proc/<pid>/environ or systemctl show.
+# Add one line per wallet name from `btcli wallet list`.
+LoadCredential=wallet-prj1:/etc/emission-signer/passphrases/prj1
+LoadCredential=wallet-prj2:/etc/emission-signer/passphrases/prj2
+LoadCredential=wallet-utama:/etc/emission-signer/passphrases/utama
+# … one per wallet
+
+Restart=on-failure
+RestartSec=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+# systemd creates /run/emission-signer before start and removes it on stop,
+# owned by User=/Group= above. 0750 lets the tracker (in the emission group)
+# traverse in to the socket while nothing else on the host can.
+RuntimeDirectory=emission-signer
+RuntimeDirectoryMode=0750
+# Daily spend state lives here (not /run, which is tmpfs and would lose
+# the day's running total on every reboot). systemd creates and owns
+# /var/lib/emission-signer for this unit.
+StateDirectory=emission-signer
+# This unit is the one component that may read the wallets. Note this only
+# RESTRICTS: it grants nothing, and /root is 0700, so the signer user still
+# needs traversal granted separately — see "Make the wallets readable by the
+# signer" in deploy/DEPLOY.md.
+ReadOnlyPaths=/root/.bittensor/wallets
+
+[Install]
+WantedBy=multi-user.target

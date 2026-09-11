@@ -65,3 +65,69 @@ def test_admin_users_empty_means_nobody_is_admin():
     client = TestClient(_make_app(admin_users=[]))
     resp = client.post("/settle", headers={"X-Remote-User": "alice"})
     assert resp.status_code == 403
+
+
+def _request(headers: dict, app_state) -> Request:
+    scope = {
+        "type": "http",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        "app": SimpleNamespace(state=app_state),
+    }
+    return Request(scope)
+
+
+def _state(secret, admins=("alice",)):
+    return SimpleNamespace(
+        config=SimpleNamespace(admin_users=list(admins), proxy_secret=secret)
+    )
+
+
+class TestProxySecret:
+    def test_header_alone_is_not_enough_when_a_secret_is_configured(self, monkeypatch):
+        """The whole point: reaching uvicorn directly must not make you admin."""
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        req = _request({"X-Remote-User": "alice"}, _state("s3cret"))
+        assert current_user(req) is None
+        assert is_admin(req) is False
+
+    def test_correct_secret_admits_the_forwarded_user(self, monkeypatch):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        req = _request(
+            {"X-Remote-User": "alice", "X-Auth-Proxy": "s3cret"}, _state("s3cret")
+        )
+        assert current_user(req) == "alice"
+        assert is_admin(req) is True
+
+    def test_wrong_secret_is_rejected(self, monkeypatch):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        req = _request(
+            {"X-Remote-User": "alice", "X-Auth-Proxy": "wrong"}, _state("s3cret")
+        )
+        assert is_admin(req) is False
+
+    def test_no_secret_configured_keeps_the_old_behaviour(self, monkeypatch):
+        """Existing deployments must not lock themselves out on upgrade."""
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        req = _request({"X-Remote-User": "alice"}, _state(None))
+        assert current_user(req) == "alice"
+        assert is_admin(req) is True
+
+
+class TestDevUserEscapeHatch:
+    def test_dev_user_is_ignored_when_the_proxy_gate_is_configured(
+        self, monkeypatch, caplog
+    ):
+        """Setting one env var must not be a route to the money buttons on a
+        deployment that has declared itself non-dev."""
+        monkeypatch.setenv("EMISSION_DEV_USER", "alice")
+        req = _request({}, _state("s3cret"))
+        with caplog.at_level("WARNING"):
+            assert current_user(req) is None
+        assert is_admin(req) is False
+        assert any("EMISSION_DEV_USER" in r.getMessage() for r in caplog.records)
+
+    def test_dev_user_still_works_with_no_secret_configured(self, monkeypatch):
+        monkeypatch.setenv("EMISSION_DEV_USER", "alice")
+        req = _request({}, _state(None))
+        assert current_user(req) == "alice"
+        assert is_admin(req) is True

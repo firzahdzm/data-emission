@@ -279,6 +279,7 @@ _confirm.addEventListener('click', async () => {
                           data-coldkey="{{ c.coldkey }}"
                           data-free="{{ c.balance_free_rao or 0 }}">—</span>
                     <button class="btn-subtle pay-fee" data-coldkey="{{ c.coldkey }}"
+                            data-label="{{ c.name }}"
                             disabled>Pay fee</button>
                 </div>
                 <button class="btn-subtle unstake-all" data-coldkey="{{ c.coldkey }}"
@@ -593,30 +594,39 @@ _confirm.addEventListener('click', async () => {
     }
 
     document.querySelectorAll('.pay-fee').forEach(b => {
-        b.addEventListener('click', () => {
+        b.addEventListener('click', async () => {
             const ck = b.dataset.coldkey;
             const types = Array.from(document.querySelectorAll(
                 `.tournament-type input[data-coldkey="${ck}"]:checked`
             )).map(el => el.value);
             if (!types.length) return;
-            if (!window.confirm(
-                `Kirim ${totalFor(ck).toFixed(2)} τ fee turnamen `
-                + `(${types.join(', ')}) dari wallet ini?`)) return;
+            const ok = await snConfirm(
+                `Kirim ${totalFor(ck).toFixed(2)} τ fee turnamen (${types.join(', ')})\n`
+                + `dari wallet ${b.dataset.label || ck}?`,
+                { title: 'Kirim fee turnamen', okText: 'Kirim', cancelText: 'Batal' });
+            if (!ok) return;
             runMoneyAction(`/api/tournament/pay/${encodeURIComponent(ck)}`,
                            { types }, b);
         });
     });
 
     document.querySelectorAll('.unstake-all').forEach(b => {
-        b.addEventListener('click', () => {
-            // Typed confirmation, not a yes/no: this is irreversible and
-            // costs slippage, so it should be hard to do by reflex.
-            const label = b.dataset.label;
-            const typed = window.prompt(
-                `Unstake SEMUA di subnet 56 untuk wallet ini?\n`
-                + `Tidak bisa dibatalkan dan kena slippage.\n\n`
-                + `Ketik "${label}" untuk melanjutkan:`);
-            if (typed !== label) return;
+        b.addEventListener('click', async () => {
+            // Type-to-confirm rather than yes/no: this is irreversible and
+            // costs slippage, so it should be hard to do by reflex. The word
+            // is the same everywhere, so muscle memory never carries a
+            // half-read dialog — the wallet name is in the message instead.
+            const ok = await snConfirmTyped(
+                `Unstake SEMUA stake subnet {{ subnet_id }} dari wallet `
+                + `${b.dataset.label || b.dataset.coldkey}?\n`
+                + `Tidak bisa dibatalkan dan kena slippage.`,
+                {
+                    title: 'Unstake all',
+                    okText: 'Unstake',
+                    cancelText: 'Batal',
+                    required: 'unstake',
+                });
+            if (!ok) return;
             runMoneyAction(
                 `/api/stake/unstake-all/${encodeURIComponent(b.dataset.coldkey)}`,
                 null, b);

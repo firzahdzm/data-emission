@@ -46,6 +46,10 @@ def transfer_argv(
         "--amount", f"{amount_tao:.9f}",
         "--wallet-name", wallet_name,
         "--wallet-path", wallet_path,
+        # --verbose because JSON mode suppresses the reason for a refusal;
+        # the extra lines it prints alongside the JSON are the only clue
+        # we get, and run_btcli salvages them into the error.
+        "--verbose",
         "--no-prompt", "--json-output",
     ]
 
@@ -141,9 +145,25 @@ def run_btcli(argv: list[str], env: dict, timeout: int, run=subprocess.run) -> d
     # believes a fee was paid that never left. Observed on a real wrong
     # unlock value: exit 0, {"success": false, "extrinsic_identifier": null}.
     if payload.get("success") is False:
-        detail = tidy(
-            str(payload.get("error") or payload.get("message") or "")
-        ) or tidy(proc.stderr or "") or "btcli reported success=false"
+        # btcli gives no reason in JSON mode — a wrong unlock value and an
+        # insufficient balance produce byte-identical output. Verified on
+        # the host. So salvage anything it printed alongside the JSON, and
+        # when there is nothing, say plainly that btcli withheld the reason
+        # rather than implying we know. The deploy guide carries the manual
+        # command that does print it.
+        noise = tidy(
+            "\n".join(
+                line for line in (proc.stdout or "").splitlines()
+                if line.strip() and not line.lstrip().startswith("{")
+            )
+        )
+        detail = (
+            tidy(str(payload.get("error") or payload.get("message") or ""))
+            or tidy(proc.stderr or "")
+            or noise
+            or "btcli refused it without giving a reason — see "
+               "'Why a transfer was refused' in deploy/DEPLOY.md"
+        )
         raise BtcliError(detail)
 
     return payload

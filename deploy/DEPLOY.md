@@ -407,6 +407,47 @@ app being compromised:
 sudo journalctl -u emission-signer -n 50 --no-pager
 ```
 
+## 7c. Why a transfer was refused
+
+`btcli` reports a refused transfer as `{"success": false}` and **gives no
+reason at all in JSON mode** — a wrong unlock value and an insufficient
+balance produce byte-identical output. Verified on this host. The dashboard
+cannot tell you which it was, because btcli did not say.
+
+Drop `--json-output` and it prints the reason. Run the same transfer by
+hand, with the wallet's real unlock value:
+
+```bash
+sudo -u signer env HOME=/tmp \
+  BT_PW__ROOT__BITTENSOR_WALLETS_<WALLET>_COLDKEY='<unlock value>' \
+  /usr/local/bin/btcli wallet transfer \
+      --destination 5Ef5JgNv14LY4UEQFHbRQkf8TnegDV3AfAbcsJe5T2w6VQdo \
+      --amount 0.4 --wallet-name <wallet> \
+      --wallet-path /root/.bittensor/wallets --no-prompt --verbose
+```
+
+Get the variable name right for the wallet — it is derived from the keyfile
+path, so it differs per wallet:
+
+```bash
+sudo -u signer /opt/emission-tracker/.venv/bin/python3 -c "
+from emission_tracker.signer.btcli import coldkey_password_env_var
+print(coldkey_password_env_var('/root/.bittensor/wallets', '<wallet>'))"
+```
+
+**This command really does transfer** if everything checks out. To find the
+reason without that risk, ask for an amount the wallet cannot cover (say
+`--amount 999`): the unlock still has to succeed before the balance check
+runs, so a passphrase problem and a funds problem still separate cleanly.
+
+What the messages mean:
+
+| btcli says | Cause |
+|---|---|
+| `Not enough balance … for fee … existential deposit` | Funds. Remember the fee (~0.0002 τ) and that the wallet must stay above the existential deposit. |
+| A password prompt appears, or it aborts immediately | The unlock value is wrong, or the variable name does not match — re-run the §7b step 7 check. |
+| `❌ Not enough balance` with a balance you believe is wrong | The dashboard's figure may be stale; `btcli wallet balance` is the truth. |
+
 ## 8. Update workflow
 
 When you change the code on your laptop and push:

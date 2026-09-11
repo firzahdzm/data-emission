@@ -241,3 +241,35 @@ def test_error_text_is_flattened_for_storage_and_display():
     assert "\n" not in out
     assert "│" not in out and "╭" not in out and "─" not in out
     assert "No such option: --no-prompt" in out
+
+
+def test_a_refusal_without_a_reason_says_so_instead_of_guessing():
+    """In JSON mode btcli gives no reason at all — a wrong unlock value and
+    an insufficient balance are byte-identical. Verified on the host. The
+    error must not imply we know which it was."""
+    with pytest.raises(BtcliError) as exc:
+        run_btcli(
+            ["btcli", "wallet", "transfer"], env={}, timeout=5,
+            run=lambda *a, **kw: _Completed(
+                stdout=json.dumps({"success": False, "extrinsic_identifier": None})
+            ),
+        )
+    assert "without giving a reason" in str(exc.value)
+
+
+def test_text_printed_alongside_the_json_is_salvaged_into_the_error():
+    """--verbose makes btcli print a little context before the JSON. It is
+    not the reason, but it is more than nothing."""
+    with pytest.raises(BtcliError) as exc:
+        run_btcli(
+            ["btcli", "wallet", "transfer"], env={}, timeout=5,
+            run=lambda *a, **kw: _Completed(
+                stdout="[Verbose]: Fetching existential and fee\n\n"
+                       + json.dumps({"success": False}),
+            ),
+        )
+    assert "Fetching existential and fee" in str(exc.value)
+
+
+def test_transfer_asks_btcli_to_be_verbose():
+    assert "--verbose" in transfer_argv("prj1", DEST, 0.4, WP)

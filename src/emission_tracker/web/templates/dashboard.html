@@ -289,11 +289,15 @@ _confirm.addEventListener('click', async () => {
                     {% endif %}
                 </span>
             </div>
-            {% if is_admin and c.last_action %}
+            {% if is_admin %}
             {% set la = c.last_action %}
-            <div class="coldkey-last-action coldkey-last-{{ la.status }}"
+            {# Always present so the script can repaint it after an action
+               without a reload; hidden until this wallet has any history. #}
+            <div class="coldkey-last-action{% if la %} coldkey-last-{{ la.status }}{% endif %}"
                  data-coldkey="{{ c.coldkey }}"
-                 title="{{ la.op }}{% if la.types %} ({{ la.types }}){% endif %} &middot; {{ la.requested_by }} &middot; {{ la.requested_at | dt_s }}{% if la.error %} &middot; {{ la.error }}{% endif %}">
+                 {% if not la %}hidden{% endif %}
+                 title="{% if la %}{{ la.op }}{% if la.types %} ({{ la.types }}){% endif %} &middot; {{ la.requested_by }} &middot; {{ la.requested_at | dt_s }}{% if la.error %} &middot; {{ la.error }}{% endif %}{% endif %}">
+                {% if la %}
                 {% if la.status == 'pending' %}
                     <span class="spinner-dot"></span> sedang proses…
                 {% elif la.status == 'ok' %}
@@ -301,6 +305,7 @@ _confirm.addEventListener('click', async () => {
                     {% if la.amount_rao %}({{ la.amount_rao | tao(2) }}){% endif %}
                 {% else %}
                     ✕ gagal — {{ (la.error or 'tanpa keterangan')[:60] }}
+                {% endif %}
                 {% endif %}
             </div>
             {% endif %}
@@ -607,6 +612,30 @@ _confirm.addEventListener('click', async () => {
         return '<span class="badge badge-warn">gagal</span>';
     }
 
+    // Repaint one card's outcome strip. Server-rendered on load, then kept
+    // current from here — without this the strip still showed the previous
+    // attempt after a click, which reads as "nothing happened".
+    function paintCardStatus(coldkey, a) {
+        const el = document.querySelector(
+            `.coldkey-last-action[data-coldkey="${coldkey}"]`);
+        if (!el) return;
+        el.className = 'coldkey-last-action coldkey-last-' + a.status;
+        el.hidden = false;
+        el.title = [a.op, a.requested_by, a.error || a.tx_hash || '']
+            .filter(Boolean).join(' · ');
+        if (a.status === 'pending') {
+            el.innerHTML = '<span class="spinner-dot"></span> sedang proses…';
+        } else if (a.status === 'ok') {
+            const amt = a.amount_rao
+                ? ` (${(a.amount_rao / 1e9).toFixed(2)} τ)` : '';
+            el.textContent =
+                `✓ ${a.op === 'unstake_all' ? 'unstake' : 'fee'} berhasil${amt}`;
+        } else {
+            // textContent: this is btcli's own output.
+            el.textContent = `✕ gagal — ${(a.error || 'tanpa keterangan').slice(0, 60)}`;
+        }
+    }
+
     let actionsTimer = null;
 
     async function loadActions() {
@@ -620,6 +649,15 @@ _confirm.addEventListener('click', async () => {
 
         if (!data.actions.length) { actionsPanel.hidden = true; return; }
         actionsPanel.hidden = false;
+
+        // Newest row per coldkey drives that card's strip. Rows arrive
+        // newest-first, so the first one seen for a wallet is its latest.
+        const painted = new Set();
+        for (const a of data.actions) {
+            if (painted.has(a.coldkey_ss58)) continue;
+            painted.add(a.coldkey_ss58);
+            paintCardStatus(a.coldkey_ss58, a);
+        }
         actionsBody.innerHTML = '';
         for (const a of data.actions) {
             const tr = document.createElement('tr');
@@ -704,9 +742,25 @@ _confirm.addEventListener('click', async () => {
     refreshTotals();
 
     async function runMoneyAction(url, body, button) {
+        const coldkey = button.dataset.coldkey;
         moneyButtons.forEach(b => { b.disabled = true; });
         const original = button.textContent;
         button.textContent = 'Sending…';
+        // Say so on the card immediately. A real btcli call takes seconds,
+        // and the answer belongs next to the button that was pressed, not
+        // only in the status line up in the panel header.
+        paintCardStatus(coldkey, { status: 'pending', op: '', requested_by: '' });
+        note.textContent = 'mengirim…';
+
+        const settle = () => {
+            button.textContent = original;
+            moneyButtons.forEach(b => { b.disabled = false; });
+            refreshTotals();
+            // Repaint from the server's audit table rather than from what
+            // we think happened — it is the record that actually counts.
+            loadActions();
+        };
+
         try {
             const r = await fetch(url, {
                 method: 'POST',
@@ -715,19 +769,18 @@ _confirm.addEventListener('click', async () => {
             });
             const payload = await r.json().catch(() => ({}));
             if (!r.ok) {
-                note.textContent = payload.detail || `failed (${r.status})`;
-                button.textContent = original;
-                moneyButtons.forEach(b => { b.disabled = false; });
-                refreshTotals();
+                note.textContent = payload.detail || `gagal (${r.status})`;
+                settle();
                 return;
             }
-            note.textContent = 'done — reloading';
-            location.reload();
+            note.textContent = 'berhasil — memuat ulang saldo';
+            loadActions();
+            // Reload only on success: the wallet balance has changed, and
+            // that figure is rendered server-side.
+            setTimeout(() => location.reload(), 1200);
         } catch (e) {
-            note.textContent = 'request failed';
-            button.textContent = original;
-            moneyButtons.forEach(b => { b.disabled = false; });
-            refreshTotals();
+            note.textContent = 'permintaan gagal';
+            settle();
         }
     }
 

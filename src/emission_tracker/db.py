@@ -160,7 +160,12 @@ SCHEMA_STATEMENTS = [
         error         TEXT,
         requested_by  TEXT      NOT NULL,
         requested_at  TIMESTAMP NOT NULL,
-        finished_at   TIMESTAMP
+        finished_at   TIMESTAMP,
+        -- Recorded as 'failed' so the guards behave, but flagged: btcli
+        -- said neither success nor failure, so the money may have moved.
+        -- A retry here can pay twice, which is why it must not read as an
+        -- ordinary failure in the UI.
+        outcome_unknown INTEGER NOT NULL DEFAULT 0
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_signed_actions_coldkey "
@@ -204,6 +209,7 @@ MIGRATIONS = [
     "ALTER TABLE hotkeys ADD COLUMN label TEXT",
     "ALTER TABLE coldkey_balances ADD COLUMN stake_alpha_rao INTEGER",
     "ALTER TABLE coldkey_balances ADD COLUMN stake_alpha_as_tao_rao INTEGER",
+    "ALTER TABLE signed_actions ADD COLUMN outcome_unknown INTEGER NOT NULL DEFAULT 0",
 ]
 
 

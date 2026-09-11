@@ -46,17 +46,16 @@ def transfer_argv(
         "--amount", f"{amount_tao:.9f}",
         "--wallet-name", wallet_name,
         "--wallet-path", wallet_path,
-        # --verbose because JSON mode suppresses the reason for a refusal;
-        # the extra lines it prints alongside the JSON are the only clue
-        # we get, and run_btcli salvages them into the error.
         "--verbose",
-        # Deliberately NOT --no-prompt. btcli 9.23 ignores BT_PW_* when it
-        # decrypts a coldkey — verified on the host: the same value signs
-        # fine typed at the prompt and fails as "Keyfile is corrupt" when
-        # supplied in the environment. --no-prompt then stops it asking at
-        # all, which is why every transfer came back success=false. The
-        # answers go in on stdin instead.
-        "--json-output",
+        # No --json-output and no --no-prompt, and the two are linked.
+        # btcli 9.23 ignores BT_PW_* when it decrypts a coldkey (verified
+        # on the host: the same value signs when typed at the prompt and
+        # fails as "Keyfile is corrupt" from the environment), so the
+        # prompt is the only way in — and btcli refuses --json-output
+        # together with prompting: "Cannot specify both '--json-output'
+        # and '--prompt'". Reading prose for a money operation is worse
+        # than reading JSON; it is btcli's constraint, not a preference.
+        # parse_transfer_output does that reading, and refuses to guess.
     ]
 
 
@@ -254,3 +253,82 @@ def transfer_answers(secret: str) -> str:
     for the rest of the line and the call hangs until the timeout.
     """
     return f"y\n{secret}\n"
+
+
+class TransferUnknown(Exception):
+    """btcli's output said neither success nor failure.
+
+    Raised instead of guessing. The money may or may not have moved, and
+    the only way to find out is the chain — so the caller must surface
+    that, never record an outcome it does not know.
+    """
+
+
+# Markers from a real transfer on btcli 9.23.2:
+#   ✅ Finalized. Block Hash: 0x14fa5dba…
+#   ✅ Your extrinsic has been included as 9044902-6: https://tao.app/…
+# and on refusal:
+#   ❌ Not enough balance: …
+_OK_MARKERS = ("Finalized", "has been included as")
+_FAIL_MARKER = "❌"
+
+
+def parse_transfer_output(text: str) -> str | None:
+    """Return the transaction reference for a completed transfer.
+
+    `btcli wallet transfer` refuses `--json-output` together with
+    prompting, and prompting is the only way to give it an unlock value —
+    so this has to read prose. That is worse than JSON and is not a
+    choice: it is btcli's constraint.
+
+    Raises BtcliError when btcli clearly refused, and TransferUnknown when
+    the output says neither. Silence is never read as success: for a
+    transfer, guessing wrong in that direction records a payment that
+    never happened.
+    """
+    flat = tidy(text, limit=4000)
+    ok = any(marker in flat for marker in _OK_MARKERS)
+    failed = _FAIL_MARKER in flat
+
+    if ok and not failed:
+        for token in flat.split():
+            if token.startswith("0x") and len(token) > 18:
+                return token.rstrip(".,")
+        # Finalized but no hash in the text — still a success, and the
+        # audit row simply has no reference to show.
+        return None
+    if failed and not ok:
+        marker = flat.find(_FAIL_MARKER)
+        raise BtcliError(tidy(flat[marker:], limit=300))
+    raise TransferUnknown(tidy(flat, limit=400) or "btcli printed nothing")
+
+
+def run_btcli_text(
+    argv: list[str],
+    env: dict,
+    timeout: int,
+    run=subprocess.run,
+    answers: str | None = None,
+) -> str:
+    """Run a btcli command that cannot use --json-output, return its output.
+
+    A non-zero exit is still a clear failure. Anything subtler is the
+    caller's to interpret — see parse_transfer_output.
+    """
+    try:
+        proc = run(
+            argv, capture_output=True, text=True, timeout=timeout, env=env,
+            input=answers if answers is not None else "",
+        )
+    except subprocess.TimeoutExpired as exc:
+        # A transfer that timed out may still have reached the chain, so
+        # this is not a clean "it did not happen".
+        raise TransferUnknown(
+            f"btcli timed out after {timeout}s — check the chain"
+        ) from exc
+    if proc.returncode != 0:
+        raise BtcliError(
+            f"btcli exited {proc.returncode}: "
+            f"{tidy(proc.stderr or proc.stdout or '')}"
+        )
+    return (proc.stdout or "") + "\n" + (proc.stderr or "")

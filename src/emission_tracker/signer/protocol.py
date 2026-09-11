@@ -92,6 +92,11 @@ class SignResult:
     amount_rao: int = 0
     tx_hash: str | None = None
     error: str | None = None
+    # Neither success nor failure: btcli said something we could not read,
+    # or timed out after the request may already have reached the chain.
+    # Distinct from ok=False because "it failed" invites a retry, and
+    # retrying a payment that did go through pays twice.
+    unknown: bool = False
 
     def to_line(self) -> bytes:
         return (
@@ -103,6 +108,7 @@ class SignResult:
                     "amount_rao": self.amount_rao,
                     "tx_hash": self.tx_hash,
                     "error": self.error,
+                    "unknown": self.unknown,
                 }
             )
             + "\n"
@@ -123,4 +129,5 @@ class SignResult:
             amount_rao=int(raw.get("amount_rao") or 0),
             tx_hash=raw.get("tx_hash"),
             error=raw.get("error"),
+            unknown=bool(raw.get("unknown")),
         )

@@ -14,6 +14,16 @@ WALLETS = {"wallets": [{"name": "prj1", "ss58_address": CK, "hotkeys": []}]}
 # being read from disk, so every request in these tests carries one.
 UNLOCK = "dummy-unlock-value"
 
+# A real successful transfer's output, captured from btcli 9.23.2.
+TRANSFER_OK = (
+    "Initiating transfer on network: finney\n"
+    "Proceed with transfer? [y/n] (n): y\n"
+    "Enter your password: Decrypting...\n"
+    "✅ Finalized. Block Hash: "
+    "0x14fa5dba1c7a4c048cdc979c5b4f0ddbd75e9440620adf9326bf80498c7d873f\n"
+    "✅ Your extrinsic has been included as 9044902-6\n"
+)
+
 
 def _req(op, coldkey, types=()):
     return SignRequest(op, coldkey, types, secret=UNLOCK)
@@ -35,6 +45,11 @@ class _Recorder:
 
         if argv[1:3] == ["wallet", "list"]:
             R.stdout = json.dumps(WALLETS)
+        elif "transfer" in argv:
+            # Shaped like a real transfer on btcli 9.23.2 — prose, not
+            # JSON, because btcli refuses --json-output alongside the
+            # password prompt.
+            R.stdout = self._results.get("transfer", TRANSFER_OK)
         else:
             R.stdout = json.dumps(self._results.get("result", {"success": True}))
         return R()

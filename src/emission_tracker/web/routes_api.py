@@ -517,7 +517,16 @@ def _run_signed_action(request: Request, sign_request, amount_rao: int, user: st
         conn, action_id, result.ok, result.tx_hash, result.error,
         # On success, replace our estimate with the signer's actual amount.
         amount_rao=result.amount_rao if result.ok else None,
+        outcome_unknown=result.unknown,
     )
+    if result.unknown:
+        # 409, not 502: a failure invites the obvious retry, and here the
+        # money may already have moved. The caller has to go and look.
+        raise HTTPException(
+            status_code=409,
+            detail=f"Hasil tidak pasti — periksa chain sebelum mencoba lagi. "
+                   f"{result.error or ''}".strip(),
+        )
     if not result.ok:
         raise HTTPException(status_code=502, detail=result.error or "signing failed")
     return {

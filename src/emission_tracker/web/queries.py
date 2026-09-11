@@ -1065,6 +1065,7 @@ def finish_action(
     tx_hash: str | None,
     error: str | None,
     amount_rao: int | None = None,
+    outcome_unknown: bool = False,
 ) -> None:
     """Close out an action row.
 
@@ -1075,8 +1076,14 @@ def finish_action(
     It must hold the number that moved, not the one we guessed. Left None
     (failures, where nothing moved) the estimate stands.
     """
-    sets = "status = ?, tx_hash = ?, error = ?, finished_at = ?"
-    params = ["ok" if ok else "failed", tx_hash, error, datetime.now(timezone.utc)]
+    sets = (
+        "status = ?, tx_hash = ?, error = ?, finished_at = ?, "
+        "outcome_unknown = ?"
+    )
+    params = [
+        "ok" if ok else "failed", tx_hash, error,
+        datetime.now(timezone.utc), 1 if outcome_unknown else 0,
+    ]
     if amount_rao is not None:
         sets += ", amount_rao = ?"
         params.append(amount_rao)

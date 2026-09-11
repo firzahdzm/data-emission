@@ -831,3 +831,8 @@ a:hover {
 #actions-table th:nth-child(4), #actions-table td:nth-child(4) { width: 10%; }
 #actions-table th:nth-child(5), #actions-table td:nth-child(5) { width: 9%; }
 #actions-table th:nth-child(6), #actions-table td:nth-child(6) { width: 9%; }
+
+/* Neither success nor failure: the money may have moved. Amber rather
+   than the failure red, because red reads as "nothing happened" and the
+   one thing that must not follow is a reflexive retry. */
+.coldkey-last-unknown { color: #f59e0b; background: #f59e0b18; }

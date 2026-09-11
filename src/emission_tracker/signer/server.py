@@ -19,7 +19,10 @@ from emission_tracker.signer.btcli import (
     base_env,
     coldkey_password_env_var,
     list_wallets,
+    TransferUnknown,
+    parse_transfer_output,
     run_btcli,
+    run_btcli_text,
     transfer_answers,
     transfer_argv,
     unstake_argv,
@@ -80,6 +83,16 @@ class Signer:
         # before the call, not after it.
         try:
             return self._handle(request)
+        except TransferUnknown as exc:
+            # Loudest log in the service: the money may have moved and
+            # nobody knows. Everything else here is recoverable by trying
+            # again; this is the one case where trying again can pay twice.
+            log.error("op=%s coldkey=%s OUTCOME UNKNOWN — check the chain: %s",
+                      request.op, request.coldkey, exc)
+            return SignResult(
+                False, request.op, request.coldkey,
+                error=str(exc), unknown=True,
+            )
         except BtcliError as exc:
             log.warning("op=%s coldkey=%s failed: %s",
                         request.op, request.coldkey, exc)
@@ -154,15 +167,16 @@ class Signer:
 
         log.info("pay_tournament coldkey=%s wallet=%s types=%s amount=%s",
                  request.coldkey, name, ",".join(request.types), amount_tao)
-        payload = run_btcli(
+        output = run_btcli_text(
             transfer_argv(name, self._config.destination, amount_tao,
                           self._config.wallet_path),
             env=env, timeout=TRANSFER_TIMEOUT, run=self._run,
             answers=transfer_answers(request.secret),
         )
+        tx_hash = parse_transfer_output(output)
         self._record_spend(amount_rao)
         return SignResult(True, request.op, request.coldkey,
-                          amount_rao=amount_rao, tx_hash=_tx_hash(payload))
+                          amount_rao=amount_rao, tx_hash=tx_hash)
 
     def _within_daily_cap(self, amount_rao: int) -> bool:
         today = time.strftime("%Y-%m-%d", time.gmtime(self._clock()))

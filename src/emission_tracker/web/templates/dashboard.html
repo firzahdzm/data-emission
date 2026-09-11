@@ -293,13 +293,15 @@ _confirm.addEventListener('click', async () => {
             {% set la = c.last_action %}
             {# Always present so the script can repaint it after an action
                without a reload; hidden until this wallet has any history. #}
-            <div class="coldkey-last-action{% if la %} coldkey-last-{{ la.status }}{% endif %}"
+            <div class="coldkey-last-action{% if la %} coldkey-last-{% if la.outcome_unknown %}unknown{% else %}{{ la.status }}{% endif %}{% endif %}"
                  data-coldkey="{{ c.coldkey }}"
                  {% if not la %}hidden{% endif %}
                  title="{% if la %}{{ la.op }}{% if la.types %} ({{ la.types }}){% endif %} &middot; {{ la.requested_by }} &middot; {{ la.requested_at | dt_s }}{% if la.error %} &middot; {{ la.error }}{% endif %}{% endif %}">
                 {% if la %}
                 {% if la.status == 'pending' %}
                     <span class="spinner-dot"></span> sedang proses…
+                {% elif la.outcome_unknown %}
+                    ⚠ tidak pasti — periksa chain: {{ (la.error or '')[:50] }}
                 {% elif la.status == 'ok' %}
                     ✓ {{ la.op == 'unstake_all' and 'unstake' or 'fee' }} berhasil
                     {% if la.amount_rao %}({{ la.amount_rao | tao(2) }}){% endif %}
@@ -609,6 +611,7 @@ _confirm.addEventListener('click', async () => {
     function statusBadge(s) {
         if (s === 'ok') return '<span class="badge badge-ok">berhasil</span>';
         if (s === 'pending') return '<span class="badge">proses…</span>';
+        if (s === 'unknown') return '<span class="badge badge-warn">tidak pasti</span>';
         return '<span class="badge badge-warn">gagal</span>';
     }
 
@@ -619,7 +622,8 @@ _confirm.addEventListener('click', async () => {
         const el = document.querySelector(
             `.coldkey-last-action[data-coldkey="${coldkey}"]`);
         if (!el) return;
-        el.className = 'coldkey-last-action coldkey-last-' + a.status;
+        el.className = 'coldkey-last-action coldkey-last-'
+            + (a.outcome_unknown ? 'unknown' : a.status);
         el.hidden = false;
         el.title = [a.op, a.requested_by, a.error || a.tx_hash || '']
             .filter(Boolean).join(' · ');
@@ -630,6 +634,11 @@ _confirm.addEventListener('click', async () => {
                 ? ` (${(a.amount_rao / 1e9).toFixed(2)} τ)` : '';
             el.textContent =
                 `✓ ${a.op === 'unstake_all' ? 'unstake' : 'fee'} berhasil${amt}`;
+        } else if (a.outcome_unknown) {
+            // Never "gagal": a failure reads as "nothing happened" and
+            // invites a retry, and a retry here can pay twice.
+            el.textContent =
+                `⚠ tidak pasti — periksa chain: ${(a.error || '').slice(0, 50)}`;
         } else {
             // textContent: this is btcli's own output.
             el.textContent = `✕ gagal — ${(a.error || 'tanpa keterangan').slice(0, 60)}`;
@@ -674,7 +683,8 @@ _confirm.addEventListener('click', async () => {
             cells.forEach((value, i) => {
                 const td = document.createElement('td');
                 if (i === 4) {
-                    td.innerHTML = statusBadge(a.status);
+                    td.innerHTML = statusBadge(
+                        a.outcome_unknown ? 'unknown' : a.status);
                 } else {
                     // textContent everywhere else: a.error carries btcli's
                     // own output, which must never be parsed as markup.

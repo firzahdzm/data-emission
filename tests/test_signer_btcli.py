@@ -56,18 +56,19 @@ def test_coldkey_password_env_var_matches_bittensor_wallet(
     assert coldkey_password_env_var(wallet_path, wallet_name) == expected
 
 
-def test_transfer_command_is_non_interactive_and_machine_readable():
+def test_transfer_command_keeps_the_prompts_it_needs_to_answer():
     argv = transfer_argv("prj1", DEST, 0.7, WP)
     assert argv[:2] == ["btcli", "wallet"]
     assert "transfer" in argv
     assert "--destination" in argv and argv[argv.index("--destination") + 1] == DEST
     assert "--amount" in argv and argv[argv.index("--amount") + 1] == "0.700000000"
     assert "--wallet-name" in argv and argv[argv.index("--wallet-name") + 1] == "prj1"
-    assert "--json-output" in argv
-    # NOT --no-prompt: btcli ignores BT_PW_* when decrypting, so the
-    # password prompt is the only way in, and suppressing it made every
-    # transfer come back success=false. The answers arrive on stdin.
+    # Neither flag, and they are linked: btcli ignores BT_PW_* when
+    # decrypting, so the password prompt is the only way in — and btcli
+    # refuses --json-output together with prompting ("Cannot specify both
+    # '--json-output' and '--prompt'"). Both verified on the host.
     assert "--no-prompt" not in argv
+    assert "--json-output" not in argv
 
 
 def test_unstake_always_carries_the_slippage_guard():
@@ -357,3 +358,62 @@ def test_the_last_top_level_object_wins():
 
     text = json.dumps({"step": 1}) + "\nnoise\n" + json.dumps({"success": True})
     assert extract_json(text) == {"success": True}
+
+
+class TestTransferOutcomeIsNeverGuessed:
+    """btcli refuses --json-output alongside the password prompt, so a
+    transfer's outcome has to be read from prose. Three outcomes, and the
+    third one matters most: a payment that may have happened must not be
+    recorded as a failure, because a failure invites a retry."""
+
+    OK = (
+        "Proceed with transfer? [y/n] (n): y\nEnter your password: Decrypting...\n"
+        "✅ Finalized. Block Hash: 0x14fa5dba1c7a4c048cdc979c5b4f0ddbd75e94406\n"
+        "✅ Your extrinsic has been included as 9044902-6\n"
+    )
+
+    def test_a_finalized_transfer_yields_its_hash(self):
+        from emission_tracker.signer.btcli import parse_transfer_output
+
+        assert parse_transfer_output(self.OK).startswith("0x14fa5dba")
+
+    def test_a_refusal_raises_with_btclis_own_words(self):
+        from emission_tracker.signer.btcli import parse_transfer_output
+
+        with pytest.raises(BtcliError) as exc:
+            parse_transfer_output(
+                "Initiating transfer\n❌ Not enough balance: amount 999 τ\n"
+            )
+        assert "Not enough balance" in str(exc.value)
+
+    def test_silence_is_unknown_not_success(self):
+        from emission_tracker.signer.btcli import (
+            TransferUnknown,
+            parse_transfer_output,
+        )
+
+        for text in ("", "Enter your password: ", "Initiating transfer\n"):
+            with pytest.raises(TransferUnknown):
+                parse_transfer_output(text)
+
+    def test_both_markers_present_is_unknown_not_success(self):
+        """Never resolve an ambiguous transfer in the optimistic direction."""
+        from emission_tracker.signer.btcli import (
+            TransferUnknown,
+            parse_transfer_output,
+        )
+
+        with pytest.raises(TransferUnknown):
+            parse_transfer_output(self.OK + "\n❌ something else went wrong\n")
+
+    def test_a_timeout_is_unknown_because_it_may_have_landed(self):
+        from emission_tracker.signer.btcli import (
+            TransferUnknown,
+            run_btcli_text,
+        )
+
+        def boom(*a, **kw):
+            raise subprocess.TimeoutExpired(cmd="btcli", timeout=90)
+
+        with pytest.raises(TransferUnknown):
+            run_btcli_text(["btcli", "x"], env={}, timeout=90, run=boom)

@@ -42,6 +42,11 @@ def _auth_config(request: Request):
     return getattr(config, "auth", None) if config else None
 
 
+def _own_login_configured(request: Request) -> bool:
+    auth = _auth_config(request)
+    return bool(auth and auth.users and auth.session_secret)
+
+
 def session_user(request: Request) -> str | None:
     """The user named by a valid session cookie, or None.
 
@@ -88,6 +93,15 @@ def current_user(request: Request) -> str | None:
             )
         else:
             return dev_user
+    if _own_login_configured(request):
+        # The proxy header is not consulted at all once the tracker runs
+        # its own login. uvicorn listens on localhost, so any other
+        # process on this host can send X-Remote-User: admin — and there
+        # are others; the box also serves a second site. While nginx did
+        # the authenticating that header was the only evidence available.
+        # Now it is a weaker duplicate of evidence we already have, and
+        # the weakest accepted proof is the one that decides.
+        return None
     if not proxy_secret_ok(request):
         return None
     return request.headers.get("X-Remote-User") or None

@@ -20,7 +20,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from emission_tracker.web import sessions
-from emission_tracker.web.auth import current_user
+from emission_tracker.web.auth import _own_login_configured, current_user
 from emission_tracker.web.passwords import verify_password
 
 log = logging.getLogger(__name__)
@@ -72,8 +72,7 @@ def login_required(request: Request) -> bool:
     out on upgrade, so the absence of configuration means "not mine to
     enforce" — never "let everyone in", because nginx is still asking.
     """
-    auth = _auth(request)
-    return bool(auth and auth.users and auth.session_secret)
+    return _own_login_configured(request)
 
 
 def _safe_next(raw: str | None) -> str:

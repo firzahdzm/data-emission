@@ -245,3 +245,19 @@ class TestPasswordStorage:
     def test_a_corrupt_stored_hash_fails_the_login_rather_than_the_site(self):
         for broken in ("", "plaintext", "scrypt$nonsense", "bcrypt$x$y$z$a$b"):
             assert verify_password(PASSWORD, broken) is False
+
+
+def test_the_proxy_header_is_ignored_once_our_own_login_exists(client):
+    """uvicorn listens on localhost, and this host serves another site
+    too. Any local process can send X-Remote-User: admin — which was
+    acceptable only while nginx was the thing doing the authenticating.
+    With a login of our own, accepting it would make the session cookie
+    decorative and hand the wallet buttons to whatever else runs here."""
+    r = client.get("/", headers={"X-Remote-User": "admin"})
+    assert r.status_code == 303
+    assert r.headers["location"].startswith("/login")
+
+    r = client.post(
+        "/api/tournament/pay/5Abc", headers={"X-Remote-User": "admin"}
+    )
+    assert r.status_code == 401

@@ -6,9 +6,14 @@ import pytest
 
 from emission_tracker.signer.btcli import (
     BtcliError,
+    UNSTAKE_PROMPTS,
+    base_env,
     coldkey_password_env_var,
     list_wallets,
+    parse_unstake_output,
     run_btcli,
+    run_btcli_pty,
+    strip_ansi,
     transfer_argv,
     unstake_argv,
 )
@@ -85,7 +90,14 @@ def test_unstake_is_scoped_to_one_subnet_and_frees_tao():
     argv = unstake_argv("utama", 56, WP)
     assert "--netuid" in argv and argv[argv.index("--netuid") + 1] == "56"
     assert "--all-hotkeys" in argv
-    assert "--unstake-all" in argv
+    # NOT --unstake-all. In btcli 9.23 that flag selects a different code
+    # path which takes no netuid — "all stakes from all hotkeys in all
+    # subnets" — so the --netuid beside it would be silently ignored and
+    # the button would empty every subnet the coldkey holds.
+    assert "--unstake-all" not in argv
+    # --json-output cannot be combined with the prompting that carries the
+    # unlock value; the outcome is read from the prose instead.
+    assert "--json-output" not in argv
     # --all-alpha restakes to Root instead of freeing TAO, which defeats
     # the purpose of unstaking to fund a fee.
     assert "--all-alpha" not in argv
@@ -582,3 +594,73 @@ class TestTerminalNoiseDoesNotHideTheResult:
         env = base_env()
         assert env["TERM"] == "dumb"
         assert env["NO_COLOR"] == "1"
+
+
+class TestDrivingAnUnstakesPrompts:
+    """`btcli stake remove --netuid N --all-hotkeys` asks one y/n/q per
+    hotkey holding stake, and the count is only knowable from the wallet.
+    A driver that answers each prompt once — the transfer's shape — stops
+    at the second hotkey and sits there until the timeout."""
+
+    FAKE_BTCLI = '''
+import sys
+n = int(sys.argv[1])
+for i in range(n):
+    print("Unstake all: 1.5 \\u03b1 from hk%d on netuid: 56? [y/n/q] (n): " % i,
+          end="", flush=True)
+    assert sys.stdin.readline().strip() == "y", "hotkey prompt unanswered"
+print("Would you like to continue? [y/n] (n): ", end="", flush=True)
+assert sys.stdin.readline().strip() == "y"
+print("Enter your password: ", end="", flush=True)
+if sys.stdin.readline().strip() != "sesame":
+    print("\\u274c Failed: wrong")
+    sys.exit(0)
+print("\\u2705 Batch finalized. Unstaked across %d operations." % n)
+'''
+
+    def _run(self, tmp_path, hotkeys, secret="sesame"):
+        script = tmp_path / "fake_btcli.py"
+        script.write_text(self.FAKE_BTCLI)
+        return run_btcli_pty(
+            [sys.executable, str(script), str(hotkeys)],
+            base_env(), timeout=20, secret=secret, prompts=UNSTAKE_PROMPTS,
+        )
+
+    @pytest.mark.parametrize("hotkeys", [1, 4])
+    def test_every_hotkey_question_is_answered(self, tmp_path, hotkeys):
+        out = self._run(tmp_path, hotkeys)
+        assert parse_unstake_output(out) is None  # finalized, no hash printed
+        assert "Batch finalized" in strip_ansi(out)
+
+    def test_a_wrong_unlock_value_is_a_failure_not_a_success(self, tmp_path):
+        out = self._run(tmp_path, 2, secret="wrong")
+        with pytest.raises(BtcliError):
+            parse_unstake_output(out)
+
+
+def test_a_repeating_prompt_is_answered_once_per_appearance():
+    from emission_tracker.signer.btcli import _next_answer
+
+    pending = [("[y/n/q]", "y", True), ("Enter your password", None, False)]
+    answered: dict = {}
+
+    seen = "Unstake all: … [y/n/q] (n): "
+    assert _next_answer(pending, answered, seen) == ("[y/n/q]", "y")
+    answered["[y/n/q]"] = 1
+    # Nothing new yet — answering again here would send a stray keystroke
+    # into the next prompt.
+    assert _next_answer(pending, answered, seen) is None
+
+    seen += "y\nUnstake all: … [y/n/q] (n): "
+    assert _next_answer(pending, answered, seen) == ("[y/n/q]", "y")
+    answered["[y/n/q]"] = 2
+
+    seen += "y\nEnter your password: "
+    assert _next_answer(pending, answered, seen) == ("Enter your password", None)
+
+
+def test_the_unstake_success_marker_covers_the_batch_wording():
+    """A batch prints "Batch finalized" — lower-case f. Matching only the
+    transfer's "Finalized" reported a completed unstake as unknown."""
+    assert parse_unstake_output("✅ Batch finalized. Unstaked across 3 operations.") is None
+    assert parse_unstake_output("✅ Finalized\nExtrinsic 0x" + "a" * 40).startswith("0x")

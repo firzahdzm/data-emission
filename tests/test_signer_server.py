@@ -25,6 +25,14 @@ TRANSFER_OK = (
 )
 
 
+# A batch unstake's success line, captured from btcli 9.23.2. Note the
+# lower-case "finalized" — the transfer's marker would miss it.
+UNSTAKE_OK = (
+    "✅ Batch finalized. Unstaked across 3 operations.\n"
+    "Balance:\n  0.4775 τ ➡ 12.9910 τ\n"
+)
+
+
 def _req(op, coldkey, types=()):
     return SignRequest(op, coldkey, types, secret=UNLOCK)
 
@@ -89,6 +97,16 @@ def _signer(run, tmp_path, **over):
         return getattr(run, "transfer_output", TRANSFER_OK)
 
     s._run_transfer = _fake_transfer
+
+    def _fake_unstake(argv, env, secret):
+        result = run(argv)
+        if getattr(result, "returncode", 0) != 0:
+            from emission_tracker.signer.btcli import BtcliError
+
+            raise BtcliError(f"btcli exited {result.returncode}: {result.stderr}")
+        return getattr(run, "unstake_output", UNSTAKE_OK)
+
+    s._run_unstake = _fake_unstake
     return s
 
 
@@ -171,6 +189,18 @@ def test_unstake_resolves_the_wallet_and_passes_the_guard(tmp_path):
     assert unstake[unstake.index("--wallet-name") + 1] == "prj1"
     assert "--safe-staking" in unstake
     assert unstake[unstake.index("--netuid") + 1] == "56"
+    # The scoped path, not --unstake-all, which in btcli 9.23 ignores
+    # --netuid entirely and would empty every subnet.
+    assert "--unstake-all" not in unstake
+
+
+def test_an_unstake_whose_outcome_is_unreadable_is_reported_as_unknown(tmp_path):
+    """Never "failed": a second click on a hidden success unstakes again."""
+    rec = _Recorder()
+    rec.unstake_output = "some output that says neither one thing nor the other"
+    res = _signer(rec, tmp_path).handle(_req(OP_UNSTAKE, CK))
+    assert not res.ok
+    assert res.unknown
 
 
 def test_btcli_failure_comes_back_as_a_failed_result_not_an_exception(tmp_path):

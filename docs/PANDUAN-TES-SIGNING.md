@@ -78,34 +78,50 @@ Saldo `free` harus berkurang ~0.4 τ plus biaya transaksi.
 
 ---
 
-## Tes 3 — cakupan unstake
+## Tes 3 — unstake all (sn 56 saja)
 
-**Jangan pakai tombol Unstake all sebelum langkah ini selesai.**
+Pertanyaan lama "apakah `--unstake-all --netuid 56` benar-benar terbatas
+pada subnet 56" sudah terjawab, dan jawabannya **tidak**. Di btcli 9.23
+flag `--unstake-all` masuk ke fungsi lain (`unstake_all()`) yang sama
+sekali tidak menerima netuid — dokumentasinya sendiri berbunyi "all
+stakes from all hotkeys in all subnets", dan `cli.py` memang tidak pernah
+meneruskan netuid di cabang itu. Jadi `--netuid 56` di sampingnya hanya
+terlihat membatasi.
 
-Yang belum pernah dibuktikan siapa pun: apakah `--unstake-all --netuid 56`
-benar-benar terbatas pada subnet 56, atau menjangkau stake di subnet lain.
-Beberapa coldkey punya posisi kecil di netuid 24.
+Perintah yang sekarang dijalankan tombolnya sudah tidak memakai flag itu:
 
-Jalankan manual di VPS, **dengan prompt menyala** supaya kamu bisa membaca
-dan membatalkan:
+```
+btcli stake remove --netuid 56 --all-hotkeys --safe-staking \
+    --tolerance 0.05 --allow-partial-stake --wallet-name <nama> \
+    --wallet-path /root/.bittensor/wallets
+```
+
+Jalur ini bertanya satu per satu, per hotkey: `Unstake all: <jumlah> α
+from <hotkey> on netuid: 56? [y/n/q]`, lalu sekali `Would you like to
+continue?`, lalu password. Signer menjawab `y` untuk setiap pertanyaan
+hotkey (jumlahnya tidak bisa ditebak dari luar), `y` untuk konfirmasi,
+dan unlock value untuk password.
+
+### Cara menguji
+
+Pakai coldkey dengan stake paling kecil (goy, 0.24 α). Jalankan manual
+dulu supaya kamu yang membaca daftarnya:
 
 ```bash
-sudo -u signer env HOME=/tmp \
-  BT_PW__ROOT__BITTENSOR_WALLETS_GOY_COLDKEY='<unlock value wallet goy>' \
-  /usr/local/bin/btcli stake remove --unstake-all --netuid 56 --all-hotkeys \
+sudo -u signer env HOME=/tmp TERM=dumb NO_COLOR=1 \
+  /usr/local/bin/btcli stake remove --netuid 56 --all-hotkeys \
       --safe-staking --tolerance 0.05 --allow-partial-stake \
       --wallet-name goy --wallet-path /root/.bittensor/wallets
 ```
 
-Goy dipilih karena stake-nya paling kecil (0.24 α), jadi kalau pun terlanjur
-berjalan, kerugiannya minimal.
+**Baca tabelnya sebelum mengkonfirmasi.** Kolom netuid harus 56 semua.
+Kalau ada subnet lain muncul, batalkan (`q`) dan laporkan — berarti ada
+hal lain lagi yang belum kita tahu.
 
-**Baca daftar yang akan di-unstake sebelum mengkonfirmasi.**
-
-- Kalau semuanya netuid 56 → aman, tombol Unstake all boleh dipakai.
-- Kalau ada subnet lain di daftar → **batalkan**, dan `unstake_argv` di
-  `src/emission_tracker/signer/btcli.py` harus ditulis ulang sebelum
-  tombolnya dipakai.
+Kalau manualnya benar, tombol Unstake all di kartu coldkey boleh dipakai:
+hasilnya muncul sebagai badge hijau dengan referensi extrinsic, merah
+dengan alasan, atau — kalau btcli mati di tengah jalan — "tidak pasti",
+yang artinya **cek chain dulu, jangan klik ulang**.
 
 ---
 

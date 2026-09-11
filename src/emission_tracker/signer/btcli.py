@@ -67,9 +67,21 @@ def transfer_argv(
 def unstake_argv(
     wallet_name: str, netuid: int, wallet_path: str, tolerance: float = 0.05
 ) -> list[str]:
+    """Unstake everything this wallet holds on one subnet.
+
+    Deliberately NOT `--unstake-all`. That flag routes to a different
+    command in btcli 9.23 — `remove_stake.unstake_all()`, which takes no
+    netuid at all ("Unstakes all stakes from all hotkeys in all subnets")
+    and ignores the safe-staking options too. Passing `--netuid 56`
+    beside it reads as scoped and is not: it would empty every subnet the
+    coldkey holds, root stake included. Verified in the installed btcli
+    source on the host (cli.py never forwards netuid on that branch).
+
+    The scoped path instead asks, per hotkey, "Unstake all: <amount> …
+    on netuid: 56? [y/n/q]" — answered by UNSTAKE_PROMPTS.
+    """
     return [
         BTCLI, "stake", "remove",
-        "--unstake-all",
         "--netuid", str(netuid),
         "--all-hotkeys",
         "--safe-staking",
@@ -77,9 +89,9 @@ def unstake_argv(
         "--allow-partial-stake",
         "--wallet-name", wallet_name,
         "--wallet-path", wallet_path,
-        # See transfer_argv: --no-prompt would suppress the very password
-        # prompt this command needs, so it can be answered on stdin.
-        "--json-output",
+        # No --json-output: like transfer, it cannot be combined with the
+        # prompting this command needs to receive an unlock value. The
+        # outcome is read from the prose by parse_unstake_output.
     ]
 
 
@@ -399,10 +411,61 @@ def run_btcli_text(
 # each must be answered before the next is printed.
 PASSWORD_PROMPT = "Enter your password"
 
+# Each entry is (marker, answer, repeat). `answer=None` means the wallet
+# unlock value. `repeat=True` means btcli asks this one an unpredictable
+# number of times — once per hotkey — so it is answered every time it
+# appears rather than once.
 TRANSFER_PROMPTS = (
-    ("Proceed with transfer?", "y"),
-    (PASSWORD_PROMPT, None),         # None = the wallet unlock value
+    ("Proceed with transfer?", "y", False),
+    (PASSWORD_PROMPT, None, False),
 )
+
+# `btcli stake remove --netuid N --all-hotkeys` with no --amount asks, for
+# every hotkey that holds stake on the subnet:
+#
+#     Unstake all: 12.3456 α from my-hk on netuid: 56? [y/n/q] (n):
+#
+# then once, after the summary table:
+#
+#     Would you like to continue? [y/n] (n):
+#     Enter your password:
+#
+# The per-hotkey question is matched on its choice list, which is what
+# rich renders for choices=["y","n","q"] and appears nowhere else in the
+# output. How many there are depends on the wallet, hence repeat=True.
+UNSTAKE_PROMPTS = (
+    ("[y/n/q]", "y", True),
+    ("Would you like to continue?", "y", False),
+    (PASSWORD_PROMPT, None, False),
+)
+
+# Single-operation unstakes print "Finalized"; a batch prints "Batch
+# finalized. Unstaked across N operations." — lower-case f, which a
+# case-sensitive match on the transfer's marker would miss and report a
+# completed unstake as an unknown outcome.
+_UNSTAKE_OK_MARKERS = ("Finalized", "finalized", "has been included as")
+
+
+def parse_unstake_output(text: str) -> str | None:
+    """Return the extrinsic reference for a completed unstake.
+
+    Same three outcomes as a transfer, and the same rule: silence is
+    never read as success. An unstake that may have reached the chain is
+    reported as unknown so nobody submits it twice.
+    """
+    flat = tidy(text, limit=4000)
+    ok = any(marker in flat for marker in _UNSTAKE_OK_MARKERS)
+    failed = _FAIL_MARKER in flat or "unstaking failed" in flat
+
+    if ok and not failed:
+        for token in flat.split():
+            if token.startswith("0x") and len(token) > 18:
+                return token.rstrip(".,")
+        return None
+    if failed and not ok:
+        marker = flat.find(_FAIL_MARKER)
+        raise BtcliError(tidy(flat[marker:] if marker >= 0 else flat, limit=300))
+    raise TransferUnknown(tidy(flat, limit=400) or "btcli printed nothing")
 
 
 def classify_timeout(partial: str, timeout: int):
@@ -423,6 +486,29 @@ def classify_timeout(partial: str, timeout: int):
     raise TransferUnknown(
         f"btcli timed out after {timeout}s — check the chain"
     )
+
+
+def _normalise(prompt) -> tuple[str, str | None, bool]:
+    """Accept both the two- and three-element prompt forms."""
+    marker, answer, *rest = prompt
+    return marker, answer, bool(rest[0]) if rest else False
+
+
+def _next_answer(pending, answered: dict, seen: str):
+    """The next prompt to answer, or None if btcli has not asked yet.
+
+    A one-shot prompt is answered the first time its marker appears; a
+    repeating one every time a fresh copy appears, which is how a
+    per-hotkey question with an unpredictable count gets answered without
+    the driver knowing the count in advance. Earlier entries win, so the
+    order in the table is still the order of the conversation.
+    """
+    for marker, answer, repeat in pending:
+        count = seen.count(marker)
+        already = answered.get(marker, 0)
+        if count > already and (repeat or already == 0):
+            return marker, answer
+    return None
 
 
 def run_btcli_pty(
@@ -449,7 +535,8 @@ def run_btcli_pty(
     import pty
     import select
 
-    pending = list(prompts)
+    pending = [_normalise(p) for p in prompts]
+    answered: dict[str, int] = {}
     answered_password = 0
     out: list[str] = []
     deadline = time.monotonic() + timeout
@@ -478,8 +565,10 @@ def run_btcli_pty(
                     break
                 out.append(chunk.decode(errors="replace"))
             seen = "".join(out)
-            if pending and pending[0][0] in seen:
-                _, answer = pending.pop(0)
+            asked = _next_answer(pending, answered, seen)
+            if asked is not None:
+                marker, answer = asked
+                answered[marker] = seen.count(marker)
                 if answer is None:
                     answered_password = seen.count(PASSWORD_PROMPT)
                 os.write(fd, ((secret if answer is None else answer) + "\n").encode())

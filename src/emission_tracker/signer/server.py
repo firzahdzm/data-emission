@@ -20,10 +20,10 @@ from emission_tracker.signer.btcli import (
     coldkey_password_env_var,
     list_wallets,
     TransferUnknown,
+    UNSTAKE_PROMPTS,
     parse_transfer_output,
-    run_btcli,
+    parse_unstake_output,
     run_btcli_pty,
-    transfer_answers,
     transfer_argv,
     unstake_argv,
 )
@@ -75,7 +75,7 @@ class Signer:
         self._spent = self._load_spend()
 
     def handle(self, request: SignRequest) -> SignResult:
-        # Rule for everything below run_btcli(): once run_btcli has returned
+        # Rule for everything below the btcli call: once it has returned
         # for a transfer, the money has moved and the result is `ok`. No
         # later step — parsing, bookkeeping, persistence — may raise its way
         # into `ok=False`, because the caller reads that as "nothing
@@ -119,20 +119,18 @@ class Signer:
             env = self._env_for(name, request.secret)
             # Log before attempting: the audit trail must survive a crash
             # between here and the chain.
-            log.info("unstake_all coldkey=%s wallet=%s", request.coldkey, name)
-            payload = run_btcli(
+            log.info("unstake_all coldkey=%s wallet=%s netuid=%s unlock_len=%d",
+                     request.coldkey, name, self._config.netuid,
+                     len(request.secret))
+            # Same pseudo-terminal as a transfer, and for the same reason:
+            # btcli reads the unlock value with getpass, which never sees
+            # a pipe. The prompt table differs — see UNSTAKE_PROMPTS.
+            output = self._run_unstake(
                 unstake_argv(name, self._config.netuid, self._config.wallet_path),
-                env=env, timeout=UNSTAKE_TIMEOUT, run=self._run,
-                # Same shape as a transfer's answers, but this sequence has
-                # NOT been observed against a real unstake — only the
-                # transfer's has. Map it with the manual run in
-                # deploy/DEPLOY.md before trusting the unstake button; an
-                # unanswered prompt shows up as "printed no JSON result",
-                # not as a wrong action.
-                answers=transfer_answers(request.secret),
+                env, request.secret,
             )
             return SignResult(True, request.op, request.coldkey,
-                              tx_hash=_tx_hash(payload))
+                              tx_hash=parse_unstake_output(output))
 
         amount_rao = sum(
             round(self._config.fees_tao[t] * RAO) for t in request.types
@@ -192,6 +190,11 @@ class Signer:
     def _run_transfer(self, argv, env, secret) -> str:
         """Seam for tests, which must never spawn a real pty."""
         return run_btcli_pty(argv, env, TRANSFER_TIMEOUT, secret)
+
+    def _run_unstake(self, argv, env, secret) -> str:
+        """Seam for tests, which must never spawn a real pty."""
+        return run_btcli_pty(argv, env, UNSTAKE_TIMEOUT, secret,
+                             prompts=UNSTAKE_PROMPTS)
 
     def _within_daily_cap(self, amount_rao: int) -> bool:
         today = time.strftime("%Y-%m-%d", time.gmtime(self._clock()))
@@ -257,17 +260,6 @@ class Signer:
         omission.
         """
         return base_env()
-
-
-def _tx_hash(payload: dict) -> str | None:
-    # extrinsic_identifier is what btcli 9.23 actually returns; the rest are
-    # kept for other versions.
-    for key in ("extrinsic_identifier", "tx_hash", "transaction_hash",
-                "extrinsic_hash", "hash"):
-        value = payload.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
 
 
 def serve(socket_path: str, signer: Signer) -> None:

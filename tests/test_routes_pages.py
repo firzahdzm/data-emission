@@ -268,5 +268,4 @@ def test_the_action_log_starts_collapsed(app, monkeypatch):
     tag = html[html.rindex("<", 0, start):html.index(">", start)]
     assert tag.startswith("<details")
     assert " open" not in tag
-    assert "actions-summary" in html      # the one-line closed state
     assert "loadActions" in html

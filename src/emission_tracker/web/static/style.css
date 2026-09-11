@@ -873,12 +873,6 @@ details.panel {
     text-transform: uppercase;
 }
 .panel-compact[open] > summary { border-bottom: 1px solid var(--sn-border); }
-.panel-compact > summary > .text-muted {
-    font-weight: 400;
-    font-size: 0.75rem;
-    letter-spacing: 0;
-    text-transform: none;
-}
 /* Eight rows is enough to see a session's worth; the rest scrolls rather
    than pushing the hotkey table off the screen. */
 .actions-scroll { max-height: 15rem; overflow-y: auto; }

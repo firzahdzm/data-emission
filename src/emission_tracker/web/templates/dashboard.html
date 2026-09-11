@@ -344,10 +344,7 @@ _confirm.addEventListener('click', async () => {
 
 {% if is_admin %}
 <details class="panel panel-compact" id="actions-panel" hidden>
-    <summary>
-        Riwayat aksi
-        <span class="text-muted" id="actions-summary"></span>
-    </summary>
+    <summary>Riwayat aksi</summary>
     <div class="actions-scroll">
         <table id="actions-table">
             <thead>
@@ -615,13 +612,6 @@ _confirm.addEventListener('click', async () => {
             + `${p(d.getHours())}:${p(d.getMinutes())}`;
     }
 
-    function statusWord(s) {
-        if (s === 'ok') return 'berhasil';
-        if (s === 'pending') return 'proses…';
-        if (s === 'unknown') return 'tidak pasti';
-        return 'gagal';
-    }
-
     function statusBadge(s) {
         if (s === 'ok') return '<span class="badge badge-ok">berhasil</span>';
         if (s === 'pending') return '<span class="badge">proses…</span>';
@@ -736,21 +726,10 @@ _confirm.addEventListener('click', async () => {
             actionsBody.appendChild(tr);
         }
 
-        // The summary is what the panel shows while closed, so it has to
-        // carry the one thing worth knowing at a glance: the latest
-        // outcome. Closed by default — this is a log, not the dashboard.
-        const latest = data.actions[0];
-        const summary = document.getElementById('actions-summary');
-        if (summary) {
-            summary.textContent =
-                `${data.actions.length} terakhir · `
-                + `${shortTime(latest.requested_at)} `
-                + `${walletNames[latest.coldkey_ss58]
-                     || shortKey(latest.coldkey_ss58)} `
-                + statusWord(latest.outcome_unknown ? 'unknown' : latest.status);
-        }
         // Something in flight opens the panel on its own; otherwise the
-        // operator's last choice stands.
+        // operator's last choice stands. Nothing is summarised in the
+        // closed state — the outcome of a click already shows on the
+        // coldkey's own card, so a second copy in the header was noise.
         if (data.running) actionsPanel.open = true;
 
         // Only poll while something is actually running, and stop as soon

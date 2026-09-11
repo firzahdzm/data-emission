@@ -143,6 +143,14 @@ Both buttons follow the existing refresh convention: every card's
 controls grey out while any signed action is in flight, and the card
 refreshes when it finishes.
 
+## Never automatic
+
+Neither operation is ever scheduled, retried on its own, or triggered by
+startup, the daily balance job, or any other timer. Both fire only from
+an admin's click. A failed action stays failed and visible until someone
+presses the button again — silent retries of a money-moving call are how
+one intended payment becomes three.
+
 ## Out of scope
 
 Sending to any address other than the tournament wallet. Staking. Any

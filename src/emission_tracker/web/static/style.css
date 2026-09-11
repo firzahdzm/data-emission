@@ -825,14 +825,72 @@ a:hover {
     white-space: nowrap;
     font-size: 0.78rem;
 }
-#actions-table th:nth-child(1), #actions-table td:nth-child(1) { width: 13%; }
-#actions-table th:nth-child(2), #actions-table td:nth-child(2) { width: 11%; }
-#actions-table th:nth-child(3), #actions-table td:nth-child(3) { width: 11%; }
+/* Six columns now — "Oleh" moved into the row tooltip. Keterangan takes
+   whatever is left, which is where the long btcli text goes. */
+#actions-table th:nth-child(1), #actions-table td:nth-child(1) { width: 9%; }
+#actions-table th:nth-child(2), #actions-table td:nth-child(2) { width: 13%; }
+#actions-table th:nth-child(3), #actions-table td:nth-child(3) { width: 13%; }
 #actions-table th:nth-child(4), #actions-table td:nth-child(4) { width: 10%; }
-#actions-table th:nth-child(5), #actions-table td:nth-child(5) { width: 9%; }
-#actions-table th:nth-child(6), #actions-table td:nth-child(6) { width: 9%; }
+#actions-table th:nth-child(5), #actions-table td:nth-child(5) { width: 11%; }
 
 /* Neither success nor failure: the money may have moved. Amber rather
    than the failure red, because red reads as "nothing happened" and the
    one thing that must not follow is a reflexive retry. */
 .coldkey-last-unknown { color: #f59e0b; background: #f59e0b18; }
+
+/* The action log is a log: worth a glance after a click, not worth a
+   third of the dashboard the rest of the time. Collapsed to one line by
+   default, and dense when open. */
+/* The panel surface is defined for section.panel; this log is a
+   <details>, so it needs the same skin spelled out. */
+details.panel {
+    background: var(--sn-surface-1);
+    border: 1px solid var(--sn-border);
+    border-radius: var(--sn-radius);
+    margin: 0 0 1.25rem;
+    overflow: hidden;
+}
+.panel-compact > summary {
+    cursor: pointer;
+    padding: 0.55rem 1.25rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+    list-style: none;
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+}
+.panel-compact > summary::-webkit-details-marker { display: none; }
+.panel-compact > summary::before {
+    content: "▸";
+    font-size: 0.7rem;
+    opacity: 0.6;
+}
+.panel-compact[open] > summary::before { content: "▾"; }
+.panel-compact > summary {
+    color: var(--sn-text-dim);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+.panel-compact[open] > summary { border-bottom: 1px solid var(--sn-border); }
+.panel-compact > summary > .text-muted {
+    font-weight: 400;
+    font-size: 0.75rem;
+    letter-spacing: 0;
+    text-transform: none;
+}
+/* Eight rows is enough to see a session's worth; the rest scrolls rather
+   than pushing the hotkey table off the screen. */
+.actions-scroll { max-height: 15rem; overflow-y: auto; }
+.panel-compact #actions-table td,
+.panel-compact #actions-table th {
+    padding: 0.3rem 0.6rem;
+    font-size: 0.76rem;
+    line-height: 1.25;
+}
+.panel-compact #actions-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--sn-surface-1);
+}

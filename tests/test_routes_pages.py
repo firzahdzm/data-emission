@@ -247,3 +247,26 @@ class TestDashboardAdminScripts:
         assert 'class="tournament-type"' not in html
         assert "/api/tournament/pay/" not in html
         assert "/api/stake/unstake-all/" not in html
+
+
+def test_the_action_log_starts_collapsed(app, monkeypatch):
+    """A log panel that renders open eats a third of the dashboard on
+    every page load; it is worth a glance after a click, not standing
+    room. Collapsed unless the operator opened it last time."""
+    from types import SimpleNamespace
+
+    monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+    app.state.config = SimpleNamespace(
+        admin_users=["alice"],
+        tournament=SimpleNamespace(
+            address="5Ef5", fees_tao={"text": 0.7, "image": 0.4, "env": 0.6}
+        ),
+    )
+    html = TestClient(app).get("/", headers={"X-Remote-User": "alice"}).text
+
+    start = html.index('id="actions-panel"')
+    tag = html[html.rindex("<", 0, start):html.index(">", start)]
+    assert tag.startswith("<details")
+    assert " open" not in tag
+    assert "actions-summary" in html      # the one-line closed state
+    assert "loadActions" in html

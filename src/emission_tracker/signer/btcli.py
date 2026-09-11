@@ -6,8 +6,11 @@ out to btcli would either prompt for a passphrase or move real funds.
 """
 
 import json
+import logging
 import os
 import subprocess
+
+log = logging.getLogger("emission_signer.btcli")
 
 BTCLI = "btcli"
 
@@ -331,4 +334,17 @@ def run_btcli_text(
             f"btcli exited {proc.returncode}: "
             f"{tidy(proc.stderr or proc.stdout or '')}"
         )
-    return (proc.stdout or "") + "\n" + (proc.stderr or "")
+    combined = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    # Log the whole exchange when it did not plainly succeed. Which prompts
+    # btcli asks, and in what order, is the one thing we cannot see from
+    # the outside — and getting that order wrong feeds the unlock value to
+    # the wrong question. The value itself is redacted: btcli never echoes
+    # it, but a log line is the wrong place to find out we were mistaken.
+    if answers and "Finalized" not in combined:
+        redacted = combined
+        for line in (answers or "").splitlines():
+            if len(line) > 2:
+                redacted = redacted.replace(line, "<redacted>")
+        log.warning("btcli exchange (no success marker): %s",
+                    tidy(redacted, limit=1200))
+    return combined

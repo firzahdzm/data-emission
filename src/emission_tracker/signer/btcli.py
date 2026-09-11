@@ -50,7 +50,13 @@ def transfer_argv(
         # the extra lines it prints alongside the JSON are the only clue
         # we get, and run_btcli salvages them into the error.
         "--verbose",
-        "--no-prompt", "--json-output",
+        # Deliberately NOT --no-prompt. btcli 9.23 ignores BT_PW_* when it
+        # decrypts a coldkey — verified on the host: the same value signs
+        # fine typed at the prompt and fails as "Keyfile is corrupt" when
+        # supplied in the environment. --no-prompt then stops it asking at
+        # all, which is why every transfer came back success=false. The
+        # answers go in on stdin instead.
+        "--json-output",
     ]
 
 
@@ -67,7 +73,9 @@ def unstake_argv(
         "--allow-partial-stake",
         "--wallet-name", wallet_name,
         "--wallet-path", wallet_path,
-        "--no-prompt", "--json-output",
+        # See transfer_argv: --no-prompt would suppress the very password
+        # prompt this command needs, so it can be answered on stdin.
+        "--json-output",
     ]
 
 
@@ -104,15 +112,60 @@ def tidy(text: str, limit: int = 300) -> str:
     return cleaned[:limit].strip()
 
 
-def run_btcli(argv: list[str], env: dict, timeout: int, run=subprocess.run) -> dict:
+def extract_json(text: str) -> dict | None:
+    """Pull the JSON object out of output that also carries prompt text.
+
+    btcli writes its prompts to stdout and then appends the JSON, so the
+    stream is not parseable as a whole. Scanning for the last object that
+    decodes cleanly is what survives that — and it stays correct if btcli
+    ever adds a line after the JSON too.
+    """
+    decoder = json.JSONDecoder()
+    text = text or ""
+    found = None
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] != "{":
+            i += 1
+            continue
+        try:
+            obj, end = decoder.raw_decode(text, i)
+        except ValueError:
+            i += 1
+            continue
+        if isinstance(obj, dict):
+            found = obj
+        # Resume *after* what was just consumed. Without this the scan
+        # walks into the object's own nested braces and the last success
+        # is an inner object — `{"wallets": [{"name": …}]}` would come
+        # back as `{"name": …}` and every coldkey would look unknown.
+        i = end
+    return found
+
+
+def run_btcli(
+    argv: list[str],
+    env: dict,
+    timeout: int,
+    run=subprocess.run,
+    answers: str | None = None,
+) -> dict:
+    """Run one btcli command and return its JSON payload.
+
+    `answers` is fed to stdin — btcli's prompts are the only channel it
+    accepts a coldkey unlock value through in 9.23, since it ignores
+    BT_PW_* when decrypting. Without answers, stdin is closed rather than
+    inherited: from a shell btcli would otherwise get a terminal and an
+    unanticipated prompt would block until the timeout.
+    """
     try:
-        # stdin=DEVNULL explicitly rather than inheriting: systemd happens to
-        # give this unit /dev/null, but a run from a shell would hand btcli a
-        # terminal, and a prompt we did not anticipate would then block until
-        # the timeout with no indication why.
+        stdin_kw = (
+            {"input": answers} if answers is not None
+            else {"stdin": subprocess.DEVNULL}
+        )
         proc = run(
             argv, capture_output=True, text=True, timeout=timeout, env=env,
-            stdin=subprocess.DEVNULL,
+            **stdin_kw,
         )
     except subprocess.TimeoutExpired as exc:
         raise BtcliError(f"btcli timed out after {timeout}s") from exc
@@ -121,22 +174,14 @@ def run_btcli(argv: list[str], env: dict, timeout: int, run=subprocess.run) -> d
             f"btcli exited {proc.returncode}: "
             f"{tidy(proc.stderr or proc.stdout or '')}"
         )
-    try:
-        payload = json.loads(proc.stdout)
-    except ValueError as exc:
-        # Usually means btcli fell back to a prompt or printed a banner,
-        # which must not be mistaken for success.
+    # Not json.loads on the whole stream: btcli prints its prompts to
+    # stdout before the JSON, so the stream as a whole never parses.
+    payload = extract_json(proc.stdout)
+    if payload is None:
+        # No JSON object anywhere usually means btcli stopped at a prompt
+        # we did not answer, which must not be mistaken for success.
         raise BtcliError(
-            f"btcli output was not JSON: {(proc.stdout or '').strip()[:200]}"
-        ) from exc
-    if not isinstance(payload, dict):
-        # Callers index this payload (fee tables, tx hashes). A list or a
-        # scalar would blow up at the first .get() — and for a transfer that
-        # happens *after* the money has moved, which the caller then reports
-        # as a failure and retries. Fail here instead, before the subprocess
-        # result is ever acted on.
-        raise BtcliError(
-            f"btcli output was not a JSON object: {type(payload).__name__}"
+            f"btcli printed no JSON result: {tidy(proc.stdout or '')}"
         )
 
     # btcli reports a refused transfer as {"success": false} and still exits
@@ -191,3 +236,21 @@ def list_wallets(wallet_path: str, run=subprocess.run, timeout: int = 30) -> dic
         for w in payload.get("wallets", [])
         if w.get("ss58_address") and w.get("name")
     }
+
+
+def transfer_answers(secret: str) -> str:
+    """The keystrokes btcli asks for during a transfer, in order.
+
+    Observed against btcli 9.23.2 on the target host:
+
+        Proceed with transfer? [y/n] (n):   -> y
+        Enter your password:                -> the wallet unlock value
+
+    This is the only channel that works. btcli ignores BT_PW_* when it
+    decrypts a coldkey: the same value signs fine typed here and fails as
+    "Keyfile is corrupt" when supplied in the environment.
+
+    A trailing newline on the last line matters — without it btcli waits
+    for the rest of the line and the call hangs until the timeout.
+    """
+    return f"y\n{secret}\n"

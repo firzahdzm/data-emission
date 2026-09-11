@@ -20,6 +20,7 @@ from emission_tracker.signer.btcli import (
     coldkey_password_env_var,
     list_wallets,
     run_btcli,
+    transfer_answers,
     transfer_argv,
     unstake_argv,
 )
@@ -109,6 +110,13 @@ class Signer:
             payload = run_btcli(
                 unstake_argv(name, self._config.netuid, self._config.wallet_path),
                 env=env, timeout=UNSTAKE_TIMEOUT, run=self._run,
+                # Same shape as a transfer's answers, but this sequence has
+                # NOT been observed against a real unstake — only the
+                # transfer's has. Map it with the manual run in
+                # deploy/DEPLOY.md before trusting the unstake button; an
+                # unanswered prompt shows up as "printed no JSON result",
+                # not as a wrong action.
+                answers=transfer_answers(request.secret),
             )
             return SignResult(True, request.op, request.coldkey,
                               tx_hash=_tx_hash(payload))
@@ -150,6 +158,7 @@ class Signer:
             transfer_argv(name, self._config.destination, amount_tao,
                           self._config.wallet_path),
             env=env, timeout=TRANSFER_TIMEOUT, run=self._run,
+            answers=transfer_answers(request.secret),
         )
         self._record_spend(amount_rao)
         return SignResult(True, request.op, request.coldkey,

@@ -63,10 +63,11 @@ def test_transfer_command_is_non_interactive_and_machine_readable():
     assert "--destination" in argv and argv[argv.index("--destination") + 1] == DEST
     assert "--amount" in argv and argv[argv.index("--amount") + 1] == "0.700000000"
     assert "--wallet-name" in argv and argv[argv.index("--wallet-name") + 1] == "prj1"
-    # Without these two the call blocks on a prompt forever and the output
-    # cannot be parsed.
-    assert "--no-prompt" in argv
     assert "--json-output" in argv
+    # NOT --no-prompt: btcli ignores BT_PW_* when decrypting, so the
+    # password prompt is the only way in, and suppressing it made every
+    # transfer come back success=false. The answers arrive on stdin.
+    assert "--no-prompt" not in argv
 
 
 def test_unstake_always_carries_the_slippage_guard():
@@ -150,17 +151,17 @@ def test_amount_never_uses_scientific_notation():
     assert amount == "0.000000100"
 
 
-def test_run_btcli_raises_when_the_payload_is_not_an_object():
+def test_run_btcli_raises_when_there_is_no_json_object():
     """A JSON array or scalar would only blow up later, at .get() — and for
     a transfer that is after the funds have moved, which the caller reports
-    as a failure and then retries."""
+    as a failure and then retries. None of these carry a result object."""
     for body in ("[1, 2]", '"done"', "null"):
         with pytest.raises(BtcliError) as exc:
             run_btcli(
                 ["btcli", "x"], env={}, timeout=5,
                 run=lambda *a, **kw: _Completed(stdout=body),
             )
-        assert "not a JSON object" in str(exc.value)
+        assert "no JSON result" in str(exc.value)
 
 
 def test_list_wallets_passes_a_usable_PATH():
@@ -273,3 +274,86 @@ def test_text_printed_alongside_the_json_is_salvaged_into_the_error():
 
 def test_transfer_asks_btcli_to_be_verbose():
     assert "--verbose" in transfer_argv("prj1", DEST, 0.4, WP)
+
+
+def test_the_unlock_value_goes_in_on_stdin_not_the_environment():
+    """btcli 9.23 ignores BT_PW_* when decrypting a coldkey — verified on
+    the host: the same value signs fine typed at the prompt and fails as
+    "Keyfile is corrupt" from the environment. stdin is the only channel
+    that works."""
+    from emission_tracker.signer.btcli import transfer_answers
+
+    seen = {}
+
+    def spy(argv, **kwargs):
+        seen.update(kwargs)
+
+        class R:
+            returncode = 0
+            stdout = json.dumps({"success": True, "extrinsic_identifier": "0xa"})
+            stderr = ""
+
+        return R()
+
+    run_btcli(["btcli", "x"], env={}, timeout=5, run=spy,
+              answers=transfer_answers("dummy-unlock-value"))
+    assert seen["input"] == "y\ndummy-unlock-value\n"
+    # input= and stdin= are mutually exclusive in subprocess.
+    assert "stdin" not in seen
+
+
+def test_answers_end_with_a_newline():
+    """Without it btcli waits for the rest of the line and the call hangs
+    until the timeout."""
+    from emission_tracker.signer.btcli import transfer_answers
+
+    assert transfer_answers("x").endswith("\n")
+
+
+def test_transfer_must_not_pass_no_prompt():
+    """--no-prompt stops btcli asking for the password at all, which is
+    exactly why every transfer came back success=false."""
+    assert "--no-prompt" not in transfer_argv("prj1", DEST, 0.4, WP)
+    assert "--no-prompt" not in unstake_argv("utama", 56, WP)
+
+
+def test_json_is_extracted_from_output_that_also_carries_prompts():
+    """btcli writes its prompts to stdout before the JSON, so the stream
+    as a whole never parses."""
+    mixed = (
+        "Proceed with transfer? [y/n] (n): Enter your password: Decrypting...\n"
+        + json.dumps({"success": True, "extrinsic_identifier": "0xbeef"})
+    )
+    payload = run_btcli(
+        ["btcli", "x"], env={}, timeout=5,
+        run=lambda *a, **kw: _Completed(stdout=mixed),
+    )
+    assert payload["extrinsic_identifier"] == "0xbeef"
+
+
+def test_output_with_no_json_at_all_is_an_error():
+    """Usually means btcli stopped at a prompt nobody answered."""
+    with pytest.raises(BtcliError) as exc:
+        run_btcli(
+            ["btcli", "x"], env={}, timeout=5,
+            run=lambda *a, **kw: _Completed(stdout="Enter your password: "),
+        )
+    assert "no JSON result" in str(exc.value)
+
+
+def test_nested_objects_do_not_shadow_the_outer_result():
+    """Scanning for the last decodable object walks into the payload's own
+    braces: {"wallets": [{"name": …}]} would come back as {"name": …} and
+    every coldkey would look unknown."""
+    from emission_tracker.signer.btcli import extract_json
+
+    payload = {"wallets": [{"name": "prj1", "ss58_address": "5Fnh"}]}
+    assert extract_json("prompt text\n" + json.dumps(payload)) == payload
+
+
+def test_the_last_top_level_object_wins():
+    """btcli prints progress objects before the result on some commands."""
+    from emission_tracker.signer.btcli import extract_json
+
+    text = json.dumps({"step": 1}) + "\nnoise\n" + json.dumps({"success": True})
+    assert extract_json(text) == {"success": True}

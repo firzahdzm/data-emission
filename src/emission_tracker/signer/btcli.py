@@ -63,16 +63,18 @@ def run_btcli(argv: list[str], env: dict, timeout: int, run=subprocess.run) -> d
         ) from exc
 
 
-def list_wallets(run=subprocess.run, wallet_path: str = "", timeout: int = 30) -> dict:
+def list_wallets(wallet_path: str, run=subprocess.run, timeout: int = 30) -> dict:
     """Map coldkey ss58 → btcli wallet name.
 
     Resolved live rather than configured: a hand-maintained mapping drifts
     the first time a wallet is renamed, and the failure would be signing
     from the wrong coldkey.
     """
-    argv = [BTCLI, "wallet", "list", "--json-output"]
-    if wallet_path:
-        argv += ["--wallet-path", wallet_path]
+    argv = [
+        BTCLI, "wallet", "list",
+        "--wallet-path", wallet_path,
+        "--no-prompt", "--json-output",
+    ]
     payload = run_btcli(argv, env={}, timeout=timeout, run=run)
     return {
         w["ss58_address"]: w["name"]

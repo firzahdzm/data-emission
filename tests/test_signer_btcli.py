@@ -54,6 +54,23 @@ def test_unstake_is_scoped_to_one_subnet_and_frees_tao():
     assert "--unstake-all-alpha" not in argv
 
 
+def test_list_wallets_command_is_non_interactive_and_machine_readable():
+    """list_wallets constructs the argv with all required flags."""
+    captured_argv = []
+
+    def capture_and_return(argv, capture_output=True, text=True, timeout=None, env=None):
+        captured_argv.append(argv)
+        return _Completed(stdout=json.dumps({"wallets": []}))
+
+    list_wallets(WP, run=capture_and_return)
+
+    argv = captured_argv[0]
+    assert argv[:3] == ["btcli", "wallet", "list"]
+    assert "--wallet-path" in argv and argv[argv.index("--wallet-path") + 1] == WP
+    assert "--no-prompt" in argv
+    assert "--json-output" in argv
+
+
 def test_list_wallets_maps_coldkey_to_name():
     payload = {
         "wallets": [
@@ -62,7 +79,7 @@ def test_list_wallets_maps_coldkey_to_name():
         ]
     }
     mapping = list_wallets(
-        run=lambda *a, **kw: _Completed(stdout=json.dumps(payload)), wallet_path=WP
+        WP, run=lambda *a, **kw: _Completed(stdout=json.dumps(payload))
     )
     assert mapping == {"5Fnh": "prj1", "5HER": "utama"}
 

@@ -65,3 +65,49 @@ def test_admin_users_empty_means_nobody_is_admin():
     client = TestClient(_make_app(admin_users=[]))
     resp = client.post("/settle", headers={"X-Remote-User": "alice"})
     assert resp.status_code == 403
+
+
+def _request(headers: dict, app_state) -> Request:
+    scope = {
+        "type": "http",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        "app": SimpleNamespace(state=app_state),
+    }
+    return Request(scope)
+
+
+def _state(secret, admins=("alice",)):
+    return SimpleNamespace(
+        config=SimpleNamespace(admin_users=list(admins), proxy_secret=secret)
+    )
+
+
+class TestProxySecret:
+    def test_header_alone_is_not_enough_when_a_secret_is_configured(self, monkeypatch):
+        """The whole point: reaching uvicorn directly must not make you admin."""
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        req = _request({"X-Remote-User": "alice"}, _state("s3cret"))
+        assert current_user(req) is None
+        assert is_admin(req) is False
+
+    def test_correct_secret_admits_the_forwarded_user(self, monkeypatch):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        req = _request(
+            {"X-Remote-User": "alice", "X-Auth-Proxy": "s3cret"}, _state("s3cret")
+        )
+        assert current_user(req) == "alice"
+        assert is_admin(req) is True
+
+    def test_wrong_secret_is_rejected(self, monkeypatch):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        req = _request(
+            {"X-Remote-User": "alice", "X-Auth-Proxy": "wrong"}, _state("s3cret")
+        )
+        assert is_admin(req) is False
+
+    def test_no_secret_configured_keeps_the_old_behaviour(self, monkeypatch):
+        """Existing deployments must not lock themselves out on upgrade."""
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        req = _request({"X-Remote-User": "alice"}, _state(None))
+        assert current_user(req) == "alice"
+        assert is_admin(req) is True

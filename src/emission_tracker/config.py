@@ -76,6 +76,9 @@ class AppConfig(BaseModel):
     # that are allowed to settle/unsettle periods. Empty = nobody is admin
     # (settle button hidden, POST/DELETE endpoints return 403).
     admin_users: list[str] = Field(default_factory=list)
+    # Shared secret nginx sends as X-Auth-Proxy. Empty disables the check,
+    # which is what a deployment without the matching nginx block needs.
+    proxy_secret: str = ""
 
     @model_validator(mode="after")
     def _validate_unique_names_and_hotkeys(self) -> "AppConfig":

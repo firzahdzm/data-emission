@@ -1,9 +1,30 @@
 """Read the authenticated user from nginx (`X-Remote-User` header) and
 gate admin-only endpoints against the `admin_users` config list."""
 
+import hmac
 import os
 
 from fastapi import HTTPException, Request
+
+PROXY_SECRET_HEADER = "X-Auth-Proxy"
+
+
+def proxy_secret_ok(request: Request) -> bool:
+    """True when the request carries the secret nginx adds, or when no
+    secret is configured.
+
+    uvicorn listens on localhost, so `X-Remote-User` on its own proves
+    nothing: any process on the host can set it. nginx is the only party
+    that knows the secret, so its presence is what makes the forwarded
+    username trustworthy. Configuring no secret keeps the old behaviour,
+    so an existing deployment does not lock itself out on upgrade.
+    """
+    config = getattr(request.app.state, "config", None)
+    expected = getattr(config, "proxy_secret", None) if config else None
+    if not expected:
+        return True
+    presented = request.headers.get(PROXY_SECRET_HEADER) or ""
+    return hmac.compare_digest(presented, expected)
 
 
 def current_user(request: Request) -> str | None:
@@ -17,6 +38,8 @@ def current_user(request: Request) -> str | None:
     dev_user = os.environ.get("EMISSION_DEV_USER")
     if dev_user:
         return dev_user
+    if not proxy_secret_ok(request):
+        return None
     return request.headers.get("X-Remote-User") or None
 
 

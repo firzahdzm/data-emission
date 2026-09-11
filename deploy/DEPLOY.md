@@ -150,6 +150,28 @@ sudo systemctl restart emission-tracker
 
 Non-admin users see no Close/Delete buttons; even hitting `POST /api/settlements` directly returns 403.
 
+### Locking the admin header to nginx
+
+`X-Remote-User` is only meaningful if nginx is the only party that can set
+it. Generate a secret, put the same value in both places, and the app will
+ignore the header on any request that arrives without it:
+
+```bash
+openssl rand -hex 32
+# → paste into proxy_set_header X-Auth-Proxy in the nginx site
+# → and into proxy_secret in /opt/emission-tracker/config.yaml
+sudo nginx -t && sudo systemctl reload nginx
+sudo systemctl restart emission-tracker
+```
+
+Verify from the VPS that bypassing nginx no longer works:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X DELETE \
+     -H "X-Remote-User: admin" http://127.0.0.1:8000/api/settlements/999999
+# 401 = closed. 404 = the header still works directly; the secret is not matching.
+```
+
 ## 8. Update workflow
 
 When you change the code on your laptop and push:

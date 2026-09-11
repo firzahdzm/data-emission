@@ -58,6 +58,7 @@
             <input id="close-price-input" type="number" step="0.0001" min="0" placeholder="5.25">
         </label>
         <p class="text-muted" style="font-size: 0.8rem; margin: -0.5rem 0 1rem;">
+            <span id="close-price-live">Mengambil harga live…</span><br>
             Tidak bisa di-edit setelah Close.
         </p>
 
@@ -120,6 +121,30 @@ async function _loadSnapshots() {
     }
 }
 
+// Pre-filled, never forced: the figure is frozen into the settlement and
+// drives every payout, so the admin has to be able to overrule a stale or
+// wrong quote. An empty field on failure is honest; a silent fallback
+// number would be the one thing worse than asking them to type it.
+async function _fillLivePrice() {
+    const live = document.getElementById('close-price-live');
+    live.textContent = 'Mengambil harga live…';
+    try {
+        const r = await fetch('/api/price/alpha');
+        const p = await r.json();
+        if (!p.available) {
+            live.textContent = `Harga live tidak terbaca (${p.reason || 'unknown'}) — isi manual.`;
+            return;
+        }
+        _priceIn.value = p.alpha_in_usd.toFixed(4);
+        const age = p.age_seconds >= 1 ? `, ${Math.round(p.age_seconds)}s lalu` : '';
+        live.textContent =
+            `Live: 1 α = ${p.alpha_in_tao.toFixed(6)} τ × $${p.tao_in_usd.toFixed(2)}`
+            + ` = $${p.alpha_in_usd.toFixed(4)}${age}. Boleh diubah.`;
+    } catch (e) {
+        live.textContent = 'Harga live tidak terbaca — isi manual.';
+    }
+}
+
 _openBtn.addEventListener('click', async () => {
     _clearErr();
     _priceIn.value = '';
@@ -128,6 +153,7 @@ _openBtn.addEventListener('click', async () => {
     _confirm.textContent = 'Close period';
     await _loadSnapshots();
     _dlg.showModal();
+    _fillLivePrice();   // after showModal so the dialog never waits on the network
 });
 
 _cancel.addEventListener('click', () => _dlg.close());

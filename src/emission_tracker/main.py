@@ -14,6 +14,7 @@ from emission_tracker.db import cleanup_orphaned_snapshots, init_schema, sync_te
 from emission_tracker.gradients_client import GradientsClient
 from emission_tracker.rate_limiter import TokenBucket
 from emission_tracker.taostats_client import TaoStatsClient
+from emission_tracker.web.price import AlphaPriceCache
 from emission_tracker.web.routes_api import router as api_router
 from emission_tracker.web.routes_pages import register_pages
 
@@ -66,6 +67,11 @@ def create_app(
         app.state.db_conn = long_lived_conn
         # Expose config so admin gating (web/auth.py) can read admin_users
         app.state.config = config
+        app.state.alpha_price = AlphaPriceCache(
+            client=client,
+            rate_limiter=rate_limiter,
+            subnet_id=config.subnet_id,
+        )
 
         # Scheduler with its own connection per job
         def conn_factory():

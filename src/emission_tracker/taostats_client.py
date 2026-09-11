@@ -10,6 +10,8 @@ import httpx
 DEFAULT_BASE_URL = "https://api.taostats.io"
 NEURON_PATH = "/api/neuron/latest/v1"
 ACCOUNT_PATH = "/api/account/latest/v1"
+POOL_PATH = "/api/dtao/pool/latest/v1"
+TAO_PRICE_PATH = "/api/price/latest/v1"
 AUTH_HEADER = "Authorization"
 
 
@@ -18,6 +20,25 @@ class NeuronInfo:
     uid: int
     emission: float
     block: int | None
+
+
+@dataclass(frozen=True)
+class AlphaPrice:
+    """What one alpha of a subnet is worth, right now.
+
+    Two numbers from two endpoints: the pool gives alpha priced in TAO,
+    and the market gives TAO priced in USD. Both are kept alongside the
+    product so a settlement can record what it was derived from, not just
+    the final figure.
+    """
+
+    alpha_in_tao: float
+    tao_in_usd: float
+    subnet_name: str | None = None
+
+    @property
+    def alpha_in_usd(self) -> float:
+        return self.alpha_in_tao * self.tao_in_usd
 
 
 @dataclass(frozen=True)
@@ -85,6 +106,39 @@ class TaoStatsClient:
             return None
         response.raise_for_status()
         return _parse_account(response.json(), subnet_id=subnet_id)
+
+    def get_alpha_price(self, subnet_id: int) -> AlphaPrice | None:
+        """Live price of one alpha on `subnet_id`, in TAO and in USD.
+
+        Two calls, because TaoStats prices alpha against TAO and TAO
+        against USD in different places. Returns None if either is
+        unavailable — a settlement must not be priced off half a quote.
+        """
+        pool = self._request_with_retry(
+            "GET", POOL_PATH, params={"netuid": subnet_id}
+        )
+        pool.raise_for_status()
+        pool_rows = (pool.json() or {}).get("data") or []
+        if not pool_rows:
+            return None
+
+        market = self._request_with_retry(
+            "GET", TAO_PRICE_PATH, params={"asset": "tao"}
+        )
+        market.raise_for_status()
+        market_rows = (market.json() or {}).get("data") or []
+        if not market_rows:
+            return None
+
+        alpha_in_tao = pool_rows[0].get("price")
+        tao_in_usd = market_rows[0].get("price")
+        if alpha_in_tao is None or tao_in_usd is None:
+            return None
+        return AlphaPrice(
+            alpha_in_tao=float(alpha_in_tao),
+            tao_in_usd=float(tao_in_usd),
+            subnet_name=pool_rows[0].get("name"),
+        )
 
     def _request_with_retry(self, method: str, path: str, **kw) -> httpx.Response:
         last_exc: Exception | None = None

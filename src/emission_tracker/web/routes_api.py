@@ -424,3 +424,23 @@ def trigger_single_balance_refresh(
         "coldkey_count": 1,
         "estimated_seconds": runner.estimate_seconds(1),
     }
+
+
+@router.get("/price/alpha")
+def get_alpha_price(request: Request):
+    """Live price of one alpha, for pre-filling the Close-period dialog.
+
+    Readable by any authenticated user — it is public market data, and the
+    admin gate belongs on settling, not on looking at a price.
+
+    Returns `available: false` rather than a guess when the feed cannot be
+    read. The number is about to be frozen into a settlement that cannot be
+    edited, so a silent fallback would be the worst possible answer.
+    """
+    cache = getattr(request.app.state, "alpha_price", None)
+    if cache is None:
+        return {"available": False, "reason": "price feed not configured"}
+    price = cache.get()
+    if price is None:
+        return {"available": False, "reason": "price feed unavailable"}
+    return {"available": True, **price}

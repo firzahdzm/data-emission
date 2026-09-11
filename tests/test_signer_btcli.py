@@ -154,3 +154,32 @@ def test_run_btcli_raises_when_the_payload_is_not_an_object():
                 run=lambda *a, **kw: _Completed(stdout=body),
             )
         assert "not a JSON object" in str(exc.value)
+
+
+def test_list_wallets_passes_a_usable_PATH():
+    """subprocess resolves a bare program name against the PATH in the
+    environment it is handed. An empty env falls back to /bin:/usr/bin,
+    which does not contain /usr/local/bin where btcli lives — and the
+    failure is a bare FileNotFoundError that explains nothing. This was a
+    real production failure; every test injects a fake run, so nothing
+    else would catch it."""
+    seen = {}
+
+    def spy(argv, **kwargs):
+        seen.update(kwargs)
+
+        class R:
+            returncode = 0
+            stdout = json.dumps({"wallets": []})
+            stderr = ""
+
+        return R()
+
+    list_wallets(WP, run=spy)
+    assert "/usr/local/bin" in seen["env"]["PATH"]
+
+
+def test_base_env_carries_only_what_btcli_needs():
+    from emission_tracker.signer.btcli import base_env
+
+    assert set(base_env()) == {"PATH", "HOME"}

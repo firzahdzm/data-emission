@@ -6,6 +6,7 @@ out to btcli would either prompt for a passphrase or move real funds.
 """
 
 import json
+import os
 import subprocess
 
 BTCLI = "btcli"
@@ -66,6 +67,27 @@ def unstake_argv(
     ]
 
 
+def base_env() -> dict:
+    """The environment every btcli call needs, and nothing more.
+
+    PATH matters more than it looks: subprocess resolves a bare program
+    name against the PATH in the environment it is *given*, so an empty
+    dict makes Python fall back to `/bin:/usr/bin` — which does not
+    contain /usr/local/bin, where btcli is normally installed. A call with
+    env={} therefore fails with a bare FileNotFoundError that says nothing
+    about why.
+
+    HOME matters because btcli writes into it, and a systemd system user's
+    home is /nonexistent; the unit points HOME at its StateDirectory.
+    """
+    return {
+        "PATH": os.environ.get(
+            "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        ),
+        "HOME": os.environ.get("HOME", "/tmp"),
+    }
+
+
 def run_btcli(argv: list[str], env: dict, timeout: int, run=subprocess.run) -> dict:
     try:
         proc = run(argv, capture_output=True, text=True, timeout=timeout, env=env)
@@ -106,7 +128,7 @@ def list_wallets(wallet_path: str, run=subprocess.run, timeout: int = 30) -> dic
         "--wallet-path", wallet_path,
         "--no-prompt", "--json-output",
     ]
-    payload = run_btcli(argv, env={}, timeout=timeout, run=run)
+    payload = run_btcli(argv, env=base_env(), timeout=timeout, run=run)
     return {
         w["ss58_address"]: w["name"]
         for w in payload.get("wallets", [])

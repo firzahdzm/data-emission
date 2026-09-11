@@ -16,6 +16,7 @@ from pathlib import Path
 
 from emission_tracker.signer.btcli import (
     BtcliError,
+    base_env,
     coldkey_password_env_var,
     list_wallets,
     run_btcli,
@@ -189,8 +190,9 @@ class Signer:
 
     def _env_for(self, wallet_name: str, secret: str) -> dict:
         env = {
-            "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-            "HOME": os.environ.get("HOME", "/root"),
+            # Same base as every other btcli call — see base_env() for why
+            # PATH here is load-bearing rather than decoration.
+            **base_env(),
             # The env var name btcli/bittensor_wallet reads the coldkey
             # passphrase from is derived from the coldkey keyfile path (see
             # coldkey_password_env_var), not a fixed name — getting it wrong

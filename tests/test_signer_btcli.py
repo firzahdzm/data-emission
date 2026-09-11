@@ -101,8 +101,11 @@ def test_list_wallets_command_is_non_interactive_and_machine_readable():
     argv = captured_argv[0]
     assert argv[:3] == ["btcli", "wallet", "list"]
     assert "--wallet-path" in argv and argv[argv.index("--wallet-path") + 1] == WP
-    assert "--no-prompt" in argv
     assert "--json-output" in argv
+    # Deliberately absent: `btcli wallet list` rejects --no-prompt and exits
+    # 2. Verified against btcli 9.23.2 on the target host. It reads public
+    # keyfile metadata and never prompts, so there is nothing to suppress.
+    assert "--no-prompt" not in argv
 
 
 def test_list_wallets_maps_coldkey_to_name():

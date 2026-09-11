@@ -123,10 +123,14 @@ def list_wallets(wallet_path: str, run=subprocess.run, timeout: int = 30) -> dic
     the first time a wallet is renamed, and the failure would be signing
     from the wrong coldkey.
     """
+    # No --no-prompt here, unlike transfer and unstake: `btcli wallet list`
+    # does not accept the option and exits 2 if given it. Verified against
+    # btcli 9.23.2 on the target host — the command reads public keyfile
+    # metadata and never prompts, so there is nothing to suppress.
     argv = [
         BTCLI, "wallet", "list",
         "--wallet-path", wallet_path,
-        "--no-prompt", "--json-output",
+        "--json-output",
     ]
     payload = run_btcli(argv, env=base_env(), timeout=timeout, run=run)
     return {

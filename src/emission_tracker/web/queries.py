@@ -940,6 +940,10 @@ def coldkey_cards(conn: sqlite3.Connection) -> list[dict]:
                             wallet balances, None if the last fetch failed
         tournament_balance_rao / tournament_total_sent_rao:
                             tournament deposit, None if absent or unfetched
+        stake_alpha_rao / stake_alpha_as_tao_rao:
+                            alpha staked on the tracked subnet and its TAO
+                            value — not balance_staked, which spans every
+                            subnet the coldkey holds alpha in
         tournament_seen:    1 if the last fetch reached the API (so None
                             balances mean "no tournament account"), 0 if the
                             fetch itself failed (so None means "unknown")
@@ -1004,6 +1008,10 @@ def coldkey_cards(conn: sqlite3.Connection) -> list[dict]:
                 "tournament_balance_rao": bal["tournament_balance_rao"] if bal else None,
                 "tournament_total_sent_rao": (
                     bal["tournament_total_sent_rao"] if bal else None
+                ),
+                "stake_alpha_rao": bal["stake_alpha_rao"] if bal else None,
+                "stake_alpha_as_tao_rao": (
+                    bal["stake_alpha_as_tao_rao"] if bal else None
                 ),
                 "tournament_seen": bal["tournament_seen"] if bal else 0,
                 "fetched_at": bal["fetched_at"] if bal else None,

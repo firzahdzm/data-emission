@@ -57,6 +57,7 @@ def build_scheduler(
                     gradients=gradients,
                     rate_limiter=rate_limiter,
                     request_interval_seconds=config.polling.request_interval_seconds,
+                    subnet_id=config.subnet_id,
                 )
             except Exception:
                 log.exception("balance refresh failed")

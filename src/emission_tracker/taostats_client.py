@@ -22,11 +22,19 @@ class NeuronInfo:
 
 @dataclass(frozen=True)
 class AccountInfo:
-    """A coldkey's wallet balances, all in rao."""
+    """A coldkey's wallet balances, all in rao.
+
+    `staked_rao` is stake across every subnet; `stake_alpha_rao` and
+    `stake_alpha_as_tao_rao` narrow that to the one subnet we track. The
+    two differ whenever a coldkey holds alpha elsewhere, which several of
+    ours do, so a dashboard about one subnet must not quote the total.
+    """
 
     free_rao: int
     staked_rao: int
     total_rao: int
+    stake_alpha_rao: int = 0
+    stake_alpha_as_tao_rao: int = 0
 
 
 class TaoStatsClient:
@@ -63,15 +71,20 @@ class TaoStatsClient:
         response.raise_for_status()
         return _parse_neuron(response.json())
 
-    def get_account(self, coldkey: str) -> AccountInfo | None:
-        """Wallet balances for one coldkey. None if the address is unknown."""
+    def get_account(self, coldkey: str, subnet_id: int | None = None) -> AccountInfo | None:
+        """Wallet balances for one coldkey. None if the address is unknown.
+
+        `subnet_id` selects which subnet's alpha stake to total up from the
+        response's per-hotkey `alpha_balances`; without it those fields stay
+        zero.
+        """
         response = self._request_with_retry(
             "GET", ACCOUNT_PATH, params={"address": coldkey}
         )
         if response.status_code == 404:
             return None
         response.raise_for_status()
-        return _parse_account(response.json())
+        return _parse_account(response.json(), subnet_id=subnet_id)
 
     def _request_with_retry(self, method: str, path: str, **kw) -> httpx.Response:
         last_exc: Exception | None = None
@@ -108,14 +121,27 @@ def _parse_neuron(payload: dict) -> NeuronInfo | None:
     )
 
 
-def _parse_account(payload: dict) -> AccountInfo | None:
+def _parse_account(payload: dict, subnet_id: int | None = None) -> AccountInfo | None:
     data = payload.get("data")
     if not data:
         return None
     item = data[0] if isinstance(data, list) else data
+
+    # `alpha_balances` lists one entry per (hotkey, subnet). Summing the
+    # entries for our subnet gives the coldkey's stake there; entries for
+    # other subnets are deliberately ignored.
+    alpha = as_tao = 0
+    if subnet_id is not None:
+        for entry in item.get("alpha_balances") or []:
+            if entry.get("netuid") == subnet_id:
+                alpha += int(entry.get("balance") or 0)
+                as_tao += int(entry.get("balance_as_tao") or 0)
+
     # Balances come back as decimal strings, not numbers.
     return AccountInfo(
         free_rao=int(item["balance_free"]),
         staked_rao=int(item["balance_staked"]),
         total_rao=int(item["balance_total"]),
+        stake_alpha_rao=alpha,
+        stake_alpha_as_tao_rao=as_tao,
     )

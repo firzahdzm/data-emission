@@ -142,6 +142,10 @@ def register_pages(app: FastAPI) -> None:
         latest = queries.latest_snapshot(conn)
         last_settle = queries.last_settlement(conn)
         coldkeys = queries.coldkey_cards(conn)
+        # Only used to label the stake figure; absent in tests that stub config.
+        subnet_id = getattr(
+            getattr(request.app.state, "config", None), "subnet_id", None
+        )
         # All cards come from one refresh run, so any non-null stamp
         # dates the whole grid.
         coldkey_fetched_at = next(
@@ -154,6 +158,7 @@ def register_pages(app: FastAPI) -> None:
                 "rows": rows,
                 "coldkeys": coldkeys,
                 "coldkey_fetched_at": coldkey_fetched_at,
+                "subnet_id": subnet_id,
                 "total_cumulative": total_cumulative,
                 "total_registered": total_registered,
                 "total_hotkeys": total_hotkeys,

@@ -136,6 +136,11 @@ SCHEMA_STATEMENTS = [
         -- tournament_seen tells those two apart.
         tournament_balance_rao    INTEGER,
         tournament_total_sent_rao INTEGER,
+        -- Alpha staked on the tracked subnet only, and its value in TAO.
+        -- Deliberately not balance_staked: that spans every subnet, and
+        -- several of our coldkeys hold alpha elsewhere.
+        stake_alpha_rao           INTEGER,
+        stake_alpha_as_tao_rao    INTEGER,
         tournament_seen           INTEGER NOT NULL DEFAULT 0
                                   CHECK (tournament_seen IN (0, 1)),
         PRIMARY KEY (coldkey_ss58, fetched_at)
@@ -173,6 +178,8 @@ MIGRATIONS = [
     "ALTER TABLE settlements ADD COLUMN paid_at TIMESTAMP",
     "ALTER TABLE hotkeys ADD COLUMN coldkey_ss58 TEXT",
     "ALTER TABLE hotkeys ADD COLUMN label TEXT",
+    "ALTER TABLE coldkey_balances ADD COLUMN stake_alpha_rao INTEGER",
+    "ALTER TABLE coldkey_balances ADD COLUMN stake_alpha_as_tao_rao INTEGER",
 ]
 
 

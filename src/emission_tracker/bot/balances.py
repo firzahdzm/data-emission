@@ -29,6 +29,7 @@ def refresh_balances(
     gradients: GradientsClient,
     rate_limiter: TokenBucket,
     request_interval_seconds: float,
+    subnet_id: int,
     coldkeys: list[str] | None = None,
 ) -> BalanceRefreshResult:
     """Fetch wallet and tournament balances for known coldkeys.
@@ -71,7 +72,7 @@ def refresh_balances(
         # only throttled by the same pacing loop.
         rate_limiter.acquire()
         try:
-            account = taostats.get_account(coldkey)
+            account = taostats.get_account(coldkey, subnet_id=subnet_id)
             wallet_ok += 1
         except Exception as exc:
             log.warning("coldkey=%s wallet fetch failed: %s", coldkey, exc)
@@ -98,8 +99,9 @@ def refresh_balances(
             INSERT INTO coldkey_balances (
                 coldkey_ss58, fetched_at,
                 balance_free_rao, balance_staked_rao, balance_total_rao,
-                tournament_balance_rao, tournament_total_sent_rao, tournament_seen
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                tournament_balance_rao, tournament_total_sent_rao, tournament_seen,
+                stake_alpha_rao, stake_alpha_as_tao_rao
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(coldkey_ss58, fetched_at) DO NOTHING
             """,
             (
@@ -111,6 +113,8 @@ def refresh_balances(
                 tournament.balance_rao if tournament else None,
                 tournament.total_sent_rao if tournament else None,
                 tournament_seen,
+                account.stake_alpha_rao if account else None,
+                account.stake_alpha_as_tao_rao if account else None,
             ),
         )
         conn.commit()
@@ -146,12 +150,14 @@ class BalanceRunner:
         gradients: GradientsClient,
         rate_limiter: TokenBucket,
         request_interval_seconds: float,
+        subnet_id: int,
     ):
         self._conn_factory = conn_factory
         self._taostats = taostats
         self._gradients = gradients
         self._rate_limiter = rate_limiter
         self._request_interval_seconds = request_interval_seconds
+        self._subnet_id = subnet_id
         self._lock = threading.Lock()
         self._running = False
         self._started_at: datetime | None = None
@@ -223,6 +229,7 @@ class BalanceRunner:
                 gradients=self._gradients,
                 rate_limiter=self._rate_limiter,
                 request_interval_seconds=self._request_interval_seconds,
+                subnet_id=self._subnet_id,
                 coldkeys=coldkeys,
             )
         except Exception:

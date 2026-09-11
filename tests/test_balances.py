@@ -16,10 +16,18 @@ HK_B = "5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2"
 class _FakeTaoStats:
     def __init__(self):
         self.asked: list[str] = []
+        self.subnets: list[int | None] = []
 
-    def get_account(self, coldkey: str) -> AccountInfo:
+    def get_account(self, coldkey: str, subnet_id: int | None = None) -> AccountInfo:
         self.asked.append(coldkey)
-        return AccountInfo(free_rao=1, staked_rao=2, total_rao=3)
+        self.subnets.append(subnet_id)
+        return AccountInfo(
+            free_rao=1,
+            staked_rao=2,
+            total_rao=3,
+            stake_alpha_rao=770_000_000_000,
+            stake_alpha_as_tao_rao=12_400_000_000,
+        )
 
 
 class _FakeGradients:
@@ -56,6 +64,7 @@ def _run(conn, coldkeys=None):
         gradients=gr,
         rate_limiter=TokenBucket(capacity=100, refill_per_second=100),
         request_interval_seconds=0,
+        subnet_id=56,
         coldkeys=coldkeys,
     )
     return result, ts, gr
@@ -129,6 +138,7 @@ def test_runner_never_widens_an_empty_selection_into_a_full_sweep(memory_db, tmp
         gradients=gr,
         rate_limiter=TokenBucket(capacity=100, refill_per_second=100),
         request_interval_seconds=0,
+        subnet_id=56,
     )
     assert runner.start([]) is True
     for _ in range(100):
@@ -137,3 +147,22 @@ def test_runner_never_widens_an_empty_selection_into_a_full_sweep(memory_db, tmp
         time.sleep(0.02)
     assert not runner.is_running, "refresh thread did not finish"
     assert ts.asked == [], f"empty selection fetched {ts.asked}"
+
+
+def test_subnet_stake_is_stored_and_scoped_to_the_tracked_subnet(memory_db):
+    """The card must show stake on our subnet, not balance_staked — several
+    coldkeys hold alpha on other subnets, which would inflate the figure."""
+    _seed(memory_db)
+    _, ts, _ = _run(memory_db, coldkeys=[CK_A])
+
+    assert ts.subnets == [56], "subnet_id not passed through to the client"
+
+    row = memory_db.execute(
+        "SELECT stake_alpha_rao, stake_alpha_as_tao_rao, balance_staked_rao "
+        "FROM coldkey_balances WHERE coldkey_ss58 = ?",
+        (CK_A,),
+    ).fetchone()
+    assert row["stake_alpha_rao"] == 770_000_000_000
+    assert row["stake_alpha_as_tao_rao"] == 12_400_000_000
+    # Kept separately from the all-subnet total, not conflated with it.
+    assert row["balance_staked_rao"] == 2

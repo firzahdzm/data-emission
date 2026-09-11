@@ -324,8 +324,24 @@ def run_btcli_text(
             input=answers if answers is not None else "",
         )
     except subprocess.TimeoutExpired as exc:
-        # A transfer that timed out may still have reached the chain, so
-        # this is not a clean "it did not happen".
+        # A timeout normally means we cannot know whether the chain saw it.
+        # One case we can know: btcli was still sitting at the password
+        # prompt, so nothing was ever submitted. btcli re-asks when the
+        # value is rejected, and with stdin exhausted it waits there until
+        # the timeout — the common shape of a wrong unlock value. Calling
+        # every one of those "unknown" would train the operator to ignore
+        # the warning that matters.
+        partial = (exc.stdout or "") + (exc.stderr or "")
+        if isinstance(partial, bytes):
+            partial = partial.decode(errors="replace")
+        stuck_at_password = "Enter your password" in partial and not any(
+            m in partial for m in (*_OK_MARKERS, "Submitting", "Extrinsic")
+        )
+        if stuck_at_password:
+            raise BtcliError(
+                "btcli kept asking for the unlock value and never accepted "
+                f"it (timed out after {timeout}s) — nothing was submitted"
+            ) from exc
         raise TransferUnknown(
             f"btcli timed out after {timeout}s — check the chain"
         ) from exc

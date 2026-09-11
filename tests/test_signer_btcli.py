@@ -417,3 +417,45 @@ class TestTransferOutcomeIsNeverGuessed:
 
         with pytest.raises(TransferUnknown):
             run_btcli_text(["btcli", "x"], env={}, timeout=90, run=boom)
+
+
+class TestTimeoutClassification:
+    """"Unknown" has to stay rare enough to be believed. A timeout while
+    btcli was still at the password prompt submitted nothing, and saying
+    so beats crying wolf."""
+
+    def _timeout(self, partial):
+        def boom(*a, **kw):
+            raise subprocess.TimeoutExpired(
+                cmd="btcli", timeout=90, output=partial, stderr=""
+            )
+
+        from emission_tracker.signer.btcli import run_btcli_text
+
+        return lambda: run_btcli_text(
+            ["btcli", "x"], env={}, timeout=90, run=boom, answers="y\nv\n"
+        )
+
+    def test_stuck_at_the_password_prompt_is_a_plain_failure(self):
+        run = self._timeout(
+            "Proceed with transfer? [y/n] (n): Enter your password: "
+            "Enter your password: "
+        )
+        with pytest.raises(BtcliError) as exc:
+            run()
+        assert "nothing was submitted" in str(exc.value)
+
+    def test_a_timeout_after_submission_stays_unknown(self):
+        from emission_tracker.signer.btcli import TransferUnknown
+
+        run = self._timeout(
+            "Enter your password: Decrypting...\nSubmitting extrinsic...\n"
+        )
+        with pytest.raises(TransferUnknown):
+            run()
+
+    def test_a_timeout_with_no_output_at_all_stays_unknown(self):
+        from emission_tracker.signer.btcli import TransferUnknown
+
+        with pytest.raises(TransferUnknown):
+            self._timeout("")()

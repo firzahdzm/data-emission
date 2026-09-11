@@ -508,3 +508,30 @@ else:
 
     def test_the_confirmation_is_answered_so_it_is_never_aborted(self, tmp_path):
         assert "Aborted" not in self._run(tmp_path, "rahasia-benar")
+
+
+def test_a_repeated_password_prompt_is_reported_at_once(tmp_path):
+    """btcli re-asks when the value is rejected and would go on until the
+    timeout — 15 times in 30 seconds, observed. The repeat *is* the
+    rejection, so waiting 90s to say so only punishes the operator."""
+    import time as _time
+
+    from emission_tracker.signer.btcli import run_btcli_pty
+
+    script = tmp_path / "loop.py"
+    script.write_text(
+        "import getpass\n"
+        "print('Proceed with transfer? [y/n] (n): ', end='', flush=True)\n"
+        "input()\n"
+        "for _ in range(20):\n"
+        "    getpass.getpass('Enter your password: ')\n"
+    )
+    started = _time.monotonic()
+    with pytest.raises(BtcliError) as exc:
+        run_btcli_pty(
+            [sys.executable, str(script)],
+            {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+            timeout=30, secret="salah",
+        )
+    assert "rejected the unlock value" in str(exc.value)
+    assert _time.monotonic() - started < 15, "should not wait for the timeout"

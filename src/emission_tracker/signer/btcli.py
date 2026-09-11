@@ -374,9 +374,11 @@ def run_btcli_text(
 # What btcli asks during a transfer, and what to answer. Matched against
 # the output as it arrives, because the prompts appear one at a time and
 # each must be answered before the next is printed.
+PASSWORD_PROMPT = "Enter your password"
+
 TRANSFER_PROMPTS = (
     ("Proceed with transfer?", "y"),
-    ("Enter your password", None),   # None = the wallet unlock value
+    (PASSWORD_PROMPT, None),         # None = the wallet unlock value
 )
 
 
@@ -425,6 +427,7 @@ def run_btcli_pty(
     import select
 
     pending = list(prompts)
+    answered_password = 0
     out: list[str] = []
     deadline = time.monotonic() + timeout
 
@@ -454,7 +457,20 @@ def run_btcli_pty(
             seen = "".join(out)
             if pending and pending[0][0] in seen:
                 _, answer = pending.pop(0)
+                if answer is None:
+                    answered_password = seen.count(PASSWORD_PROMPT)
                 os.write(fd, ((secret if answer is None else answer) + "\n").encode())
+            elif (
+                answered_password
+                and seen.count(PASSWORD_PROMPT) > answered_password
+            ):
+                # btcli asks again when the value is rejected, and would go
+                # on asking until the timeout. The repeat is the rejection:
+                # report it now rather than making the operator wait 90s
+                # for the same answer.
+                raise BtcliError(
+                    "btcli rejected the unlock value — nothing was submitted"
+                )
             if not ready and os.waitpid(pid, os.WNOHANG)[0]:
                 break
     finally:

@@ -4,6 +4,7 @@ import pytest
 
 from emission_tracker.signer.btcli import (
     BtcliError,
+    coldkey_password_env_var,
     list_wallets,
     run_btcli,
     transfer_argv,
@@ -19,6 +20,39 @@ class _Completed:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
+
+
+@pytest.mark.parametrize(
+    "wallet_path, wallet_name, expected",
+    [
+        (
+            "/root/.bittensor/wallets", "goy",
+            "BT_PW__ROOT__BITTENSOR_WALLETS_GOY_COLDKEY",
+        ),
+        (
+            "/root/.bittensor/wallets", "utama",
+            "BT_PW__ROOT__BITTENSOR_WALLETS_UTAMA_COLDKEY",
+        ),
+        (
+            "/root/.bittensor/wallets", "prj1",
+            "BT_PW__ROOT__BITTENSOR_WALLETS_PRJ1_COLDKEY",
+        ),
+        (
+            "/var/lib/emission-signer/wallets", "goy",
+            "BT_PW__VAR_LIB_EMISSION-SIGNER_WALLETS_GOY_COLDKEY",
+        ),
+        (
+            "/tmp/a.b-c", "goy",
+            "BT_PW__TMP_A_B-C_GOY_COLDKEY",
+        ),
+    ],
+)
+def test_coldkey_password_env_var_matches_bittensor_wallet(
+    wallet_path, wallet_name, expected
+):
+    """Verified against Wallet(...).coldkey_file.env_var_name() on the
+    production host -- see deploy/DEPLOY.md's re-verification step."""
+    assert coldkey_password_env_var(wallet_path, wallet_name) == expected
 
 
 def test_transfer_command_is_non_interactive_and_machine_readable():

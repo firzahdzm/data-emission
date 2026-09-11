@@ -15,6 +15,27 @@ class BtcliError(Exception):
     """btcli exited non-zero, timed out, or printed something unparseable."""
 
 
+def coldkey_password_env_var(wallet_path: str, wallet_name: str) -> str:
+    """Return the env var name bittensor_wallet reads a coldkey passphrase
+    from, for the wallet at ``<wallet_path>/<wallet_name>``.
+
+    This mirrors ``bittensor_wallet``'s own derivation:
+    ``Wallet(name=wallet_name, path=wallet_path).coldkey_file.env_var_name()``,
+    which is computed from the coldkey *keyfile path* --
+    ``<wallet_path>/<wallet_name>/coldkey`` -- uppercased, with every ``/``
+    and ``.`` replaced by ``_``, prefixed with ``BT_PW``. It is NOT a fixed
+    name (unlike the wrong, version-mismatched ``BT_WALLET_PASSWORD``) --
+    it is derived from the path, so relocating the wallets (as
+    deploy/DEPLOY.md recommends) changes it too. This was verified against
+    the installed bittensor_wallet on the production host, not guessed;
+    deploy/DEPLOY.md carries a step to re-verify the two still agree
+    whenever bittensor is upgraded.
+    """
+    keyfile_path = f"{wallet_path}/{wallet_name}/coldkey"
+    suffix = keyfile_path.upper().replace("/", "_").replace(".", "_")
+    return f"BT_PW_{suffix}"
+
+
 def transfer_argv(
     wallet_name: str, destination: str, amount_tao: float, wallet_path: str
 ) -> list[str]:

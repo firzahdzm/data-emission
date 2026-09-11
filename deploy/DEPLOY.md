@@ -302,29 +302,57 @@ unit, and remove it on stop. The socket lives inside it.
 
 ### 7. Verify the passphrase environment variable
 
-**Do this before trusting either button.** The signer passes the passphrase
-to btcli as `BT_WALLET_PASSWORD`. That name is version-dependent — older
-bittensor releases also honoured per-wallet forms such as
-`BT_COLD_PW_<NAME>` — and if it is wrong for the installed version, btcli
-falls back to an interactive prompt, `--no-prompt` turns that into a
-non-zero exit, and every action fails. Unlock one coldkey locally. No chain
-interaction, no funds move:
+**Do this before trusting either button.** The signer no longer passes the
+passphrase under a fixed name — the correct env var name is *derived from
+the coldkey keyfile path* (`<wallet_path>/<wallet_name>/coldkey`,
+uppercased, with every `/` and `.` turned into `_`, prefixed `BT_PW_`), by
+`coldkey_password_env_var()` in `src/emission_tracker/signer/btcli.py`.
+This mirrors `bittensor_wallet`'s own derivation
+(`Wallet(...).coldkey_file.env_var_name()`), which is why relocating the
+wallets (Option A above) changes the variable name too — but it is still
+worth re-checking the two agree, since a future bittensor release could
+change its derivation rule. First, ask the installed bittensor for the
+authoritative name and compare it to what our function computes for the
+same `wallet_path`/name:
 
 ```bash
-sudo -u signer BT_WALLET_PASSWORD='<that wallet's passphrase>' \
+sudo -u signer /root/.venv/bin/python3 -c "
+from bittensor_wallet import Wallet
+print(Wallet(name='goy', path='<your wallet_path>').coldkey_file.env_var_name())
+"
+sudo -u signer /opt/emission-tracker/.venv/bin/python3 -c "
+from emission_tracker.signer.server import coldkey_password_env_var
+print(coldkey_password_env_var('<your wallet_path>', 'goy'))
+"
+```
+
+**The two commands must print the same string.** If they differ, the
+installed bittensor changed its derivation and `coldkey_password_env_var`
+in `src/emission_tracker/signer/btcli.py` must be updated to match before
+any button will work.
+
+Then unlock one coldkey locally, exporting the *computed* variable name
+(not `BT_WALLET_PASSWORD`) — no chain interaction, no funds move:
+
+```bash
+sudo -u signer env "$(sudo -u signer /opt/emission-tracker/.venv/bin/python3 -c "
+from emission_tracker.signer.server import coldkey_password_env_var
+print(coldkey_password_env_var('/root/.bittensor/wallets', 'goy'))
+")"='<that wallet's passphrase>' \
   /opt/emission-tracker/.venv/bin/python -c "
 from bittensor_wallet import Wallet
 w = Wallet(name='goy', path='/root/.bittensor/wallets')
 w.unlock_coldkey()
-print('passphrase accepted from BT_WALLET_PASSWORD')
+print('passphrase accepted')
 "
 ```
 
-If it prints `passphrase accepted from BT_WALLET_PASSWORD`, the name is
-right. **If it prompts you for a password instead, the variable name is
-wrong for this bittensor version** — find the correct one and fix
-`_env_for` in `src/emission_tracker/signer/server.py` before the buttons
-will work at all.
+If it prints `passphrase accepted`, the name is right. **If it prompts
+you for a password instead, the variable name is wrong for this
+bittensor version** — the mismatch should already have shown up in the
+comparison step above; fix `coldkey_password_env_var` in
+`src/emission_tracker/signer/btcli.py` before the buttons will work at
+all.
 
 ### 8. Restart the tracker and check it can reach the socket
 

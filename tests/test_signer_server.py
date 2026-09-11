@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from emission_tracker.signer.btcli import coldkey_password_env_var
 from emission_tracker.signer.protocol import OP_PAY, OP_UNSTAKE, SignRequest
 from emission_tracker.signer.server import Signer, SignerConfig
 
@@ -50,6 +51,15 @@ def _signer(run, tmp_path, **over):
     s = Signer(_config(tmp_path, **over), run=run)
     s._passphrase_for = lambda name: "pw"  # no real credential files in tests
     return s
+
+
+def test_env_for_uses_the_path_derived_var_not_bt_wallet_password(tmp_path):
+    s = _signer(_Recorder(), tmp_path)
+    s._passphrase_for = lambda name: "sekret"
+    env = s._env_for("prj1")
+    expected_var = coldkey_password_env_var("/root/.bittensor/wallets", "prj1")
+    assert env[expected_var] == "sekret"
+    assert "BT_WALLET_PASSWORD" not in env
 
 
 def test_payment_uses_the_signers_own_fee_table(tmp_path):

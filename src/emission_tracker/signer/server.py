@@ -16,6 +16,7 @@ from pathlib import Path
 
 from emission_tracker.signer.btcli import (
     BtcliError,
+    coldkey_password_env_var,
     list_wallets,
     run_btcli,
     transfer_argv,
@@ -202,14 +203,15 @@ class Signer:
         env = {
             "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
             "HOME": os.environ.get("HOME", "/root"),
-            # The env var name btcli reads the coldkey passphrase from. It
-            # is version-dependent (older bittensor also honoured per-wallet
-            # forms like BT_COLD_PW_<NAME>), and getting it wrong makes btcli
-            # fall back to a prompt, which --no-prompt turns into a non-zero
-            # exit — every button fails. Verify it against the installed
-            # bittensor before going live: see "Verify the passphrase
-            # environment variable" in deploy/DEPLOY.md.
-            "BT_WALLET_PASSWORD": self._passphrase_for(wallet_name),
+            # The env var name btcli/bittensor_wallet reads the coldkey
+            # passphrase from is derived from the coldkey keyfile path (see
+            # coldkey_password_env_var), not a fixed name — getting it wrong
+            # makes btcli fall back to a prompt, which --no-prompt turns
+            # into a non-zero exit — every button fails. Verify it against
+            # the installed bittensor before going live: see "Verify the
+            # passphrase environment variable" in deploy/DEPLOY.md.
+            coldkey_password_env_var(self._config.wallet_path, wallet_name):
+                self._passphrase_for(wallet_name),
         }
         return env
 

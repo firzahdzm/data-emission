@@ -812,3 +812,22 @@ a:hover {
     animation: sn-pulse 1s ease-in-out infinite;
 }
 @keyframes sn-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+
+/* btcli error text runs long and arrives in one line. Clamp it so a single
+   bad message cannot stretch the history table past the viewport; the full
+   text stays available in the cell's tooltip. */
+#actions-table { table-layout: fixed; width: 100%; }
+#actions-table td, #actions-table th { vertical-align: top; }
+.action-detail {
+    max-width: 0;            /* with table-layout:fixed, lets the cell shrink */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.78rem;
+}
+#actions-table th:nth-child(1), #actions-table td:nth-child(1) { width: 13%; }
+#actions-table th:nth-child(2), #actions-table td:nth-child(2) { width: 11%; }
+#actions-table th:nth-child(3), #actions-table td:nth-child(3) { width: 11%; }
+#actions-table th:nth-child(4), #actions-table td:nth-child(4) { width: 10%; }
+#actions-table th:nth-child(5), #actions-table td:nth-child(5) { width: 9%; }
+#actions-table th:nth-child(6), #actions-table td:nth-child(6) { width: 9%; }

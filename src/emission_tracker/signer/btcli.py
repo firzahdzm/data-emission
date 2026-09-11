@@ -88,14 +88,28 @@ def base_env() -> dict:
     }
 
 
+def tidy(text: str, limit: int = 300) -> str:
+    """Flatten btcli's boxed, multi-line output into one readable line.
+
+    btcli draws errors inside Unicode box borders across several lines.
+    Stored raw, that text wrecks any table it is later shown in, and the
+    useful sentence is buried among the borders.
+    """
+    cleaned = "".join(" " if ch in "│╭╮╰╯─━┃┏┓┗┛" else ch for ch in text or "")
+    cleaned = " ".join(cleaned.split())
+    return cleaned[:limit].strip()
+
+
 def run_btcli(argv: list[str], env: dict, timeout: int, run=subprocess.run) -> dict:
     try:
         proc = run(argv, capture_output=True, text=True, timeout=timeout, env=env)
     except subprocess.TimeoutExpired as exc:
         raise BtcliError(f"btcli timed out after {timeout}s") from exc
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()[:400]
-        raise BtcliError(f"btcli exited {proc.returncode}: {detail}")
+        raise BtcliError(
+            f"btcli exited {proc.returncode}: "
+            f"{tidy(proc.stderr or proc.stdout or '')}"
+        )
     try:
         payload = json.loads(proc.stdout)
     except ValueError as exc:
@@ -113,6 +127,18 @@ def run_btcli(argv: list[str], env: dict, timeout: int, run=subprocess.run) -> d
         raise BtcliError(
             f"btcli output was not a JSON object: {type(payload).__name__}"
         )
+
+    # btcli reports a refused transfer as {"success": false} and still exits
+    # 0. Trusting the exit code alone recorded failed payments as successful
+    # — the worst reading a money log can give, because the operator then
+    # believes a fee was paid that never left. Observed on a real wrong
+    # unlock value: exit 0, {"success": false, "extrinsic_identifier": null}.
+    if payload.get("success") is False:
+        detail = tidy(
+            str(payload.get("error") or payload.get("message") or "")
+        ) or tidy(proc.stderr or "") or "btcli reported success=false"
+        raise BtcliError(detail)
+
     return payload
 
 

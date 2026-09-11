@@ -211,7 +211,10 @@ class Signer:
 
 
 def _tx_hash(payload: dict) -> str | None:
-    for key in ("tx_hash", "transaction_hash", "extrinsic_hash", "hash"):
+    # extrinsic_identifier is what btcli 9.23 actually returns; the rest are
+    # kept for other versions.
+    for key in ("extrinsic_identifier", "tx_hash", "transaction_hash",
+                "extrinsic_hash", "hash"):
         value = payload.get(key)
         if isinstance(value, str) and value:
             return value

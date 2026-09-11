@@ -673,11 +673,21 @@ _confirm.addEventListener('click', async () => {
             ];
             cells.forEach((value, i) => {
                 const td = document.createElement('td');
-                if (i === 4) td.innerHTML = statusBadge(a.status);
-                // textContent everywhere else: a.error carries btcli's own
-                // output, which must never be parsed as markup.
-                else td.textContent = value;
+                if (i === 4) {
+                    td.innerHTML = statusBadge(a.status);
+                } else {
+                    // textContent everywhere else: a.error carries btcli's
+                    // own output, which must never be parsed as markup.
+                    td.textContent = value;
+                }
                 if (i === 3) td.className = 'num text-mono';
+                if (i === 6) {
+                    // btcli errors run long. Clamp the cell and put the
+                    // whole thing in the tooltip, so one bad message cannot
+                    // stretch the table past the viewport.
+                    td.className = 'action-detail';
+                    td.title = value;
+                }
                 tr.appendChild(td);
             });
             actionsBody.appendChild(tr);

@@ -186,3 +186,54 @@ def test_base_env_carries_only_what_btcli_needs():
     from emission_tracker.signer.btcli import base_env
 
     assert set(base_env()) == {"PATH", "HOME"}
+
+
+def test_success_false_is_a_failure_even_though_btcli_exits_zero():
+    """btcli refuses a transfer with {"success": false} and still exits 0.
+    Trusting the exit code recorded failed payments as successful — the
+    worst reading a money log can give. Observed live on a wrong unlock
+    value: exit 0, {"success": false, "extrinsic_identifier": null}."""
+    with pytest.raises(BtcliError):
+        run_btcli(
+            ["btcli", "wallet", "transfer"], env={}, timeout=5,
+            run=lambda *a, **kw: _Completed(
+                stdout=json.dumps({"success": False, "extrinsic_identifier": None})
+            ),
+        )
+
+
+def test_success_true_still_passes_through():
+    payload = run_btcli(
+        ["btcli", "x"], env={}, timeout=5,
+        run=lambda *a, **kw: _Completed(
+            stdout=json.dumps({"success": True, "extrinsic_identifier": "0xabc"})
+        ),
+    )
+    assert payload["extrinsic_identifier"] == "0xabc"
+
+
+def test_a_payload_without_a_success_field_is_not_treated_as_failed():
+    """`btcli wallet list` has no success field; only an explicit false
+    means refused."""
+    payload = run_btcli(
+        ["btcli", "wallet", "list"], env={}, timeout=5,
+        run=lambda *a, **kw: _Completed(stdout=json.dumps({"wallets": []})),
+    )
+    assert payload == {"wallets": []}
+
+
+def test_error_text_is_flattened_for_storage_and_display():
+    """btcli draws errors inside box borders across several lines; stored
+    raw that text wrecks the table it is later shown in."""
+    from emission_tracker.signer.btcli import tidy
+
+    boxed = (
+        "Usage: btcli wallet list [OPTIONS]\n"
+        "╭─ Error ────────────────────╮\n"
+        "│ No such option: --no-prompt │\n"
+        "╰────────────────────────────╯\n"
+    )
+    out = tidy(boxed)
+    assert "\n" not in out
+    assert "│" not in out and "╭" not in out and "─" not in out
+    assert "No such option: --no-prompt" in out

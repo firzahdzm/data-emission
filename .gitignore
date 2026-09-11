@@ -12,3 +12,6 @@ SUSNET LOGO/
 *.egg-info/
 build/
 dist/
+
+# Subagent-driven-development scratch (ledger, briefs, review packages)
+.superpowers/

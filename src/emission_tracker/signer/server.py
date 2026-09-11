@@ -61,6 +61,12 @@ class Signer:
         self._spent = self._load_spend()
 
     def handle(self, request: SignRequest) -> SignResult:
+        # Rule for everything below run_btcli(): once run_btcli has returned
+        # for a transfer, the money has moved and the result is `ok`. No
+        # later step — parsing, bookkeeping, persistence — may raise its way
+        # into `ok=False`, because the caller reads that as "nothing
+        # happened" and clicks Pay again. Validation that can fail belongs
+        # before the call, not after it.
         try:
             return self._handle(request)
         except BtcliError as exc:
@@ -75,14 +81,18 @@ class Signer:
         wallets = list_wallets(run=self._run, wallet_path=self._config.wallet_path)
         name = wallets.get(request.coldkey)
         if name is None:
+            # Logged, not just returned: the signer's log is the only audit
+            # trail that survives the web app being compromised, and a
+            # dashboard probing for signable coldkeys must leave a mark.
+            log.warning("refused: unknown coldkey %s (op=%s)",
+                        request.coldkey, request.op)
             return SignResult(
                 False, request.op, request.coldkey,
                 error=f"unknown coldkey {request.coldkey!r}",
             )
 
-        env = self._env_for(name)
-
         if request.op == OP_UNSTAKE:
+            env = self._env_for(name)
             # Log before attempting: the audit trail must survive a crash
             # between here and the chain.
             log.info("unstake_all coldkey=%s wallet=%s", request.coldkey, name)
@@ -98,17 +108,31 @@ class Signer:
         )
         amount_tao = amount_rao / RAO
 
+        # Caps are checked before the passphrase is read: a refused request
+        # has no business decrypting anything off disk.
         if amount_tao > self._config.max_transfer_tao:
+            log.warning(
+                "refused: coldkey=%s wallet=%s amount=%s τ exceeds the "
+                "per-request cap (%s τ)",
+                request.coldkey, name, amount_tao, self._config.max_transfer_tao,
+            )
             return SignResult(
                 False, request.op, request.coldkey, amount_rao=amount_rao,
                 error=f"{amount_tao} τ exceeds the per-request cap "
                       f"({self._config.max_transfer_tao} τ)",
             )
         if not self._within_daily_cap(amount_rao):
+            log.warning(
+                "refused: coldkey=%s wallet=%s amount=%s τ would exceed the "
+                "daily cap (%s τ)",
+                request.coldkey, name, amount_tao, self._config.daily_cap_tao,
+            )
             return SignResult(
                 False, request.op, request.coldkey, amount_rao=amount_rao,
                 error=f"daily cap of {self._config.daily_cap_tao} τ would be exceeded",
             )
+
+        env = self._env_for(name)
 
         log.info("pay_tournament coldkey=%s wallet=%s types=%s amount=%s",
                  request.coldkey, name, ",".join(request.types), amount_tao)
@@ -178,6 +202,13 @@ class Signer:
         env = {
             "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
             "HOME": os.environ.get("HOME", "/root"),
+            # The env var name btcli reads the coldkey passphrase from. It
+            # is version-dependent (older bittensor also honoured per-wallet
+            # forms like BT_COLD_PW_<NAME>), and getting it wrong makes btcli
+            # fall back to a prompt, which --no-prompt turns into a non-zero
+            # exit — every button fails. Verify it against the installed
+            # bittensor before going live: see "Verify the passphrase
+            # environment variable" in deploy/DEPLOY.md.
             "BT_WALLET_PASSWORD": self._passphrase_for(wallet_name),
         }
         return env

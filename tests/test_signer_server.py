@@ -59,7 +59,7 @@ def test_payment_uses_the_signers_own_fee_table(tmp_path):
     # 0.7 + 0.6, computed here — the caller only named the types.
     assert res.amount_rao == 1_300_000_000
     transfer = [c for c in rec.calls if "transfer" in c][0]
-    assert transfer[transfer.index("--amount") + 1] == "1.3"
+    assert transfer[transfer.index("--amount") + 1] == "1.300000000"
 
 
 def test_destination_is_the_configured_one_and_cannot_be_influenced(tmp_path):
@@ -173,3 +173,38 @@ def test_unwritable_state_path_does_not_turn_a_success_into_a_failure(tmp_path):
     # The in-memory counter still advanced, so the cap keeps working for
     # the rest of the process's life even though nothing landed on disk.
     assert signer._spent.rao == 700_000_000
+
+
+def test_refusals_are_logged_so_grinding_leaves_a_trail(caplog, tmp_path):
+    """The signer's log is the only audit trail that survives the web app
+    being compromised — and the caps exist precisely for a compromised
+    caller, so refusing one silently destroys the evidence."""
+    rec = _Recorder()
+    with caplog.at_level("WARNING", logger="emission_signer"):
+        _signer(rec, tmp_path).handle(SignRequest(OP_PAY, "5NOTMINE", ("text",)))
+        _signer(rec, tmp_path, max_transfer_tao=1.0).handle(
+            SignRequest(OP_PAY, CK, ("text", "image", "env"))
+        )
+        signer = _signer(rec, tmp_path, daily_cap_tao=1.0)
+        signer.handle(SignRequest(OP_PAY, CK, ("text",)))
+        signer.handle(SignRequest(OP_PAY, CK, ("env",)))
+
+    messages = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("unknown coldkey" in m and "5NOTMINE" in m for m in messages)
+    assert any("per-request cap" in m and "1.7" in m for m in messages)
+    assert any("daily cap" in m and "0.6" in m for m in messages)
+
+
+def test_a_refused_request_never_reads_a_passphrase(tmp_path):
+    """Decrypting a coldkey passphrase off disk for a request that is about
+    to be refused is work done at the worst possible moment."""
+    rec = _Recorder()
+    signer = Signer(_config(tmp_path, max_transfer_tao=1.0), run=rec)
+
+    def _boom(name):
+        raise AssertionError("passphrase read for a refused request")
+
+    signer._passphrase_for = _boom
+    res = signer.handle(SignRequest(OP_PAY, CK, ("text", "image", "env")))
+    assert not res.ok
+    assert "cap" in res.error.lower()

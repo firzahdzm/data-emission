@@ -483,7 +483,11 @@ def _run_signed_action(request: Request, sign_request, amount_rao: int, user: st
         queries.finish_action(conn, action_id, False, None, "unexpected error")
         raise
 
-    queries.finish_action(conn, action_id, result.ok, result.tx_hash, result.error)
+    queries.finish_action(
+        conn, action_id, result.ok, result.tx_hash, result.error,
+        # On success, replace our estimate with the signer's actual amount.
+        amount_rao=result.amount_rao if result.ok else None,
+    )
     if not result.ok:
         raise HTTPException(status_code=502, detail=result.error or "signing failed")
     return {

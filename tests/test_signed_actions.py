@@ -176,3 +176,21 @@ def test_unconfigured_fee_type_is_rejected_before_signing(app, monkeypatch):
     r = _post(app, f"/api/tournament/pay/{CK}", {"types": ["image"]})
     assert r.status_code == 400
     assert fake.sent == []
+
+
+def test_the_row_records_the_signers_amount_not_the_trackers_estimate(
+    app, monkeypatch
+):
+    """The signer owns the authoritative fee table and the tracker's copy is
+    explicitly untrusted, so the two can diverge. When they do, this row is
+    the only durable record of what was actually paid."""
+    monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+    app.state.signer = _FakeSigner(
+        result=SignResult(True, OP_PAY, CK, amount_rao=850_000_000, tx_hash="0xbeef")
+    )
+    r = _post(app, f"/api/tournament/pay/{CK}", {"types": ["text"]})
+    assert r.status_code == 200
+    row = queries.recent_actions(app.state.db_conn)[0]
+    # The tracker estimated 0.7 τ from its own table; the signer moved 0.85.
+    assert row["amount_rao"] == 850_000_000
+    assert row["status"] == "ok"

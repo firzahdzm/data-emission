@@ -2,11 +2,19 @@
 gate admin-only endpoints against the `admin_users` config list."""
 
 import hmac
+import logging
 import os
 
 from fastapi import HTTPException, Request
 
+log = logging.getLogger(__name__)
+
 PROXY_SECRET_HEADER = "X-Auth-Proxy"
+
+
+def _proxy_secret_configured(request: Request) -> bool:
+    config = getattr(request.app.state, "config", None)
+    return bool(getattr(config, "proxy_secret", None)) if config else False
 
 
 def proxy_secret_ok(request: Request) -> bool:
@@ -33,11 +41,23 @@ def current_user(request: Request) -> str | None:
 
     Dev escape hatch: if EMISSION_DEV_USER is set, treat all requests as
     that user. Lets you test admin UI locally without setting up nginx +
-    Basic Auth. Never use in production.
+    Basic Auth. Never use in production — and it is ignored outright when
+    `proxy_secret` is configured.
     """
     dev_user = os.environ.get("EMISSION_DEV_USER")
     if dev_user:
-        return dev_user
+        if _proxy_secret_configured(request):
+            # A deployment that configured the proxy secret has declared it
+            # is not a dev box. Honouring the escape hatch there would let
+            # anything that can set one environment variable on the host
+            # become an admin — which now means spending from the wallets.
+            log.warning(
+                "ignoring EMISSION_DEV_USER=%r: proxy_secret is configured, "
+                "so this is not a dev deployment",
+                dev_user,
+            )
+        else:
+            return dev_user
     if not proxy_secret_ok(request):
         return None
     return request.headers.get("X-Remote-User") or None

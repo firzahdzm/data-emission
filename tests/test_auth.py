@@ -111,3 +111,23 @@ class TestProxySecret:
         req = _request({"X-Remote-User": "alice"}, _state(None))
         assert current_user(req) == "alice"
         assert is_admin(req) is True
+
+
+class TestDevUserEscapeHatch:
+    def test_dev_user_is_ignored_when_the_proxy_gate_is_configured(
+        self, monkeypatch, caplog
+    ):
+        """Setting one env var must not be a route to the money buttons on a
+        deployment that has declared itself non-dev."""
+        monkeypatch.setenv("EMISSION_DEV_USER", "alice")
+        req = _request({}, _state("s3cret"))
+        with caplog.at_level("WARNING"):
+            assert current_user(req) is None
+        assert is_admin(req) is False
+        assert any("EMISSION_DEV_USER" in r.getMessage() for r in caplog.records)
+
+    def test_dev_user_still_works_with_no_secret_configured(self, monkeypatch):
+        monkeypatch.setenv("EMISSION_DEV_USER", "alice")
+        req = _request({}, _state(None))
+        assert current_user(req) == "alice"
+        assert is_admin(req) is True

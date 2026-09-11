@@ -21,7 +21,7 @@ def transfer_argv(
     return [
         BTCLI, "wallet", "transfer",
         "--destination", destination,
-        "--amount", f"{amount_tao:g}",
+        "--amount", f"{amount_tao:.9f}",
         "--wallet-name", wallet_name,
         "--wallet-path", wallet_path,
         "--no-prompt", "--json-output",
@@ -54,13 +54,23 @@ def run_btcli(argv: list[str], env: dict, timeout: int, run=subprocess.run) -> d
         detail = (proc.stderr or proc.stdout or "").strip()[:400]
         raise BtcliError(f"btcli exited {proc.returncode}: {detail}")
     try:
-        return json.loads(proc.stdout)
+        payload = json.loads(proc.stdout)
     except ValueError as exc:
         # Usually means btcli fell back to a prompt or printed a banner,
         # which must not be mistaken for success.
         raise BtcliError(
             f"btcli output was not JSON: {(proc.stdout or '').strip()[:200]}"
         ) from exc
+    if not isinstance(payload, dict):
+        # Callers index this payload (fee tables, tx hashes). A list or a
+        # scalar would blow up at the first .get() — and for a transfer that
+        # happens *after* the money has moved, which the caller then reports
+        # as a failure and retries. Fail here instead, before the subprocess
+        # result is ever acted on.
+        raise BtcliError(
+            f"btcli output was not a JSON object: {type(payload).__name__}"
+        )
+    return payload
 
 
 def list_wallets(wallet_path: str, run=subprocess.run, timeout: int = 30) -> dict:

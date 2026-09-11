@@ -1064,13 +1064,24 @@ def finish_action(
     ok: bool,
     tx_hash: str | None,
     error: str | None,
+    amount_rao: int | None = None,
 ) -> None:
-    conn.execute(
-        "UPDATE signed_actions SET status = ?, tx_hash = ?, error = ?, "
-        "finished_at = ? WHERE id = ?",
-        ("ok" if ok else "failed", tx_hash, error,
-         datetime.now(timezone.utc), action_id),
-    )
+    """Close out an action row.
+
+    `amount_rao` overwrites the tracker's pre-flight estimate with what the
+    signer actually transferred. The two fee tables are deliberately
+    separate — the signer owns the authoritative one — so they can differ,
+    and when they do this row is the only durable record of the payment.
+    It must hold the number that moved, not the one we guessed. Left None
+    (failures, where nothing moved) the estimate stands.
+    """
+    sets = "status = ?, tx_hash = ?, error = ?, finished_at = ?"
+    params = ["ok" if ok else "failed", tx_hash, error, datetime.now(timezone.utc)]
+    if amount_rao is not None:
+        sets += ", amount_rao = ?"
+        params.append(amount_rao)
+    params.append(action_id)
+    conn.execute(f"UPDATE signed_actions SET {sets} WHERE id = ?", params)
     conn.commit()
 
 

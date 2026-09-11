@@ -26,7 +26,7 @@ def test_transfer_command_is_non_interactive_and_machine_readable():
     assert argv[:2] == ["btcli", "wallet"]
     assert "transfer" in argv
     assert "--destination" in argv and argv[argv.index("--destination") + 1] == DEST
-    assert "--amount" in argv and argv[argv.index("--amount") + 1] == "0.7"
+    assert "--amount" in argv and argv[argv.index("--amount") + 1] == "0.700000000"
     assert "--wallet-name" in argv and argv[argv.index("--wallet-name") + 1] == "prj1"
     # Without these two the call blocks on a prompt forever and the output
     # cannot be parsed.
@@ -99,3 +99,24 @@ def test_run_btcli_raises_when_output_is_not_json():
             ["btcli", "x"], env={}, timeout=5,
             run=lambda *a, **kw: _Completed(stdout="Enter password:"),
         )
+
+
+def test_amount_never_uses_scientific_notation():
+    """1e-07 on the command line is not an amount btcli will accept."""
+    argv = transfer_argv("prj1", DEST, 0.0000001, WP)
+    amount = argv[argv.index("--amount") + 1]
+    assert "e" not in amount.lower()
+    assert amount == "0.000000100"
+
+
+def test_run_btcli_raises_when_the_payload_is_not_an_object():
+    """A JSON array or scalar would only blow up later, at .get() — and for
+    a transfer that is after the funds have moved, which the caller reports
+    as a failure and then retries."""
+    for body in ("[1, 2]", '"done"', "null"):
+        with pytest.raises(BtcliError) as exc:
+            run_btcli(
+                ["btcli", "x"], env={}, timeout=5,
+                run=lambda *a, **kw: _Completed(stdout=body),
+            )
+        assert "not a JSON object" in str(exc.value)

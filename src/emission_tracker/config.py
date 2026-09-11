@@ -87,7 +87,7 @@ class AppConfig(BaseModel):
     # which is what a deployment without the matching nginx block needs.
     proxy_secret: str = ""
     tournament: TournamentConfig | None = None
-    signer_socket: str = "/run/emission-signer.sock"
+    signer_socket: str = "/run/emission-signer/emission-signer.sock"
 
     @model_validator(mode="after")
     def _validate_unique_names_and_hotkeys(self) -> "AppConfig":

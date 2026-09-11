@@ -26,12 +26,19 @@ RestartSec=10
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/run
+# systemd creates /run/emission-signer before start and removes it on stop,
+# owned by User=/Group= above. 0750 lets the tracker (in the emission group)
+# traverse in to the socket while nothing else on the host can.
+RuntimeDirectory=emission-signer
+RuntimeDirectoryMode=0750
 # Daily spend state lives here (not /run, which is tmpfs and would lose
 # the day's running total on every reboot). systemd creates and owns
 # /var/lib/emission-signer for this unit.
 StateDirectory=emission-signer
-# This unit is the one component that may read the wallets.
+# This unit is the one component that may read the wallets. Note this only
+# RESTRICTS: it grants nothing, and /root is 0700, so the signer user still
+# needs traversal granted separately — see "Make the wallets readable by the
+# signer" in deploy/DEPLOY.md.
 ReadOnlyPaths=/root/.bittensor/wallets
 
 [Install]

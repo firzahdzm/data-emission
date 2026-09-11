@@ -48,4 +48,4 @@ tournament:
     image: 0.4
     env: 0.6
 
-signer_socket: /run/emission-signer.sock
+signer_socket: /run/emission-signer/emission-signer.sock

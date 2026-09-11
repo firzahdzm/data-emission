@@ -1,8 +1,8 @@
 [Unit]
 Description=Gradient Emission Tracker (Bittensor subnet 56)
 Documentation=file:///opt/emission-tracker/README.md
-After=network-online.target
-Wants=network-online.target
+After=network-online.target emission-signer.service
+Wants=network-online.target emission-signer.service
 
 [Service]
 Type=simple
@@ -32,7 +32,11 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/opt/emission-tracker/data /opt/emission-tracker/logs
+# The signer's socket directory. ProtectSystem=strict remounts everything
+# outside /dev, /proc and /sys read-only — including /run — and connect() on
+# a unix socket needs write permission on the inode, so without this every
+# signed action fails with a 503.
+ReadWritePaths=/opt/emission-tracker/data /opt/emission-tracker/logs /run/emission-signer
 
 [Install]
 WantedBy=multi-user.target

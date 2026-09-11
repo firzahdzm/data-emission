@@ -172,6 +172,204 @@ curl -s -o /dev/null -w '%{http_code}\n' -X DELETE \
 # 401 = closed. 404 = the header still works directly; the secret is not matching.
 ```
 
+`EMISSION_DEV_USER` must never appear in `/opt/emission-tracker/.env`. It is
+a local-development hatch that makes every request an admin. The app now
+ignores it whenever `proxy_secret` is set (and logs a warning when it does),
+but on a box where the secret is still empty it is a complete bypass of the
+admin gate — and the admin gate is what stands between a stray HTTP request
+and the wallets.
+
+## 7b. The signer service
+
+The two money buttons (pay tournament fees, unstake all) are not signed by
+the dashboard. A separate unit, `emission-signer`, runs as its own user,
+holds the coldkey passphrases, and accepts exactly two operations over a
+unix socket with the destination address and fee table hard-coded. A
+compromised dashboard can therefore pay the tournament address and nothing
+else. Everything below is what makes that split actually work on the host.
+
+Run these in order.
+
+### 1. Create the signer user
+
+```bash
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin signer
+# The socket is 0660 signer:emission — the tracker reaches it through the
+# group, so the signer must be in it.
+sudo usermod -aG emission signer
+```
+
+### 2. Make the wallets readable by the signer
+
+`ReadOnlyPaths=/root/.bittensor/wallets` in the unit only *restricts* — it
+grants nothing. `/root` is mode 0700, so the `signer` user cannot traverse
+into it and `btcli wallet list` fails on every request. Pick one:
+
+**Option A (recommended) — move the wallets out of `/root`.** Cleaner,
+because nothing outside root ever gains a foothold in root's home:
+
+```bash
+sudo mkdir -p /var/lib/emission-signer/wallets
+sudo cp -a /root/.bittensor/wallets/. /var/lib/emission-signer/wallets/
+sudo chown -R signer:signer /var/lib/emission-signer/wallets
+sudo chmod -R go-rwx /var/lib/emission-signer/wallets
+sudo chmod 0700 /var/lib/emission-signer/wallets
+```
+
+Then set `wallet_path: /var/lib/emission-signer/wallets` in the signer
+config below, and change `ReadOnlyPaths=` in the unit to match. Verify the
+copy before deleting the originals — keep an offline backup of the coldkeys
+regardless.
+
+**Option B — an ACL, leaving the wallets where they are:**
+
+```bash
+sudo apt install acl   # if getfacl/setfacl are missing
+sudo setfacl -m u:signer:x /root
+sudo setfacl -R -m u:signer:rX /root/.bittensor/wallets
+sudo -u signer test -r /root/.bittensor/wallets && echo "signer can read the wallets"
+```
+
+Be clear-eyed about what Option B does: granting a service user traversal
+on `/root` is a real widening of access. It is not "just an x bit" — any
+path under `/root` whose own mode permits reading becomes reachable by the
+`signer` user from that moment on. Option A avoids the question entirely.
+
+### 3. Install the signer config
+
+```bash
+sudo mkdir -p /etc/emission-signer
+sudo cp /opt/emission-tracker/deploy/signer.example.yaml \
+        /etc/emission-signer/config.yaml
+sudo chown root:root /etc/emission-signer/config.yaml
+sudo chmod 0644 /etc/emission-signer/config.yaml
+# Check wallet_path matches the choice made in step 2, and that
+# max_transfer_tao / daily_cap_tao are the ceilings you want. They are
+# enforced here, where a compromised dashboard cannot reach them.
+sudo nano /etc/emission-signer/config.yaml
+```
+
+### 4. Write the passphrase files
+
+**These files contain the plaintext passphrases to your coldkeys.** Anyone
+who reads one plus the matching wallet file can move every TAO in that
+coldkey. They must be `0600 root:root` — the signer never reads them
+directly; systemd reads them as root and hands each one to the unit as a
+credential file under `$CREDENTIALS_DIRECTORY`, which is why they do not
+need to be readable by the `signer` user and must not be.
+
+```bash
+sudo install -d -m 0700 -o root -g root /etc/emission-signer/passphrases
+sudo install -m 0600 -o root -g root /dev/null /etc/emission-signer/passphrases/goy
+sudo nano /etc/emission-signer/passphrases/goy   # the passphrase, nothing else
+# repeat for every wallet, then confirm:
+sudo ls -l /etc/emission-signer/passphrases/     # every line must read -rw------- root root
+```
+
+Do not add these to backups that leave the host, and do not paste them into
+a shell where they land in `~/.bash_history`.
+
+### 5. List every wallet in the unit
+
+`LoadCredential=` has one line per wallet, and the name after `wallet-`
+must match the btcli wallet name exactly — the signer looks up
+`wallet-<name>` when it signs.
+
+```bash
+sudo -u signer btcli wallet list --wallet-path /root/.bittensor/wallets \
+     --no-prompt --json-output | python3 -c \
+  'import json,sys; [print(w["name"]) for w in json.load(sys.stdin)["wallets"]]'
+```
+
+Put one `LoadCredential=wallet-<name>:/etc/emission-signer/passphrases/<name>`
+line per printed name into `deploy/emission-signer.service`, replacing the
+three placeholder lines. A wallet with no line will fail at sign time with a
+missing credential file, not at start time.
+
+### 6. Install and start the unit
+
+```bash
+sudo cp /opt/emission-tracker/deploy/emission-signer.service \
+        /etc/systemd/system/emission-signer.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now emission-signer
+sudo systemctl status emission-signer --no-pager
+```
+
+`RuntimeDirectory=emission-signer` makes systemd create and own
+`/run/emission-signer` (0750 `signer:emission`) for the lifetime of the
+unit, and remove it on stop. The socket lives inside it.
+
+### 7. Verify the passphrase environment variable
+
+**Do this before trusting either button.** The signer passes the passphrase
+to btcli as `BT_WALLET_PASSWORD`. That name is version-dependent — older
+bittensor releases also honoured per-wallet forms such as
+`BT_COLD_PW_<NAME>` — and if it is wrong for the installed version, btcli
+falls back to an interactive prompt, `--no-prompt` turns that into a
+non-zero exit, and every action fails. Unlock one coldkey locally. No chain
+interaction, no funds move:
+
+```bash
+sudo -u signer BT_WALLET_PASSWORD='<that wallet's passphrase>' \
+  /opt/emission-tracker/.venv/bin/python -c "
+from bittensor_wallet import Wallet
+w = Wallet(name='goy', path='/root/.bittensor/wallets')
+w.unlock_coldkey()
+print('passphrase accepted from BT_WALLET_PASSWORD')
+"
+```
+
+If it prints `passphrase accepted from BT_WALLET_PASSWORD`, the name is
+right. **If it prompts you for a password instead, the variable name is
+wrong for this bittensor version** — find the correct one and fix
+`_env_for` in `src/emission_tracker/signer/server.py` before the buttons
+will work at all.
+
+### 8. Restart the tracker and check it can reach the socket
+
+The tracker unit now lists `/run/emission-signer` in `ReadWritePaths=`
+(under `ProtectSystem=strict` everything outside `/dev`, `/proc` and `/sys`
+is read-only, and `connect()` on a unix socket needs write permission on
+the inode) and orders itself `After=emission-signer.service`. Reinstall it
+and restart:
+
+```bash
+sudo cp /opt/emission-tracker/deploy/emission-tracker.service \
+        /etc/systemd/system/emission-tracker.service
+sudo systemctl daemon-reload
+sudo systemctl restart emission-tracker
+```
+
+Then verify:
+
+```bash
+# Directory and socket, with the expected owner, group and mode:
+sudo ls -ld /run/emission-signer                       # drwxr-x--- signer emission
+sudo ls -l  /run/emission-signer/emission-signer.sock  # srw-rw---- signer emission
+
+# The tracker's own user must be able to connect:
+sudo -u emission python3 -c "
+import socket
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.connect('/run/emission-signer/emission-signer.sock')
+print('tracker can reach the signer')
+"
+```
+
+A `PermissionError` here means the `emission` user cannot traverse
+`/run/emission-signer` or write the socket inode — check the group on both,
+and that the tracker unit really was reinstalled. `FileNotFoundError` means
+the signer is not running; read `journalctl -u emission-signer`.
+
+Refused attempts (unknown coldkey, per-request cap, daily cap) are logged by
+the signer, not the dashboard. That log is the record that survives the web
+app being compromised:
+
+```bash
+sudo journalctl -u emission-signer -n 50 --no-pager
+```
+
 ## 8. Update workflow
 
 When you change the code on your laptop and push:

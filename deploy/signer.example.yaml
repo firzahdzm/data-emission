@@ -1,4 +1,7 @@
-socket_path: /run/emission-signer.sock
+# Must sit inside RuntimeDirectory=emission-signer (see the unit file):
+# under ProtectSystem=strict the tracker cannot write anywhere in /run
+# that is not listed in its own ReadWritePaths=, and connect() needs write.
+socket_path: /run/emission-signer/emission-signer.sock
 destination: 5Ef5JgNv14LY4UEQFHbRQkf8TnegDV3AfAbcsJe5T2w6VQdo
 fees_tao:
   text: 0.7

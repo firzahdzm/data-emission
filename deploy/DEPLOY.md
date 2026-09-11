@@ -435,17 +435,36 @@ from emission_tracker.signer.btcli import coldkey_password_env_var
 print(coldkey_password_env_var('/root/.bittensor/wallets', '<wallet>'))"
 ```
 
-**This command really does transfer** if everything checks out. To find the
-reason without that risk, ask for an amount the wallet cannot cover (say
-`--amount 999`): the unlock still has to succeed before the balance check
-runs, so a passphrase problem and a funds problem still separate cleanly.
+**This command really does transfer** if everything checks out.
+
+Do **not** try to make it safe by asking for an amount the wallet cannot
+cover. btcli checks the balance *before* it unlocks the coldkey, so an
+impossible amount reports "not enough balance" whatever the unlock value
+is — proven by running it with a literal placeholder as the passphrase. It
+tells you nothing about the passphrase.
+
+To test the unlock on its own, with no chain call and no funds at risk,
+ask the wallet library to open the coldkey directly:
+
+```bash
+sudo -u signer env HOME=/tmp \
+  BT_PW__ROOT__BITTENSOR_WALLETS_<WALLET>_COLDKEY='<unlock value>' \
+  /root/.venv/bin/python3 -c "
+from bittensor_wallet import Wallet
+Wallet(name='<wallet>', path='/root/.bittensor/wallets').unlock_coldkey()
+print('unlock OK')"
+```
+
+`unlock OK` means the value and the variable name are both right, and a
+refused transfer is about something else. A prompt or an error means the
+unlock is the problem — that is what to fix first.
 
 What the messages mean:
 
 | btcli says | Cause |
 |---|---|
 | `Not enough balance … for fee … existential deposit` | Funds. Remember the fee (~0.0002 τ) and that the wallet must stay above the existential deposit. |
-| A password prompt appears, or it aborts immediately | The unlock value is wrong, or the variable name does not match — re-run the §7b step 7 check. |
+| A password prompt appears, or it aborts immediately | The unlock value is wrong, or the variable name does not match — run the unlock test above. |
 | `❌ Not enough balance` with a balance you believe is wrong | The dashboard's figure may be stale; `btcli wallet balance` is the truth. |
 
 ## 8. Update workflow

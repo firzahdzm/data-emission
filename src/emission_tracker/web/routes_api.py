@@ -452,19 +452,36 @@ def _run_signed_action(request: Request, sign_request, amount_rao: int, user: st
     """Record, send, record the outcome. Shared by both endpoints so the
     audit row can never be skipped by one of them."""
     conn = _db(request)
+    # Resolved before any row is written: if the signer isn't configured,
+    # raising here leaves no pending row behind to strand the coldkey.
+    signer = _signer(request)
+
     if queries.pending_action(conn, sign_request.coldkey):
         raise HTTPException(
             status_code=409, detail="An action for this coldkey is already running"
         )
-    action_id = queries.record_action(
-        conn, sign_request.coldkey, sign_request.op,
-        list(sign_request.types), amount_rao, user,
-    )
     try:
-        result = _signer(request).send(sign_request)
+        action_id = queries.record_action(
+            conn, sign_request.coldkey, sign_request.op,
+            list(sign_request.types), amount_rao, user,
+        )
+    except sqlite3.IntegrityError:
+        # The partial unique index caught a concurrent request that slipped
+        # past the check above — the same 409 the explicit check gives.
+        raise HTTPException(
+            status_code=409, detail="An action for this coldkey is already running"
+        )
+
+    try:
+        result = signer.send(sign_request)
     except SignerUnavailable as exc:
         queries.finish_action(conn, action_id, False, None, str(exc))
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception:
+        # Belt and braces: any other unanticipated failure must still
+        # resolve the row, or the coldkey is blocked forever.
+        queries.finish_action(conn, action_id, False, None, "unexpected error")
+        raise
 
     queries.finish_action(conn, action_id, result.ok, result.tx_hash, result.error)
     if not result.ok:
@@ -497,6 +514,10 @@ def pay_tournament(
     for t in body.types:
         if t not in TOURNAMENT_TYPES:
             raise HTTPException(status_code=400, detail=f"Unknown type {t!r}")
+        if t not in tournament.fees_tao:
+            raise HTTPException(
+                status_code=400, detail=f"Type {t!r} has no configured fee"
+            )
     if not body.types or len(set(body.types)) != len(body.types):
         raise HTTPException(status_code=400, detail="Pick each type at most once")
 

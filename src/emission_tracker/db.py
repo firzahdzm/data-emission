@@ -165,6 +165,11 @@ SCHEMA_STATEMENTS = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_signed_actions_coldkey "
     "ON signed_actions(coldkey_ss58, status)",
+    # Enforces at the database level what the pending_action check only
+    # verifies optimistically: two concurrent requests for the same
+    # coldkey cannot both land a pending row.
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_signed_actions_one_pending "
+    "ON signed_actions(coldkey_ss58) WHERE status = 'pending'",
     "CREATE INDEX IF NOT EXISTS idx_coldkey_bal_fetched ON coldkey_balances(fetched_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_neuron_snap_hotkey ON neuron_snapshots(hotkey_ss58)",
     "CREATE INDEX IF NOT EXISTS idx_snapshots_taken_at ON snapshots(taken_at DESC)",

@@ -155,3 +155,24 @@ def test_unstake_endpoint_sends_no_types(app, monkeypatch):
     r = _post(app, f"/api/stake/unstake-all/{CK}")
     assert r.status_code == 200
     assert fake.sent[0].types == ()
+
+
+def test_unconfigured_signer_leaves_no_pending_row(app, monkeypatch):
+    """A missing signer must not strand a pending row: the coldkey would be
+    blocked forever."""
+    monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+    # app.state.signer is never set in this test.
+    r = _post(app, f"/api/tournament/pay/{CK}", {"types": ["text"]})
+    assert r.status_code == 503
+    assert queries.pending_action(app.state.db_conn, CK) is None
+
+
+def test_unconfigured_fee_type_is_rejected_before_signing(app, monkeypatch):
+    """A type the deployment has no price for is a 400, not a KeyError."""
+    monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+    fake = _FakeSigner()
+    app.state.signer = fake
+    app.state.config.tournament.fees_tao = {"text": 0.7, "env": 0.6}
+    r = _post(app, f"/api/tournament/pay/{CK}", {"types": ["image"]})
+    assert r.status_code == 400
+    assert fake.sent == []

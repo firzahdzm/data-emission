@@ -73,7 +73,11 @@ class SignRequest:
             raise ProtocolError("pay_tournament needs at least one type")
 
         secret = raw.get("secret")
-        if not isinstance(secret, str) or not secret:
+        # Stripped here as well as in the web tier: the signer has to be
+        # defensible on its own, and whitespace reaches btcli as an unset
+        # variable, which makes it prompt — and --no-prompt turns that into
+        # an opaque non-zero exit rather than a legible error.
+        if not isinstance(secret, str) or not secret.strip():
             raise ProtocolError("wallet secret is required")
 
         # Any other key in the payload is dropped here, by construction.

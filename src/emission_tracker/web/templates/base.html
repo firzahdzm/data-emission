@@ -94,6 +94,11 @@
             pwWrap.hidden = !pw;
             pwEl.value = '';
             if (pw) pwLabel.textContent = pw.label;
+            // Drop handlers from a previous open: they close over that
+            // call's button, and a later plain snAlert/snConfirm would
+            // otherwise leave them wired to a button that no longer exists.
+            inputEl.oninput = inputEl.onkeydown = null;
+            pwEl.oninput = pwEl.onkeydown = null;
             buttons.forEach((btn, i) => {
                 const b = document.createElement('button');
                 b.type = 'button';
@@ -112,7 +117,10 @@
                     b.disabled = true;
                     const sync = () => {
                         const wordOk = !typed || inputEl.value.trim() === typed.required;
-                        const pwOk = !pw || pwEl.value.length > 0;
+                        // trim: whitespace reaches btcli as an unset variable,
+                        // so keep the button disabled rather than spending a
+                        // round trip to be told 400.
+                        const pwOk = !pw || pwEl.value.trim().length > 0;
                         b.disabled = !(wordOk && pwOk);
                     };
                     const onEnter = (e) => {

@@ -101,3 +101,12 @@ def test_result_from_non_dict_json_raises_protocol_error():
 def test_malformed_json_raises_protocol_error():
     with pytest.raises(ProtocolError):
         SignRequest.from_line(b"not json\n")
+
+
+def test_a_whitespace_only_unlock_value_is_refused():
+    """The signer has to be defensible on its own, not rely on the web tier
+    having stripped first: whitespace reaches btcli as an unset variable."""
+    with pytest.raises(ProtocolError):
+        SignRequest.from_line(
+            b'{"op": "unstake_all", "coldkey": "5F", "secret": "   "}\n'
+        )

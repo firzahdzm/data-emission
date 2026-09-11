@@ -9,6 +9,7 @@ from emission_tracker.config import PersonConfig
 from emission_tracker.db import init_schema, sync_team
 from emission_tracker.signer.protocol import OP_PAY, SignResult
 from emission_tracker.web import queries
+from emission_tracker.web.errors import install_error_handlers
 from emission_tracker.web.routes_api import router as api_router
 
 CK = "5FnhiibtJkvCDSnfrp1iUQiZZaYJv31h114Pv7wtoztt9FP9"
@@ -49,6 +50,7 @@ def app():
     )
     conn.commit()
     a = FastAPI()
+    install_error_handlers(a)
     a.include_router(api_router, prefix="/api")
     a.state.db_conn = conn
     a.state.config = SimpleNamespace(
@@ -263,3 +265,41 @@ class TestUnlockValueHandling:
         body = TournamentPayBody(types=["text"], secret=UNLOCK)
         assert UNLOCK not in repr(body)
         assert UNLOCK not in str(body)
+
+
+class TestValidationErrorsDoNotEchoTheBody:
+    """Pydantic builds 422s against the raw body, before the model exists,
+    and puts the rejected value in error["input"] — so SecretStr never gets
+    a chance to mask it. 4xx bodies are exactly what proxy logs, HAR files
+    and error-reporting middleware end up keeping."""
+
+    def test_a_missing_field_does_not_echo_the_unlock_value(self, app):
+        # `types` omitted: pydantic rejects the whole body, and the whole
+        # body is what it would otherwise report back as "input".
+        r = TestClient(app).post(
+            f"/api/tournament/pay/{CK}",
+            json={"secret": UNLOCK},
+            headers={"X-Remote-User": "alice"},
+        )
+        assert r.status_code == 422
+        assert UNLOCK not in r.text
+
+    def test_a_wrong_type_does_not_echo_the_unlock_value(self, app):
+        r = TestClient(app).post(
+            f"/api/stake/unstake-all/{CK}",
+            json={"secret": {"nested": UNLOCK}},
+            headers={"X-Remote-User": "alice"},
+        )
+        assert r.status_code == 422
+        assert UNLOCK not in r.text
+
+    def test_the_error_still_says_what_was_wrong(self, app):
+        """Stripping the input must not make the error useless."""
+        r = TestClient(app).post(
+            f"/api/tournament/pay/{CK}",
+            json={"secret": UNLOCK},
+            headers={"X-Remote-User": "alice"},
+        )
+        body = r.json()
+        assert body["detail"][0]["loc"] == ["body", "types"]
+        assert body["detail"][0]["type"] == "missing"

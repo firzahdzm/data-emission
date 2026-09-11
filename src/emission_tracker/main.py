@@ -14,6 +14,7 @@ from emission_tracker.db import cleanup_orphaned_snapshots, init_schema, sync_te
 from emission_tracker.gradients_client import GradientsClient
 from emission_tracker.rate_limiter import TokenBucket
 from emission_tracker.taostats_client import TaoStatsClient
+from emission_tracker.web.errors import install_error_handlers
 from emission_tracker.web.price import AlphaPriceCache
 from emission_tracker.web.routes_api import router as api_router
 from emission_tracker.web.signer_client import SignerClient
@@ -123,6 +124,7 @@ def create_app(
             long_lived_conn.close()
 
     app = FastAPI(lifespan=lifespan)
+    install_error_handlers(app)
     app.include_router(api_router, prefix="/api")
     register_pages(app)
     return app

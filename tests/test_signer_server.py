@@ -219,16 +219,17 @@ def test_refusals_are_logged_so_grinding_leaves_a_trail(caplog, tmp_path):
     assert any("daily cap" in m and "0.6" in m for m in messages)
 
 
-def test_a_refused_request_never_reads_a_passphrase(tmp_path):
-    """Decrypting a coldkey passphrase off disk for a request that is about
-    to be refused is work done at the worst possible moment."""
+def test_a_capped_request_never_builds_the_unlock_environment(tmp_path):
+    """The cap must be decided before the unlock value is copied into a
+    subprocess environment — a refused request should touch nothing."""
     rec = _Recorder()
     signer = Signer(_config(tmp_path, max_transfer_tao=1.0), run=rec)
 
-    def _boom(name):
-        raise AssertionError("passphrase read for a refused request")
+    def _boom(name, secret):
+        raise AssertionError("environment built for a refused request")
 
-    signer._passphrase_for = _boom
+    signer._env_for = _boom
     res = signer.handle(_req(OP_PAY, CK, ("text", "image", "env")))
     assert not res.ok
     assert "cap" in res.error.lower()
+    assert not any("transfer" in c for c in rec.calls)

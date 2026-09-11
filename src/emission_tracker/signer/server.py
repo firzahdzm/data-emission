@@ -108,8 +108,8 @@ class Signer:
         )
         amount_tao = amount_rao / RAO
 
-        # Caps are checked before the passphrase is read: a refused request
-        # has no business decrypting anything off disk.
+        # Caps are checked before the environment is built: a refused request
+        # has no business copying the unlock value anywhere.
         if amount_tao > self._config.max_transfer_tao:
             log.warning(
                 "refused: coldkey=%s wallet=%s amount=%s τ exceeds the "

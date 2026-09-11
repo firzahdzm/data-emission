@@ -1,0 +1,34 @@
+[Unit]
+Description=Gradient Emission Tracker — transaction signer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=signer
+Group=emission
+WorkingDirectory=/opt/emission-tracker
+ExecStart=/opt/emission-tracker/.venv/bin/python -m emission_tracker.signer \
+    /etc/emission-signer/config.yaml
+
+# One credential per wallet. systemd exposes these as files under
+# $CREDENTIALS_DIRECTORY, readable only by this unit — unlike environment
+# variables, they do not appear in /proc/<pid>/environ or systemctl show.
+# Add one line per wallet name from `btcli wallet list`.
+LoadCredential=wallet-prj1:/etc/emission-signer/passphrases/prj1
+LoadCredential=wallet-prj2:/etc/emission-signer/passphrases/prj2
+LoadCredential=wallet-utama:/etc/emission-signer/passphrases/utama
+# … one per wallet
+
+Restart=on-failure
+RestartSec=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/run
+# This unit is the one component that may read the wallets.
+ReadOnlyPaths=/root/.bittensor/wallets
+
+[Install]
+WantedBy=multi-user.target

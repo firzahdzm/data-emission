@@ -10,3 +10,6 @@ wallet_path: /root/.bittensor/wallets
 # cannot reach them.
 max_transfer_tao: 2.0
 daily_cap_tao: 30.0
+# Persists the running daily spend across restarts/crashes — must be on
+# disk, not tmpfs (see StateDirectory= in emission-signer.service).
+state_path: /var/lib/emission-signer/spend.json

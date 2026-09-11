@@ -5,6 +5,7 @@ destination, the amount, the subnet, the slippage guard. A caller that
 could name any of those would make the privilege split decorative.
 """
 
+import json
 import logging
 import os
 import socket
@@ -43,6 +44,7 @@ class SignerConfig:
     max_transfer_tao: float
     daily_cap_tao: float
     credentials_dir: str
+    state_path: str = "/var/lib/emission-signer/spend.json"
 
 
 @dataclass
@@ -56,7 +58,7 @@ class Signer:
         self._config = config
         self._run = run
         self._clock = clock
-        self._spent = _DaySpend()
+        self._spent = self._load_spend()
 
     def handle(self, request: SignRequest) -> SignResult:
         try:
@@ -130,6 +132,27 @@ class Signer:
         if self._spent.day != today:
             self._spent = _DaySpend(day=today, rao=0)
         self._spent.rao += amount_rao
+        self._save_spend()
+
+    def _load_spend(self) -> "_DaySpend":
+        """Restore today's running total so a crash or deploy can't zero
+        the daily cap. A missing or unreadable file just means nothing has
+        been spent today yet — it must never stop the service starting.
+        """
+        try:
+            raw = json.loads(Path(self._config.state_path).read_text())
+            return _DaySpend(day=str(raw["day"]), rao=int(raw["rao"]))
+        except FileNotFoundError:
+            return _DaySpend()
+        except Exception as exc:
+            log.warning("could not read spend state %s: %s",
+                        self._config.state_path, exc)
+            return _DaySpend()
+
+    def _save_spend(self) -> None:
+        path = Path(self._config.state_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"day": self._spent.day, "rao": self._spent.rao}))
 
     def _passphrase_for(self, wallet_name: str) -> str:
         """Read one passphrase from the systemd credentials directory.
@@ -170,8 +193,14 @@ def serve(socket_path: str, signer: Signer) -> None:
     if os.path.exists(socket_path):
         os.unlink(socket_path)
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(socket_path)
-    os.chmod(socket_path, 0o660)
+    # Create the socket file at 0660 atomically: between bind() and a
+    # later chmod() it would otherwise sit on disk at the umask's mode.
+    old_umask = os.umask(0o117)
+    try:
+        server.bind(socket_path)
+    finally:
+        os.umask(old_umask)
+    os.chmod(socket_path, 0o660)  # belt-and-braces
     server.listen(4)
     log.info("listening on %s", socket_path)
 

@@ -20,6 +20,7 @@ def main() -> None:
     raw.setdefault(
         "credentials_dir", os.environ.get("CREDENTIALS_DIRECTORY", "/run/credentials")
     )
+    raw.setdefault("state_path", "/var/lib/emission-signer/spend.json")
     serve(socket_path, Signer(SignerConfig(**raw)))
 
 

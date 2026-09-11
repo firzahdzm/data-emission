@@ -27,6 +27,10 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ReadWritePaths=/run
+# Daily spend state lives here (not /run, which is tmpfs and would lose
+# the day's running total on every reboot). systemd creates and owns
+# /var/lib/emission-signer for this unit.
+StateDirectory=emission-signer
 # This unit is the one component that may read the wallets.
 ReadOnlyPaths=/root/.bittensor/wallets
 

@@ -142,6 +142,11 @@ def register_pages(app: FastAPI) -> None:
         latest = queries.latest_snapshot(conn)
         last_settle = queries.last_settlement(conn)
         coldkeys = queries.coldkey_cards(conn)
+        # Attach each wallet's most recent signed action so the card can say
+        # whether the last attempt worked, failed, or is still running.
+        last_actions = queries.latest_action_per_coldkey(conn)
+        for card in coldkeys:
+            card["last_action"] = last_actions.get(card["coldkey"])
         # Only used to label the stake figure; absent in tests that stub config.
         subnet_id = getattr(
             getattr(request.app.state, "config", None), "subnet_id", None

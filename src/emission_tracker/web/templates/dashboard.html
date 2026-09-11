@@ -289,6 +289,21 @@ _confirm.addEventListener('click', async () => {
                     {% endif %}
                 </span>
             </div>
+            {% if is_admin and c.last_action %}
+            {% set la = c.last_action %}
+            <div class="coldkey-last-action coldkey-last-{{ la.status }}"
+                 data-coldkey="{{ c.coldkey }}"
+                 title="{{ la.op }}{% if la.types %} ({{ la.types }}){% endif %} &middot; {{ la.requested_by }} &middot; {{ la.requested_at | dt_s }}{% if la.error %} &middot; {{ la.error }}{% endif %}">
+                {% if la.status == 'pending' %}
+                    <span class="spinner-dot"></span> sedang proses…
+                {% elif la.status == 'ok' %}
+                    ✓ {{ la.op == 'unstake_all' and 'unstake' or 'fee' }} berhasil
+                    {% if la.amount_rao %}({{ la.amount_rao | tao(2) }}){% endif %}
+                {% else %}
+                    ✕ gagal — {{ (la.error or 'tanpa keterangan')[:60] }}
+                {% endif %}
+            </div>
+            {% endif %}
             {% if is_admin and tournament %}
             <div class="coldkey-actions">
                 <div class="tournament-types">
@@ -319,6 +334,31 @@ _confirm.addEventListener('click', async () => {
     <p class="text-muted" style="padding: 0 1.25rem 1rem;">Belum ada coldkey terdaftar.</p>
     {% endif %}
 </section>
+
+{% if is_admin %}
+<section class="panel" id="actions-panel" style="margin-bottom: 1.5rem;" hidden>
+    <header>
+        Riwayat aksi
+        <span class="text-muted" style="font-weight: 400; font-size: 0.78rem;">
+            &middot; pembayaran fee dan unstake
+        </span>
+    </header>
+    <table id="actions-table">
+        <thead>
+            <tr>
+                <th>Waktu</th>
+                <th>Wallet</th>
+                <th>Aksi</th>
+                <th class="num">Nominal</th>
+                <th>Status</th>
+                <th>Oleh</th>
+                <th>Keterangan</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+</section>
+{% endif %}
 
 <section class="panel">
     <header>Hotkey detail</header>
@@ -544,6 +584,78 @@ _confirm.addEventListener('click', async () => {
             }
         });
     });
+
+    // --- signed action history -------------------------------------
+    // Rendered from the server's audit table rather than from what this
+    // tab happened to do: an action started in another browser, or before
+    // a reload, still has to be visible — especially a pending one, which
+    // is the signal not to click again.
+    const actionsPanel = document.getElementById('actions-panel');
+    const actionsBody = actionsPanel
+        ? actionsPanel.querySelector('tbody') : null;
+    const shortKey = ck => `${ck.slice(0, 8)}…${ck.slice(-4)}`;
+    const walletNames = {};
+    document.querySelectorAll('.coldkey-card').forEach(card => {
+        const el = card.querySelector('.coldkey-refresh');
+        const name = card.querySelector('.coldkey-name');
+        if (el && name) walletNames[el.dataset.coldkey] = name.textContent.trim();
+    });
+
+    function statusBadge(s) {
+        if (s === 'ok') return '<span class="badge badge-ok">berhasil</span>';
+        if (s === 'pending') return '<span class="badge">proses…</span>';
+        return '<span class="badge badge-warn">gagal</span>';
+    }
+
+    let actionsTimer = null;
+
+    async function loadActions() {
+        if (!actionsBody) return;
+        let data;
+        try {
+            const r = await fetch('/api/actions/recent?limit=20');
+            if (!r.ok) return;
+            data = await r.json();
+        } catch (e) { return; }
+
+        if (!data.actions.length) { actionsPanel.hidden = true; return; }
+        actionsPanel.hidden = false;
+        actionsBody.innerHTML = '';
+        for (const a of data.actions) {
+            const tr = document.createElement('tr');
+            const cells = [
+                new Date(a.requested_at).toLocaleString(),
+                walletNames[a.coldkey_ss58] || shortKey(a.coldkey_ss58),
+                a.op === 'unstake_all' ? 'Unstake all'
+                    : `Fee${a.types ? ' (' + a.types + ')' : ''}`,
+                a.amount_rao ? (a.amount_rao / 1e9).toFixed(4) + ' τ' : '—',
+                null,                                   // status: HTML
+                a.requested_by || '—',
+                a.tx_hash || a.error || '—',
+            ];
+            cells.forEach((value, i) => {
+                const td = document.createElement('td');
+                if (i === 4) td.innerHTML = statusBadge(a.status);
+                // textContent everywhere else: a.error carries btcli's own
+                // output, which must never be parsed as markup.
+                else td.textContent = value;
+                if (i === 3) td.className = 'num text-mono';
+                tr.appendChild(td);
+            });
+            actionsBody.appendChild(tr);
+        }
+
+        // Only poll while something is actually running, and stop as soon
+        // as it settles — an idle dashboard should make no requests.
+        if (data.running && !actionsTimer) {
+            actionsTimer = setInterval(loadActions, 4000);
+        } else if (!data.running && actionsTimer) {
+            clearInterval(actionsTimer);
+            actionsTimer = null;
+        }
+    }
+
+    loadActions();
 
     // A scheduled run may already be in flight when the page loads.
     fetch('/api/balances/status')

@@ -303,3 +303,75 @@ class TestValidationErrorsDoNotEchoTheBody:
         body = r.json()
         assert body["detail"][0]["loc"] == ["body", "types"]
         assert body["detail"][0]["type"] == "missing"
+
+
+class TestActionStatusSurface:
+    """The dashboard has to answer 'did my click work?' from the server's
+    audit table, not from what this browser tab happened to do."""
+
+    def _seed(self, conn, status, op=OP_PAY, error=None, tx=None):
+        aid = queries.record_action(conn, CK, op, ["text"], 700_000_000, "alice")
+        if status != "pending":
+            queries.finish_action(conn, aid, status == "ok", tx, error)
+        return aid
+
+    def test_recent_actions_needs_admin(self, app, monkeypatch):
+        """It names who moved money and carries btcli's error text."""
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        r = TestClient(app).get(
+            "/api/actions/recent", headers={"X-Remote-User": "mallory"}
+        )
+        assert r.status_code == 403
+
+    def test_it_reports_each_outcome(self, app, monkeypatch):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        conn = app.state.db_conn
+        self._seed(conn, "ok", tx="0xabc")
+
+        body = TestClient(app).get(
+            "/api/actions/recent", headers={"X-Remote-User": "alice"}
+        ).json()
+        assert body["actions"][0]["status"] == "ok"
+        assert body["actions"][0]["tx_hash"] == "0xabc"
+        assert body["running"] is False
+
+    def test_running_is_true_only_while_something_is_pending(
+        self, app, monkeypatch
+    ):
+        """The page polls on this flag, so an idle dashboard must not poll."""
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        conn = app.state.db_conn
+        aid = self._seed(conn, "pending")
+
+        def _running():
+            return TestClient(app).get(
+                "/api/actions/recent", headers={"X-Remote-User": "alice"}
+            ).json()["running"]
+
+        assert _running() is True
+        queries.finish_action(conn, aid, True, "0xabc", None)
+        assert _running() is False
+
+    def test_latest_action_per_coldkey_picks_the_newest(self, app):
+        conn = app.state.db_conn
+        self._seed(conn, "failed", error="first attempt blew up")
+        self._seed(conn, "ok", tx="0xgood")
+
+        latest = queries.latest_action_per_coldkey(conn)
+        assert latest[CK]["status"] == "ok"
+        assert latest[CK]["tx_hash"] == "0xgood"
+
+    def test_a_wallet_with_no_history_has_no_entry(self, app):
+        assert queries.latest_action_per_coldkey(app.state.db_conn) == {}
+
+    def test_the_card_shows_the_last_outcome(self, app, monkeypatch):
+        """Rendered server-side, so a pending action started in another
+        browser is still visible to whoever opens the page next."""
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        self._seed(app.state.db_conn, "pending")
+        from emission_tracker.web.routes_pages import register_pages
+
+        register_pages(app)
+        html = TestClient(app).get("/", headers={"X-Remote-User": "alice"}).text
+        assert "coldkey-last-pending" in html
+        assert "sedang proses" in html

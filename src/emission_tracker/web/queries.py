@@ -1090,3 +1090,26 @@ def recent_actions(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
         "SELECT * FROM signed_actions ORDER BY id DESC LIMIT ?", (limit,)
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def latest_action_per_coldkey(conn: sqlite3.Connection) -> dict[str, dict]:
+    """The most recent signed action for each coldkey, keyed by address.
+
+    Drives the badge on each card. A `pending` row here is the only signal
+    that work is in flight for that wallet — the browser that started it
+    may have been closed, and the next person to open the dashboard still
+    needs to see that something is running before they click again.
+    """
+    rows = conn.execute(
+        """
+        SELECT a.*
+        FROM signed_actions a
+        JOIN (
+            SELECT coldkey_ss58, MAX(id) AS newest
+            FROM signed_actions
+            GROUP BY coldkey_ss58
+        ) latest
+          ON latest.coldkey_ss58 = a.coldkey_ss58 AND latest.newest = a.id
+        """
+    ).fetchall()
+    return {r["coldkey_ss58"]: dict(r) for r in rows}

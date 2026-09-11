@@ -786,3 +786,29 @@ a:hover {
 .tournament-total.is-short { color: var(--sn-warn); }
 .unstake-all { width: 100%; color: var(--sn-warn); }
 .unstake-all:hover:not(:disabled) { border-color: var(--sn-warn); }
+
+/* Outcome of the last signed action on a wallet. Sits above the controls
+   so the answer to "did my click work?" is next to the button that did it. */
+.coldkey-last-action {
+    margin-top: 0.5rem;
+    padding: 0.25rem 0.45rem;
+    border-radius: var(--sn-radius-sm);
+    font-size: 0.68rem;
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.coldkey-last-ok      { color: var(--sn-ok);   background: var(--sn-ok-dim); }
+.coldkey-last-failed  { color: var(--sn-warn); background: var(--sn-warn-dim); }
+.coldkey-last-pending { color: var(--sn-cyan); background: var(--sn-cyan-dim); }
+
+.spinner-dot {
+    display: inline-block;
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+    background: currentColor;
+    animation: sn-pulse 1s ease-in-out infinite;
+}
+@keyframes sn-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }

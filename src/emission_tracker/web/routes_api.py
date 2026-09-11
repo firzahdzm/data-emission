@@ -607,3 +607,25 @@ def unstake_all(
         0,
         user,
     )
+
+
+@router.get("/actions/recent")
+def recent_signed_actions(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=200),
+    user: str = Depends(require_admin),
+):
+    """Audit trail of signed actions. Admin only.
+
+    Unlike the other read endpoints this one is gated: it names who moved
+    money and carries btcli's error text, which is operational detail the
+    whole team has no reason to see.
+
+    `running` lets the page decide whether to keep polling without
+    re-deriving it from the rows on the client.
+    """
+    rows = queries.recent_actions(_db(request), limit=limit)
+    return {
+        "actions": rows,
+        "running": any(r["status"] == "pending" for r in rows),
+    }

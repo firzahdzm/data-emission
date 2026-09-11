@@ -422,3 +422,58 @@ class TestStrandedActionsAreReaped:
 
         assert cleanup_stranded_actions(conn) == 0
         assert queries.recent_actions(conn)[0]["status"] == "ok"
+
+
+class TestUnknownBalanceDoesNotBlockPayment:
+    """A failed balance fetch writes NULL, deliberately, so the dashboard
+    never shows a stale number as current. But NULL means 'unknown', not
+    'zero' — conflating them let one TaoStats hiccup disable payments from
+    a funded wallet until the next daily refresh."""
+
+    def _clear_balances(self, app):
+        app.state.db_conn.execute("DELETE FROM coldkey_balances")
+        app.state.db_conn.commit()
+
+    def test_a_null_reading_defers_to_btcli_instead_of_refusing(
+        self, app, monkeypatch
+    ):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        self._clear_balances(app)
+        app.state.db_conn.execute(
+            "INSERT INTO coldkey_balances (coldkey_ss58, fetched_at, "
+            "balance_free_rao, tournament_seen) VALUES (?, ?, NULL, 1)",
+            (CK, "2026-09-11T09:45:00+00:00"),
+        )
+        app.state.db_conn.commit()
+
+        fake = _FakeSigner()
+        app.state.signer = fake
+        r = _post(app, f"/api/tournament/pay/{CK}", {"types": ["text"]})
+        assert r.status_code == 200
+        assert len(fake.sent) == 1
+
+    def test_a_real_zero_still_refuses(self, app, monkeypatch):
+        """An actual reading of zero is knowledge, and it should still
+        fail fast rather than spend a chain round trip."""
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        self._clear_balances(app)
+        app.state.db_conn.execute(
+            "INSERT INTO coldkey_balances (coldkey_ss58, fetched_at, "
+            "balance_free_rao, tournament_seen) VALUES (?, ?, 0, 1)",
+            (CK, "2026-09-11T09:45:00+00:00"),
+        )
+        app.state.db_conn.commit()
+
+        fake = _FakeSigner()
+        app.state.signer = fake
+        r = _post(app, f"/api/tournament/pay/{CK}", {"types": ["text"]})
+        assert r.status_code == 409
+        assert fake.sent == []
+
+    def test_a_wallet_never_read_at_all_also_defers(self, app, monkeypatch):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        self._clear_balances(app)
+        fake = _FakeSigner()
+        app.state.signer = fake
+        r = _post(app, f"/api/tournament/pay/{CK}", {"types": ["text"]})
+        assert r.status_code == 200

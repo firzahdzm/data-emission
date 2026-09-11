@@ -574,8 +574,13 @@ def pay_tournament(
         "ORDER BY fetched_at DESC LIMIT 1",
         (coldkey,),
     ).fetchone()
-    free = (row["balance_free_rao"] if row else None) or 0
-    if free < amount_rao:
+    free = row["balance_free_rao"] if row else None
+    # NULL means the last fetch failed, which is "unknown", not "zero".
+    # Treating the two alike let one TaoStats hiccup block payments from a
+    # funded wallet until the next daily refresh — up to a day. btcli
+    # checks the real balance on chain regardless, so when we do not know,
+    # defer to it rather than refuse.
+    if free is not None and free < amount_rao:
         raise HTTPException(
             status_code=409,
             detail=f"Balance {free / 1e9:.4f} τ is short of {amount_rao / 1e9:.4f} τ",

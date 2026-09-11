@@ -32,6 +32,11 @@ RuntimeDirectoryMode=0750
 # the day's running total on every reboot). systemd creates and owns
 # /var/lib/emission-signer for this unit.
 StateDirectory=emission-signer
+# btcli writes into $HOME, and a system user's home is /nonexistent. Under
+# ProtectSystem=strict the StateDirectory is the one writable place this
+# unit has, so point HOME there rather than leaving btcli to fail on a
+# path that does not exist.
+Environment=HOME=/var/lib/emission-signer
 # This unit is the one component that may read the wallets. Note this only
 # RESTRICTS: it grants nothing, and /root is 0700, so the signer user still
 # needs traversal granted separately — see "Make the wallets readable by the

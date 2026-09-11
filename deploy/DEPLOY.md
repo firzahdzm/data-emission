@@ -213,38 +213,45 @@ sudo usermod -aG emission signer
 ### 2. Make the wallets readable by the signer
 
 `ReadOnlyPaths=/root/.bittensor/wallets` in the unit only *restricts* — it
-grants nothing. `/root` is mode 0700, so the `signer` user cannot traverse
-into it and `btcli wallet list` fails on every request. Pick one:
+grants nothing. Two separate things block the `signer` user, and both have
+to be dealt with:
 
-**Option A (recommended) — move the wallets out of `/root`.** Cleaner,
-because nothing outside root ever gains a foothold in root's home:
+- `/root` is mode 0700, so it cannot traverse into root's home at all.
+- the coldkey files themselves are `0600 root:root`, so traversal alone
+  would still not let it read them.
 
-```bash
-sudo mkdir -p /var/lib/emission-signer/wallets
-sudo cp -a /root/.bittensor/wallets/. /var/lib/emission-signer/wallets/
-sudo chown -R signer:signer /var/lib/emission-signer/wallets
-sudo chmod -R go-rwx /var/lib/emission-signer/wallets
-sudo chmod 0700 /var/lib/emission-signer/wallets
-```
+And there is a third, easy to miss: **`btcli` is a script whose shebang
+points at `/root/.venv/bin/python3`**, so the interpreter lives inside
+`/root` too. Moving the wallets elsewhere therefore does *not* free the
+signer from `/root` — it would still need access there just to run btcli.
+Escaping `/root` entirely means reinstalling bittensor-cli into a venv
+outside it (~200 MB) for a small gain.
 
-Then set `wallet_path: /var/lib/emission-signer/wallets` in the signer
-config below, and change `ReadOnlyPaths=` in the unit to match. Verify the
-copy before deleting the originals — keep an offline backup of the coldkeys
-regardless.
-
-**Option B — an ACL, leaving the wallets where they are:**
+So: use an ACL, and grant the minimum.
 
 ```bash
 sudo apt install acl   # if getfacl/setfacl are missing
-sudo setfacl -m u:signer:x /root
-sudo setfacl -R -m u:signer:rX /root/.bittensor/wallets
-sudo -u signer test -r /root/.bittensor/wallets && echo "signer can read the wallets"
+sudo setfacl -m u:signer:x /root                          # traverse only
+sudo setfacl -R -m u:signer:rX /root/.bittensor/wallets   # read the keyfiles
 ```
 
-Be clear-eyed about what Option B does: granting a service user traversal
-on `/root` is a real widening of access. It is not "just an x bit" — any
-path under `/root` whose own mode permits reading becomes reachable by the
-`signer` user from that moment on. Option A avoids the question entirely.
+`x` without `r` on `/root` lets the signer pass *through* to paths it
+already knows; it cannot list the directory. `/root/.venv` is already 0755,
+so traversal is all btcli needs. Verify all three properties:
+
+```bash
+sudo -u signer test -r /root/.bittensor/wallets/<a wallet>/coldkey \
+  && echo "can read a coldkey"
+sudo -u signer ls /root >/dev/null 2>&1 \
+  && echo "CAN list /root — too much" || echo "cannot list /root — correct"
+sudo -u signer /usr/local/bin/btcli --version
+```
+
+Be clear-eyed about the cost: granting a service user traversal on `/root`
+is a real widening of access. Any path under `/root` whose own mode permits
+reading becomes reachable by `signer` from that moment on. What bounds the
+damage is that this user runs one program that knows two operations and one
+hard-coded destination.
 
 ### 3. Install the signer config
 

@@ -10,6 +10,14 @@ CK = "5FnhiibtJkvCDSnfrp1iUQiZZaYJv31h114Pv7wtoztt9FP9"
 DEST = "5Ef5JgNv14LY4UEQFHbRQkf8TnegDV3AfAbcsJe5T2w6VQdo"
 WALLETS = {"wallets": [{"name": "prj1", "ss58_address": CK, "hotkeys": []}]}
 
+# Obvious dummy. The unlock value now travels with each request instead of
+# being read from disk, so every request in these tests carries one.
+UNLOCK = "dummy-unlock-value"
+
+
+def _req(op, coldkey, types=()):
+    return SignRequest(op, coldkey, types, secret=UNLOCK)
+
 
 class _Recorder:
     """Stands in for subprocess.run and records every argv it is given."""
@@ -40,7 +48,6 @@ def _config(tmp_path, **over):
         wallet_path="/root/.bittensor/wallets",
         max_transfer_tao=2.0,
         daily_cap_tao=30.0,
-        credentials_dir="/dev/null",
         state_path=str(tmp_path / "spend.json"),
     )
     base.update(over)
@@ -48,23 +55,30 @@ def _config(tmp_path, **over):
 
 
 def _signer(run, tmp_path, **over):
-    s = Signer(_config(tmp_path, **over), run=run)
-    s._passphrase_for = lambda name: "pw"  # no real credential files in tests
-    return s
+    return Signer(_config(tmp_path, **over), run=run)
 
 
 def test_env_for_uses_the_path_derived_var_not_bt_wallet_password(tmp_path):
     s = _signer(_Recorder(), tmp_path)
-    s._passphrase_for = lambda name: "sekret"
-    env = s._env_for("prj1")
+    env = s._env_for("prj1", UNLOCK)
     expected_var = coldkey_password_env_var("/root/.bittensor/wallets", "prj1")
-    assert env[expected_var] == "sekret"
+    assert env[expected_var] == UNLOCK
     assert "BT_WALLET_PASSWORD" not in env
+
+
+def test_the_unlock_value_reaches_only_the_environment_never_the_argv(tmp_path):
+    """btcli reads it from the environment. An argv carrying it would be
+    visible to every other process on the host via /proc."""
+    rec = _Recorder()
+    _signer(rec, tmp_path).handle(_req(OP_PAY, CK, ("text",)))
+    for argv in rec.calls:
+        assert UNLOCK not in argv
+        assert not any(UNLOCK in str(part) for part in argv)
 
 
 def test_payment_uses_the_signers_own_fee_table(tmp_path):
     rec = _Recorder()
-    res = _signer(rec, tmp_path).handle(SignRequest(OP_PAY, CK, ("text", "env")))
+    res = _signer(rec, tmp_path).handle(_req(OP_PAY, CK, ("text", "env")))
     assert res.ok
     # 0.7 + 0.6, computed here — the caller only named the types.
     assert res.amount_rao == 1_300_000_000
@@ -74,14 +88,14 @@ def test_payment_uses_the_signers_own_fee_table(tmp_path):
 
 def test_destination_is_the_configured_one_and_cannot_be_influenced(tmp_path):
     rec = _Recorder()
-    _signer(rec, tmp_path).handle(SignRequest(OP_PAY, CK, ("text",)))
+    _signer(rec, tmp_path).handle(_req(OP_PAY, CK, ("text",)))
     transfer = [c for c in rec.calls if "transfer" in c][0]
     assert transfer[transfer.index("--destination") + 1] == DEST
 
 
 def test_unknown_coldkey_is_refused_before_any_btcli_call(tmp_path):
     rec = _Recorder()
-    res = _signer(rec, tmp_path).handle(SignRequest(OP_PAY, "5NOTMINE", ("text",)))
+    res = _signer(rec, tmp_path).handle(_req(OP_PAY, "5NOTMINE", ("text",)))
     assert not res.ok
     assert "unknown coldkey" in res.error.lower()
     assert not any("transfer" in c for c in rec.calls)
@@ -91,7 +105,7 @@ def test_amount_over_the_per_request_cap_is_refused(tmp_path):
     """A bug that asks for everything must hit a wall in the signer."""
     rec = _Recorder()
     res = _signer(rec, tmp_path, max_transfer_tao=1.0).handle(
-        SignRequest(OP_PAY, CK, ("text", "image", "env"))  # 1.7
+        _req(OP_PAY, CK, ("text", "image", "env"))  # 1.7
     )
     assert not res.ok
     assert "cap" in res.error.lower()
@@ -101,8 +115,8 @@ def test_amount_over_the_per_request_cap_is_refused(tmp_path):
 def test_daily_cap_stops_the_second_run(tmp_path):
     rec = _Recorder()
     signer = _signer(rec, tmp_path, daily_cap_tao=1.0)
-    first = signer.handle(SignRequest(OP_PAY, CK, ("text",)))   # 0.7
-    second = signer.handle(SignRequest(OP_PAY, CK, ("env",)))   # 0.6 → 1.3 total
+    first = signer.handle(_req(OP_PAY, CK, ("text",)))   # 0.7
+    second = signer.handle(_req(OP_PAY, CK, ("env",)))   # 0.6 → 1.3 total
     assert first.ok
     assert not second.ok
     assert "daily" in second.error.lower()
@@ -110,7 +124,7 @@ def test_daily_cap_stops_the_second_run(tmp_path):
 
 def test_unstake_resolves_the_wallet_and_passes_the_guard(tmp_path):
     rec = _Recorder()
-    res = _signer(rec, tmp_path).handle(SignRequest(OP_UNSTAKE, CK))
+    res = _signer(rec, tmp_path).handle(_req(OP_UNSTAKE, CK))
     assert res.ok
     unstake = [c for c in rec.calls if "remove" in c][0]
     assert unstake[unstake.index("--wallet-name") + 1] == "prj1"
@@ -130,7 +144,7 @@ def test_btcli_failure_comes_back_as_a_failed_result_not_an_exception(tmp_path):
 
         return R()
 
-    res = _signer(failing, tmp_path).handle(SignRequest(OP_PAY, CK, ("text",)))
+    res = _signer(failing, tmp_path).handle(_req(OP_PAY, CK, ("text",)))
     assert not res.ok
     assert "insufficient balance" in res.error
 
@@ -141,12 +155,12 @@ def test_daily_spend_survives_a_restart(tmp_path):
     rec = _Recorder()
     state_path = str(tmp_path / "spend.json")
     first = _signer(rec, tmp_path, daily_cap_tao=1.0, state_path=state_path)
-    res1 = first.handle(SignRequest(OP_PAY, CK, ("text",)))  # 0.7
+    res1 = first.handle(_req(OP_PAY, CK, ("text",)))  # 0.7
     assert res1.ok
 
     # Simulate a crash/restart: a brand new Signer, same state_path.
     second = _signer(rec, tmp_path, daily_cap_tao=1.0, state_path=state_path)
-    res2 = second.handle(SignRequest(OP_PAY, CK, ("env",)))  # 0.6 → 1.3 total
+    res2 = second.handle(_req(OP_PAY, CK, ("env",)))  # 0.6 → 1.3 total
     assert not res2.ok
     assert "daily" in res2.error.lower()
 
@@ -156,7 +170,7 @@ def test_state_file_from_a_previous_day_does_not_count(tmp_path):
     state_path.write_text(json.dumps({"day": "2000-01-01", "rao": 999_000_000_000}))
     rec = _Recorder()
     signer = _signer(rec, tmp_path, daily_cap_tao=1.0, state_path=str(state_path))
-    res = signer.handle(SignRequest(OP_PAY, CK, ("text",)))  # 0.7, well under 1.0
+    res = signer.handle(_req(OP_PAY, CK, ("text",)))  # 0.7, well under 1.0
     assert res.ok
 
 
@@ -165,7 +179,7 @@ def test_corrupt_state_file_starts_clean_without_raising(tmp_path):
     state_path.write_text("not json")
     rec = _Recorder()
     signer = _signer(rec, tmp_path, daily_cap_tao=1.0, state_path=str(state_path))
-    res = signer.handle(SignRequest(OP_PAY, CK, ("text",)))  # 0.7, under 1.0
+    res = signer.handle(_req(OP_PAY, CK, ("text",)))  # 0.7, under 1.0
     assert res.ok
 
 
@@ -177,7 +191,7 @@ def test_unwritable_state_path_does_not_turn_a_success_into_a_failure(tmp_path):
     # Point state_path at the tmp_path directory itself: writing a file
     # there fails because it is a directory, not a file.
     signer = _signer(rec, tmp_path, state_path=str(tmp_path))
-    res = signer.handle(SignRequest(OP_PAY, CK, ("text",)))
+    res = signer.handle(_req(OP_PAY, CK, ("text",)))
     assert res.ok
     assert res.amount_rao == 700_000_000
     # The in-memory counter still advanced, so the cap keeps working for
@@ -191,13 +205,13 @@ def test_refusals_are_logged_so_grinding_leaves_a_trail(caplog, tmp_path):
     caller, so refusing one silently destroys the evidence."""
     rec = _Recorder()
     with caplog.at_level("WARNING", logger="emission_signer"):
-        _signer(rec, tmp_path).handle(SignRequest(OP_PAY, "5NOTMINE", ("text",)))
+        _signer(rec, tmp_path).handle(_req(OP_PAY, "5NOTMINE", ("text",)))
         _signer(rec, tmp_path, max_transfer_tao=1.0).handle(
-            SignRequest(OP_PAY, CK, ("text", "image", "env"))
+            _req(OP_PAY, CK, ("text", "image", "env"))
         )
         signer = _signer(rec, tmp_path, daily_cap_tao=1.0)
-        signer.handle(SignRequest(OP_PAY, CK, ("text",)))
-        signer.handle(SignRequest(OP_PAY, CK, ("env",)))
+        signer.handle(_req(OP_PAY, CK, ("text",)))
+        signer.handle(_req(OP_PAY, CK, ("env",)))
 
     messages = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
     assert any("unknown coldkey" in m and "5NOTMINE" in m for m in messages)
@@ -215,6 +229,6 @@ def test_a_refused_request_never_reads_a_passphrase(tmp_path):
         raise AssertionError("passphrase read for a refused request")
 
     signer._passphrase_for = _boom
-    res = signer.handle(SignRequest(OP_PAY, CK, ("text", "image", "env")))
+    res = signer.handle(_req(OP_PAY, CK, ("text", "image", "env")))
     assert not res.ok
     assert "cap" in res.error.lower()

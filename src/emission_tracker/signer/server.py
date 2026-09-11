@@ -44,7 +44,6 @@ class SignerConfig:
     wallet_path: str
     max_transfer_tao: float
     daily_cap_tao: float
-    credentials_dir: str
     state_path: str = "/var/lib/emission-signer/spend.json"
 
 
@@ -93,7 +92,7 @@ class Signer:
             )
 
         if request.op == OP_UNSTAKE:
-            env = self._env_for(name)
+            env = self._env_for(name, request.secret)
             # Log before attempting: the audit trail must survive a crash
             # between here and the chain.
             log.info("unstake_all coldkey=%s wallet=%s", request.coldkey, name)
@@ -133,7 +132,7 @@ class Signer:
                 error=f"daily cap of {self._config.daily_cap_tao} τ would be exceeded",
             )
 
-        env = self._env_for(name)
+        env = self._env_for(name, request.secret)
 
         log.info("pay_tournament coldkey=%s wallet=%s types=%s amount=%s",
                  request.coldkey, name, ",".join(request.types), amount_tao)
@@ -188,18 +187,7 @@ class Signer:
         except Exception as exc:
             log.warning("could not persist spend state to %s: %s", path, exc)
 
-    def _passphrase_for(self, wallet_name: str) -> str:
-        """Read one passphrase from the systemd credentials directory.
-
-        systemd puts each LoadCredential= item in its own file under
-        $CREDENTIALS_DIRECTORY, readable only by this unit. Keeping them
-        there instead of the environment means they never show up in
-        /proc/<pid>/environ or `systemctl show`.
-        """
-        path = Path(self._config.credentials_dir) / f"wallet-{wallet_name}"
-        return path.read_text().strip()
-
-    def _env_for(self, wallet_name: str) -> dict:
+    def _env_for(self, wallet_name: str, secret: str) -> dict:
         env = {
             "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
             "HOME": os.environ.get("HOME", "/root"),
@@ -210,8 +198,12 @@ class Signer:
             # into a non-zero exit — every button fails. Verify it against
             # the installed bittensor before going live: see "Verify the
             # passphrase environment variable" in deploy/DEPLOY.md.
+            #
+            # The value arrives with the request and lives only for this
+            # subprocess. Nothing is kept on disk, so a host compromise
+            # yields the encrypted keyfiles and nothing to open them with.
             coldkey_password_env_var(self._config.wallet_path, wallet_name):
-                self._passphrase_for(wallet_name),
+                secret,
         }
         return env
 

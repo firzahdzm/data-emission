@@ -182,11 +182,22 @@ and the wallets.
 ## 7b. The signer service
 
 The two money buttons (pay tournament fees, unstake all) are not signed by
-the dashboard. A separate unit, `emission-signer`, runs as its own user,
-holds the coldkey passphrases, and accepts exactly two operations over a
-unix socket with the destination address and fee table hard-coded. A
-compromised dashboard can therefore pay the tournament address and nothing
-else. Everything below is what makes that split actually work on the host.
+the dashboard. A separate unit, `emission-signer`, runs as its own user and
+accepts exactly two operations over a unix socket, with the destination
+address and fee table hard-coded. A compromised dashboard can therefore pay
+the tournament address and nothing else. Everything below is what makes that
+split actually work on the host.
+
+**No wallet unlock values are stored anywhere.** The admin types the wallet's
+unlock value into the dashboard at the moment they click, and it travels with
+that one request. Neither operation is ever scheduled or retried, so
+unattended signing was never a requirement — and skipping it means a host
+compromise yields the encrypted keyfiles with nothing to open them.
+
+The honest cost: the value now passes through the web tier, which is the
+least-trusted component here. It is bounded because the dashboard holds no
+keyfiles, so a captured value on its own cannot move anything. Serve the
+dashboard over HTTPS — §7 already requires it — and never over plain HTTP.
 
 Run these in order.
 
@@ -249,42 +260,29 @@ sudo chmod 0644 /etc/emission-signer/config.yaml
 sudo nano /etc/emission-signer/config.yaml
 ```
 
-### 4. Write the passphrase files
+### 4. Nothing to install for wallet unlock values
 
-**These files contain the plaintext passphrases to your coldkeys.** Anyone
-who reads one plus the matching wallet file can move every TAO in that
-coldkey. They must be `0600 root:root` — the signer never reads them
-directly; systemd reads them as root and hands each one to the unit as a
-credential file under `$CREDENTIALS_DIRECTORY`, which is why they do not
-need to be readable by the `signer` user and must not be.
+There is no step here, and that is the point — no files to create, no
+permissions to get right, nothing for a backup of `/etc` to leak. The
+dashboard asks for the value when you click, and the signer uses it for one
+btcli call.
 
-```bash
-sudo install -d -m 0700 -o root -g root /etc/emission-signer/passphrases
-sudo install -m 0600 -o root -g root /dev/null /etc/emission-signer/passphrases/goy
-sudo nano /etc/emission-signer/passphrases/goy   # the passphrase, nothing else
-# repeat for every wallet, then confirm:
-sudo ls -l /etc/emission-signer/passphrases/     # every line must read -rw------- root root
-```
+Two things this does require of you:
 
-Do not add these to backups that leave the host, and do not paste them into
-a shell where they land in `~/.bash_history`.
+- Each wallet's unlock value is its own. The signer picks the right
+  environment variable from the wallet path, so you only have to type the
+  value for the wallet whose card you clicked.
+- If a wallet has no unlock value at all, btcli will not prompt and the
+  action fails cleanly. Set one on that wallet before using the buttons.
 
-### 5. List every wallet in the unit
-
-`LoadCredential=` has one line per wallet, and the name after `wallet-`
-must match the btcli wallet name exactly — the signer looks up
-`wallet-<name>` when it signs.
+Confirm the wallet names the signer will resolve, so a card maps to the
+wallet you expect:
 
 ```bash
 sudo -u signer btcli wallet list --wallet-path /root/.bittensor/wallets \
      --no-prompt --json-output | python3 -c \
-  'import json,sys; [print(w["name"]) for w in json.load(sys.stdin)["wallets"]]'
+  'import json,sys; [print(w["name"], w["ss58_address"]) for w in json.load(sys.stdin)["wallets"]]'
 ```
-
-Put one `LoadCredential=wallet-<name>:/etc/emission-signer/passphrases/<name>`
-line per printed name into `deploy/emission-signer.service`, replacing the
-three placeholder lines. A wallet with no line will fail at sign time with a
-missing credential file, not at start time.
 
 ### 6. Install and start the unit
 
@@ -300,10 +298,14 @@ sudo systemctl status emission-signer --no-pager
 `/run/emission-signer` (0750 `signer:emission`) for the lifetime of the
 unit, and remove it on stop. The socket lives inside it.
 
-### 7. Verify the passphrase environment variable
+### 7. Verify the unlock environment variable
 
-**Do this before trusting either button.** The signer no longer passes the
-passphrase under a fixed name — the correct env var name is *derived from
+**Do this before trusting either button.** It is a local check: you type the
+wallet's unlock value once, here, to prove the plumbing works. Nothing is
+stored and nothing touches the chain.
+
+The value is not passed under a fixed name — the correct env var name is
+*derived from
 the coldkey keyfile path* (`<wallet_path>/<wallet_name>/coldkey`,
 uppercased, with every `/` and `.` turned into `_`, prefixed `BT_PW_`), by
 `coldkey_password_env_var()` in `src/emission_tracker/signer/btcli.py`.

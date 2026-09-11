@@ -62,8 +62,16 @@ def app():
     conn.close()
 
 
-def _post(app, path, json=None, user="alice"):
-    return TestClient(app).post(path, json=json, headers={"X-Remote-User": user})
+# Obvious dummy. The wallet unlock value is typed per action now, so every
+# request that reaches the signer carries one.
+UNLOCK = "dummy-unlock-value"
+
+
+def _post(app, path, json=None, user="alice", secret=UNLOCK):
+    body = dict(json or {})
+    if secret is not None:
+        body["secret"] = secret
+    return TestClient(app).post(path, json=body, headers={"X-Remote-User": user})
 
 
 def test_admin_pays_and_the_attempt_is_recorded(app, monkeypatch):
@@ -194,3 +202,64 @@ def test_the_row_records_the_signers_amount_not_the_trackers_estimate(
     # The tracker estimated 0.7 τ from its own table; the signer moved 0.85.
     assert row["amount_rao"] == 850_000_000
     assert row["status"] == "ok"
+
+
+class TestUnlockValueHandling:
+    """The wallet unlock value is typed by an admin and forwarded for one
+    btcli call. It must not survive anywhere after that."""
+
+    def test_blank_value_is_refused_before_any_row_or_socket_call(
+        self, app, monkeypatch
+    ):
+        """An empty string reaches btcli as an unset variable, which makes it
+        prompt and --no-prompt turn that into an opaque exit. Fail clearly."""
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        fake = _FakeSigner()
+        app.state.signer = fake
+
+        r = _post(app, f"/api/tournament/pay/{CK}", {"types": ["text"]}, secret="   ")
+        assert r.status_code == 400
+        assert fake.sent == []
+        assert queries.recent_actions(app.state.db_conn) == []
+
+    def test_unstake_also_requires_it(self, app, monkeypatch):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        fake = _FakeSigner()
+        app.state.signer = fake
+        r = _post(app, f"/api/stake/unstake-all/{CK}", secret="")
+        assert r.status_code in (400, 422)
+        assert fake.sent == []
+
+    def test_it_never_lands_in_the_audit_row(self, app, monkeypatch):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        app.state.signer = _FakeSigner()
+        _post(app, f"/api/tournament/pay/{CK}", {"types": ["text"]})
+
+        row = queries.recent_actions(app.state.db_conn)[0]
+        assert UNLOCK not in " ".join(str(v) for v in row.values())
+
+    def test_it_never_reaches_the_logs_even_when_the_action_fails(
+        self, app, monkeypatch, caplog
+    ):
+        """A failure path is where secrets usually escape — into the error
+        text, the row, or a stack trace."""
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        app.state.signer = _FakeSigner(
+            result=SignResult(False, OP_PAY, CK, error="insufficient balance")
+        )
+        with caplog.at_level("DEBUG"):
+            r = _post(app, f"/api/tournament/pay/{CK}", {"types": ["text"]})
+
+        assert r.status_code == 502
+        assert UNLOCK not in caplog.text
+        assert UNLOCK not in r.text
+        row = queries.recent_actions(app.state.db_conn)[0]
+        assert UNLOCK not in " ".join(str(v) for v in row.values())
+
+    def test_the_request_body_model_does_not_print_it(self):
+        """Pydantic models turn up in validation errors and tracebacks."""
+        from emission_tracker.web.routes_api import TournamentPayBody
+
+        body = TournamentPayBody(types=["text"], secret=UNLOCK)
+        assert UNLOCK not in repr(body)
+        assert UNLOCK not in str(body)

@@ -17,9 +17,6 @@ def main() -> None:
     config_path = sys.argv[1] if len(sys.argv) > 1 else "/etc/emission-signer/config.yaml"
     raw = yaml.safe_load(open(config_path))
     socket_path = raw.pop("socket_path", "/run/emission-signer/emission-signer.sock")
-    raw.setdefault(
-        "credentials_dir", os.environ.get("CREDENTIALS_DIRECTORY", "/run/credentials")
-    )
     raw.setdefault("state_path", "/var/lib/emission-signer/spend.json")
     serve(socket_path, Signer(SignerConfig(**raw)))
 

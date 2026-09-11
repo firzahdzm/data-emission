@@ -626,13 +626,19 @@ _confirm.addEventListener('click', async () => {
                 `.tournament-type input[data-coldkey="${ck}"]:checked`
             )).map(el => el.value);
             if (!types.length) return;
-            const ok = await snConfirm(
+            const ans = await snAuthorize(
                 `Kirim ${totalFor(ck).toFixed(2)} τ fee turnamen (${types.join(', ')})\n`
                 + `dari wallet ${b.dataset.label || ck}?`,
-                { title: 'Kirim fee turnamen', okText: 'Kirim', cancelText: 'Batal' });
-            if (!ok) return;
+                {
+                    title: 'Kirim fee turnamen',
+                    okText: 'Kirim',
+                    cancelText: 'Batal',
+                    danger: false,
+                    secretLabel: `Unlock value wallet ${b.dataset.label || ck}:`,
+                });
+            if (!ans || !ans.ok) return;
             runMoneyAction(`/api/tournament/pay/${encodeURIComponent(ck)}`,
-                           { types }, b);
+                           { types, secret: ans.secret }, b);
         });
     });
 
@@ -642,20 +648,21 @@ _confirm.addEventListener('click', async () => {
             // costs slippage, so it should be hard to do by reflex. The word
             // is the same everywhere, so muscle memory never carries a
             // half-read dialog — the wallet name is in the message instead.
-            const ok = await snConfirmTyped(
-                `Unstake SEMUA stake subnet {{ subnet_id }} dari wallet `
-                + `${b.dataset.label || b.dataset.coldkey}?\n`
+            const label = b.dataset.label || b.dataset.coldkey;
+            const ans = await snAuthorize(
+                `Unstake SEMUA stake subnet {{ subnet_id }} dari wallet ${label}?\n`
                 + `Tidak bisa dibatalkan dan kena slippage.`,
                 {
                     title: 'Unstake all',
                     okText: 'Unstake',
                     cancelText: 'Batal',
                     required: 'unstake',
+                    secretLabel: `Unlock value wallet ${label}:`,
                 });
-            if (!ok) return;
+            if (!ans || !ans.ok) return;
             runMoneyAction(
                 `/api/stake/unstake-all/${encodeURIComponent(b.dataset.coldkey)}`,
-                null, b);
+                { secret: ans.secret }, b);
         });
     });
 })();

@@ -20,6 +20,31 @@ Instead a second unit, `emission-signer`, holds the wallet access and
 exposes exactly two operations over a unix socket. It is the only
 component that can sign, and it can only sign the two shapes below.
 
+## The wallet unlock value is typed, not stored
+
+The admin types the wallet's unlock value into the dashboard when they
+click, and it travels with that one request. The signer puts it in the
+environment of a single btcli subprocess and keeps nothing.
+
+Nothing here is ever scheduled or retried, so unattended signing was never
+a requirement — which is the only thing storing secrets on disk would have
+bought. Skipping it changes the worst case materially: with values on disk,
+one host compromise yields the encrypted keyfiles *and* everything needed
+to open all fifteen, at once. Without, an attacker holds keyfiles and must
+wait to capture each value as it is used; wallets never touched never leak.
+
+The cost, stated plainly: the value now passes through the web tier, the
+least-trusted component in this design. It is bounded because the dashboard
+holds no keyfiles — a captured value alone moves nothing — but it is a real
+exposure, and it is why HTTPS is mandatory rather than advisable.
+
+This is a deliberate exception to "the caller names nothing consequential"
+below, and it is a different kind of field: it does not choose *what*
+happens — not the destination, not the amount, not the subnet — it only
+proves the person asking is allowed to ask. The request dataclass declares
+it `repr=False` and the API model types it `SecretStr`, so an accidental
+log line or traceback prints a mask rather than the value.
+
 ## Security properties
 
 What the split buys, stated precisely:
@@ -55,12 +80,12 @@ entirely on those requests. Cheap, and it closes the gap.
 ## The signer
 
 A systemd unit running as a dedicated `signer` user that can read the
-wallet directory, with the passphrases supplied via systemd
-`LoadCredential=` (kept out of the environment, so they do not appear in
-`/proc/<pid>/environ` or in `systemctl show`).
+wallet directory. It stores no unlock values of its own — each request
+carries the one it needs, per the section above.
 
-Socket: `/run/emission-signer.sock`, mode 0660, group-owned by
-`emission`, so only the tracker can talk to it.
+Socket: `/run/emission-signer/emission-signer.sock`, mode 0660, in a
+`RuntimeDirectory=` group-owned by `emission`, so only the tracker can
+reach it.
 
 Two requests, JSON lines:
 

@@ -1,9 +1,16 @@
 """Wire format between the tracker and the signer.
 
 One JSON object per line over a unix socket. Kept deliberately small:
-the caller names an intent and a coldkey, and nothing else. Amounts and
-destinations are the signer's to decide, so they have no place in a
-request — a field the caller controls is a field an attacker controls.
+the caller names an intent, a coldkey, and the secret that authorises it.
+Amounts and destinations are the signer's to decide, so they have no
+place in a request — a field the caller controls is a field an attacker
+controls.
+
+The wallet secret is the one deliberate exception, and it is a different
+kind of field: it does not choose *what* happens, only proves the person
+asking is allowed to ask. Carrying it per request is what lets the
+deployment keep no wallet secrets on disk at all. It is declared
+repr=False so an accidental log of a request object cannot print it.
 """
 
 import json
@@ -25,11 +32,16 @@ class SignRequest:
     op: str
     coldkey: str
     types: tuple[str, ...] = field(default=())
+    # repr=False: this object gets passed around and could land in a log
+    # line or a traceback. The value must not be printable by accident.
+    secret: str = field(default="", repr=False)
 
     def to_line(self) -> bytes:
         payload = {"op": self.op, "coldkey": self.coldkey}
         if self.types:
             payload["types"] = list(self.types)
+        if self.secret:
+            payload["secret"] = self.secret
         return (json.dumps(payload) + "\n").encode()
 
     @classmethod
@@ -60,8 +72,12 @@ class SignRequest:
         if op == OP_PAY and not types:
             raise ProtocolError("pay_tournament needs at least one type")
 
+        secret = raw.get("secret")
+        if not isinstance(secret, str) or not secret:
+            raise ProtocolError("wallet secret is required")
+
         # Any other key in the payload is dropped here, by construction.
-        return cls(op=op, coldkey=coldkey, types=tuple(types))
+        return cls(op=op, coldkey=coldkey, types=tuple(types), secret=secret)
 
 
 @dataclass(frozen=True)

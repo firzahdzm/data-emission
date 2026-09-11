@@ -53,6 +53,12 @@
             <input id="sn-modal-input" type="text" autocomplete="off" spellcheck="false"
                    style="margin: 0;">
         </div>
+        <div id="sn-modal-pw-wrap" hidden style="margin: 0 0 1rem;">
+            <label id="sn-modal-pw-label" for="sn-modal-pw"
+                   style="display: block; font-size: 0.8rem; margin-bottom: 0.3rem;"></label>
+            <input id="sn-modal-pw" type="password" autocomplete="off" spellcheck="false"
+                   style="margin: 0;">
+        </div>
         <footer id="sn-modal-actions" style="display: flex; gap: 0.5rem; justify-content: flex-end; margin: 0;"></footer>
     </article>
 </dialog>
@@ -65,8 +71,11 @@
         const inputWrap = document.getElementById('sn-modal-input-wrap');
         const inputEl = document.getElementById('sn-modal-input');
         const inputLabel = document.getElementById('sn-modal-input-label');
+        const pwWrap = document.getElementById('sn-modal-pw-wrap');
+        const pwEl = document.getElementById('sn-modal-pw');
+        const pwLabel = document.getElementById('sn-modal-pw-label');
         let currentResolve = null;
-        function openWith(title, message, buttons, typed) {
+        function openWith(title, message, buttons, typed, pw) {
             titleEl.textContent = title;
             msgEl.textContent = message;
             actionsEl.innerHTML = '';
@@ -79,6 +88,12 @@
                 inputLabel.textContent = typed.label;
                 inputEl.placeholder = typed.required;
             }
+            // `pw` adds a password field whose value is returned to the
+            // caller and cleared the moment the dialog closes — it is never
+            // held anywhere else.
+            pwWrap.hidden = !pw;
+            pwEl.value = '';
+            if (pw) pwLabel.textContent = pw.label;
             buttons.forEach((btn, i) => {
                 const b = document.createElement('button');
                 b.type = 'button';
@@ -86,28 +101,65 @@
                 if (btn.className) b.className = btn.className;
                 b.addEventListener('click', () => {
                     const r = currentResolve; currentResolve = null;
+                    // Read before close(), which clears the fields.
+                    const answer = (btn.value === true && pw)
+                        ? { ok: true, secret: pwEl.value }
+                        : btn.value;
                     dlg.close();
-                    if (r) r(btn.value);
+                    if (r) r(answer);
                 });
-                if (typed && btn.value === true) {
+                if ((typed || pw) && btn.value === true) {
                     b.disabled = true;
                     const sync = () => {
-                        b.disabled = inputEl.value.trim() !== typed.required;
+                        const wordOk = !typed || inputEl.value.trim() === typed.required;
+                        const pwOk = !pw || pwEl.value.length > 0;
+                        b.disabled = !(wordOk && pwOk);
                     };
-                    inputEl.oninput = sync;
-                    inputEl.onkeydown = (e) => {
+                    const onEnter = (e) => {
                         if (e.key === 'Enter' && !b.disabled) { e.preventDefault(); b.click(); }
                     };
+                    inputEl.oninput = sync;
+                    inputEl.onkeydown = onEnter;
+                    pwEl.oninput = sync;
+                    pwEl.onkeydown = onEnter;
                 }
                 actionsEl.appendChild(b);
-                if (i === buttons.length - 1 && !typed) setTimeout(() => b.focus(), 0);
+                if (i === buttons.length - 1 && !typed && !pw) setTimeout(() => b.focus(), 0);
             });
             dlg.showModal();
             if (typed) setTimeout(() => inputEl.focus(), 0);
+            else if (pw) setTimeout(() => pwEl.focus(), 0);
         }
         dlg.addEventListener('close', () => {
+            // Cleared on every exit — Escape, backdrop, Cancel, and OK alike.
+            // The value must not sit in the DOM after the dialog is gone.
+            pwEl.value = '';
+            inputEl.value = '';
             if (currentResolve) { const r = currentResolve; currentResolve = null; r(false); }
         });
+
+        // Authorise: an action that needs the wallet's unlock value, and
+        // optionally a typed word for the destructive ones. Resolves to
+        // false when cancelled, or {ok: true, secret} when confirmed.
+        window.snAuthorize = function (message, opts = {}) {
+            const {
+                title = 'Confirm', okText = 'OK', cancelText = 'Cancel',
+                danger = true, required = null,
+                secretLabel = 'Wallet unlock value',
+                typedLabel = null,
+            } = opts;
+            return new Promise(resolve => {
+                currentResolve = resolve;
+                openWith(title, message, [
+                    { label: cancelText, value: false, className: 'secondary' },
+                    { label: okText, value: true, className: danger ? 'btn-danger' : '' },
+                ],
+                required
+                    ? { required, label: typedLabel || `Ketik "${required}" untuk melanjutkan:` }
+                    : null,
+                { label: secretLabel });
+            });
+        };
         window.snAlert = function (message, opts = {}) {
             const { title = 'Notice', okText = 'OK', tone = 'info' } = opts;
             return new Promise(resolve => {
@@ -115,19 +167,6 @@
                 openWith(title, message, [
                     { label: okText, value: true, className: tone === 'error' ? 'btn-danger' : '' }
                 ]);
-            });
-        };
-        window.snConfirmTyped = function (message, opts = {}) {
-            const {
-                title = 'Confirm', okText = 'OK', cancelText = 'Cancel',
-                danger = true, required = 'confirm', label = `Ketik "${required}" untuk melanjutkan:`,
-            } = opts;
-            return new Promise(resolve => {
-                currentResolve = resolve;
-                openWith(title, message, [
-                    { label: cancelText, value: false, className: 'secondary' },
-                    { label: okText, value: true, className: danger ? 'btn-danger' : '' },
-                ], { required, label });
             });
         };
         window.snConfirm = function (message, opts = {}) {

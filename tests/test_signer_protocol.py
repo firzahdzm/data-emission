@@ -10,10 +10,36 @@ from emission_tracker.signer.protocol import (
 
 CK = "5FnhiibtJkvCDSnfrp1iUQiZZaYJv31h114Pv7wtoztt9FP9"
 
+# Obvious dummy. The wallet unlock value travels with each request now, so
+# a request without one is malformed.
+UNLOCK = "dummy-unlock-value"
+
 
 def test_request_round_trips():
-    req = SignRequest(op=OP_PAY, coldkey=CK, types=("text", "env"))
+    req = SignRequest(op=OP_PAY, coldkey=CK, types=("text", "env"), secret=UNLOCK)
     assert SignRequest.from_line(req.to_line()) == req
+
+
+def test_a_request_without_an_unlock_value_is_refused():
+    with pytest.raises(ProtocolError):
+        SignRequest.from_line(
+            b'{"op": "unstake_all", "coldkey": "5F"}\n'
+        )
+
+
+def test_an_empty_unlock_value_is_refused():
+    """Empty must not read as "no unlock needed" — btcli would then prompt
+    and --no-prompt would turn that into a confusing non-zero exit."""
+    with pytest.raises(ProtocolError):
+        SignRequest.from_line(
+            b'{"op": "unstake_all", "coldkey": "5F", "secret": ""}\n'
+        )
+
+
+def test_the_unlock_value_is_not_printed_by_repr():
+    """These objects get logged and appear in tracebacks."""
+    req = SignRequest(op=OP_UNSTAKE, coldkey=CK, secret=UNLOCK)
+    assert UNLOCK not in repr(req)
 
 
 def test_request_line_is_newline_terminated():
@@ -54,7 +80,7 @@ def test_amount_is_never_accepted_from_the_wire():
     not honoured, or the security boundary is decorative."""
     req = SignRequest.from_line(
         b'{"op": "pay_tournament", "coldkey": "5F", "types": ["text"],'
-        b' "amount_tao": 999}\n'
+        b' "secret": "dummy-unlock-value", "amount_tao": 999}\n'
     )
     assert not hasattr(req, "amount_tao")
 

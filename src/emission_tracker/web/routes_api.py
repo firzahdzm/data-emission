@@ -2,7 +2,7 @@ import logging
 import sqlite3
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 from emission_tracker.signer.protocol import (
     OP_PAY,
@@ -466,6 +466,18 @@ def _known_coldkey(request: Request, coldkey: str) -> None:
         raise HTTPException(status_code=404, detail=f"Unknown coldkey {coldkey!r}")
 
 
+def _require_secret(body) -> None:
+    """Reject a blank wallet unlock value before anything else happens.
+
+    An empty string would reach btcli as an empty environment variable, which
+    it treats as no value at all — it would fall back to a prompt, and
+    --no-prompt turns that into an opaque non-zero exit. Failing here says
+    what actually went wrong, and does it before any audit row is written.
+    """
+    if not body.secret.get_secret_value().strip():
+        raise HTTPException(status_code=400, detail="Wallet unlock value is required")
+
+
 def _run_signed_action(request: Request, sign_request, amount_rao: int, user: str):
     """Record, send, record the outcome. Shared by both endpoints so the
     audit row can never be skipped by one of them."""
@@ -518,6 +530,14 @@ def _run_signed_action(request: Request, sign_request, amount_rao: int, user: st
 
 class TournamentPayBody(BaseModel):
     types: list[str]
+    # SecretStr so an accidental log or traceback of this model prints
+    # '**********' instead of the value. Nothing is stored on the server:
+    # it is forwarded to the signer for one btcli call and then gone.
+    secret: SecretStr
+
+
+class UnstakeBody(BaseModel):
+    secret: SecretStr
 
 
 @router.post("/tournament/pay/{coldkey}")
@@ -528,6 +548,7 @@ def pay_tournament(
     user: str = Depends(require_admin),
 ):
     _known_coldkey(request, coldkey)
+    _require_secret(body)
     config = getattr(request.app.state, "config", None)
     tournament = getattr(config, "tournament", None) if config else None
     if tournament is None:
@@ -561,15 +582,28 @@ def pay_tournament(
         )
 
     return _run_signed_action(
-        request, SignRequest(OP_PAY, coldkey, tuple(body.types)), amount_rao, user
+        request,
+        SignRequest(
+            OP_PAY, coldkey, tuple(body.types),
+            secret=body.secret.get_secret_value(),
+        ),
+        amount_rao,
+        user,
     )
 
 
 @router.post("/stake/unstake-all/{coldkey}")
 def unstake_all(
-    request: Request, coldkey: str, user: str = Depends(require_admin)
+    request: Request,
+    coldkey: str,
+    body: UnstakeBody,
+    user: str = Depends(require_admin),
 ):
     _known_coldkey(request, coldkey)
+    _require_secret(body)
     return _run_signed_action(
-        request, SignRequest(OP_UNSTAKE, coldkey), 0, user
+        request,
+        SignRequest(OP_UNSTAKE, coldkey, secret=body.secret.get_secret_value()),
+        0,
+        user,
     )

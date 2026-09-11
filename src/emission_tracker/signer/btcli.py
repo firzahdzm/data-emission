@@ -446,6 +446,19 @@ UNSTAKE_PROMPTS = (
 _UNSTAKE_OK_MARKERS = ("Finalized", "finalized", "has been included as")
 
 
+# Captured from a real unstake on the host (btcli 9.23.2, wallet goy):
+#
+#     ✅ Your extrinsic has been included as 9045165-8: https://tao.app/…
+#     ✅ Finalized
+#     Unstaking operations completed.
+#
+# There is no 0x hash anywhere — the reference is the block-extrinsic id.
+_EXTRINSIC_ID = re.compile(r"has been included as\s+(\d+-\d+)")
+
+# btcli says this and stops when the wallet holds nothing on the subnet.
+_NOTHING_TO_DO = ("No unstake operations to perform", "No stake to unstake")
+
+
 def parse_unstake_output(text: str) -> str | None:
     """Return the extrinsic reference for a completed unstake.
 
@@ -458,6 +471,9 @@ def parse_unstake_output(text: str) -> str | None:
     failed = _FAIL_MARKER in flat or "unstaking failed" in flat
 
     if ok and not failed:
+        match = _EXTRINSIC_ID.search(flat)
+        if match:
+            return match.group(1)
         for token in flat.split():
             if token.startswith("0x") and len(token) > 18:
                 return token.rstrip(".,")
@@ -465,27 +481,12 @@ def parse_unstake_output(text: str) -> str | None:
     if failed and not ok:
         marker = flat.find(_FAIL_MARKER)
         raise BtcliError(tidy(flat[marker:] if marker >= 0 else flat, limit=300))
+    if any(marker in flat for marker in _NOTHING_TO_DO):
+        # A plain failure, not "unknown": nothing was submitted, and
+        # "check the chain" would send the operator after an extrinsic
+        # that does not exist — which is how a real warning gets cheap.
+        raise BtcliError("tidak ada stake untuk di-unstake di subnet ini")
     raise TransferUnknown(tidy(flat, limit=400) or "btcli printed nothing")
-
-
-def classify_timeout(partial: str, timeout: int):
-    """Decide what a timeout means, from whatever btcli had printed.
-
-    Still sitting at the password prompt with no sign of submission means
-    nothing reached the chain — a plain failure, and saying so keeps
-    "unknown" rare enough to be believed. Anything else is genuinely
-    unknown.
-    """
-    if "Enter your password" in partial and not any(
-        m in partial for m in (*_OK_MARKERS, "Submitting", "Extrinsic")
-    ):
-        raise BtcliError(
-            "btcli kept asking for the unlock value and never accepted it "
-            f"(timed out after {timeout}s) — nothing was submitted"
-        )
-    raise TransferUnknown(
-        f"btcli timed out after {timeout}s — check the chain"
-    )
 
 
 def _normalise(prompt) -> tuple[str, str | None, bool]:

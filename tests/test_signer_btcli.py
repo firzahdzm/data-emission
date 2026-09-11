@@ -664,3 +664,40 @@ def test_the_unstake_success_marker_covers_the_batch_wording():
     transfer's "Finalized" reported a completed unstake as unknown."""
     assert parse_unstake_output("✅ Batch finalized. Unstaked across 3 operations.") is None
     assert parse_unstake_output("✅ Finalized\nExtrinsic 0x" + "a" * 40).startswith("0x")
+
+
+# The real thing, from wallet goy on the host. Kept verbatim because every
+# assumption about btcli's wording that was not taken from a real run has
+# turned out to be wrong at least once.
+REAL_UNSTAKE_OK = """Safe staking: enabled.
+Unstake all: 0.2362 ج from default on netuid: 56?  [y/n/q] (n): y
+Would you like to continue? [y/n] (n): y
+Enter your password:
+Decrypting...
+✅ Your extrinsic has been included as 9045165-8:
+https://tao.app/extrinsic/9045165-8
+✅ Finalized
+
+Balance:
+  0.0070 τ ➡ 0.0093 τ
+Subnet: 56 Stake:
+  0.2362 ج ➡ 0.0000 ج
+Unstaking operations completed.
+"""
+
+
+def test_a_real_unstake_reports_its_extrinsic_id():
+    """btcli prints no 0x hash for an unstake — the reference is the
+    block-extrinsic id, and without it the audit row has nothing to show."""
+    assert parse_unstake_output(REAL_UNSTAKE_OK) == "9045165-8"
+
+
+def test_an_empty_subnet_position_is_a_plain_failure_not_an_unknown():
+    """Clicking Unstake on a wallet that holds nothing submits nothing.
+    Calling that "check the chain" sends the operator looking for an
+    extrinsic that does not exist, and makes the real warning cheap."""
+    with pytest.raises(BtcliError) as exc:
+        parse_unstake_output(
+            "Unstaking to: …\nNo unstake operations to perform.\n"
+        )
+    assert "tidak ada stake" in str(exc.value)

@@ -73,11 +73,18 @@ def _signer(run, tmp_path, **over):
     return Signer(_config(tmp_path, **over), run=run)
 
 
-def test_env_for_uses_the_path_derived_var_not_bt_wallet_password(tmp_path):
+def test_the_environment_carries_no_unlock_value_at_all(tmp_path):
+    """Setting BT_PW_* is worse than useless: btcli 9.23 reads its presence
+    as "a password is available", skips the prompt, and then fails to
+    decrypt with it — "Coldkey Keyfile is corrupt", with no password prompt
+    in the exchange. It closed the only channel that works. The value goes
+    in on stdin instead."""
     s = _signer(_Recorder(), tmp_path)
     env = s._env_for("prj1", UNLOCK)
-    expected_var = coldkey_password_env_var("/root/.bittensor/wallets", "prj1")
-    assert env[expected_var] == UNLOCK
+
+    assert set(env) == {"PATH", "HOME"}
+    assert UNLOCK not in "".join(env.values())
+    assert coldkey_password_env_var("/root/.bittensor/wallets", "prj1") not in env
     assert "BT_WALLET_PASSWORD" not in env
 
 

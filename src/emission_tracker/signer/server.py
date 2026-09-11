@@ -221,25 +221,27 @@ class Signer:
             log.warning("could not persist spend state to %s: %s", path, exc)
 
     def _env_for(self, wallet_name: str, secret: str) -> dict:
-        env = {
-            # Same base as every other btcli call — see base_env() for why
-            # PATH here is load-bearing rather than decoration.
-            **base_env(),
-            # The env var name btcli/bittensor_wallet reads the coldkey
-            # passphrase from is derived from the coldkey keyfile path (see
-            # coldkey_password_env_var), not a fixed name — getting it wrong
-            # makes btcli fall back to a prompt, which --no-prompt turns
-            # into a non-zero exit — every button fails. Verify it against
-            # the installed bittensor before going live: see "Verify the
-            # passphrase environment variable" in deploy/DEPLOY.md.
-            #
-            # The value arrives with the request and lives only for this
-            # subprocess. Nothing is kept on disk, so a host compromise
-            # yields the encrypted keyfiles and nothing to open them with.
-            coldkey_password_env_var(self._config.wallet_path, wallet_name):
-                secret,
-        }
-        return env
+        """The environment for a signing call — deliberately without the
+        unlock value.
+
+        BT_PW_* is not merely useless here, it is actively harmful. btcli
+        9.23 treats the variable's presence as "a password is already
+        available" and therefore never prompts, then fails to decrypt with
+        it anyway: "Coldkey Keyfile is corrupt". Setting it closed the one
+        channel that does work. Captured from a real run:
+
+            Proceed with transfer? [y/n] (n): ❌ Failed: Coldkey Keyfile is
+            corrupt, non-writable, or non-readable, or non-existent.
+
+        — the confirmation answered, and no password prompt at all. With
+        the variable absent, btcli asks, and the answer goes in on stdin.
+
+        `wallet_name` and `secret` stay in the signature: both are part of
+        what a caller must supply to sign, and dropping them would make
+        this look like a generic environment rather than a deliberate
+        omission.
+        """
+        return base_env()
 
 
 def _tx_hash(payload: dict) -> str | None:

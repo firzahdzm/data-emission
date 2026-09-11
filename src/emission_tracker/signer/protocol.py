@@ -94,6 +94,8 @@ class SignResult:
             raw = json.loads(line.decode())
         except (ValueError, UnicodeDecodeError) as exc:
             raise ProtocolError(f"malformed result: {exc}") from exc
+        if not isinstance(raw, dict):
+            raise ProtocolError("result must be a JSON object")
         return cls(
             ok=bool(raw.get("ok")),
             op=str(raw.get("op") or ""),

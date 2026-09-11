@@ -65,6 +65,13 @@ def test_result_round_trips():
     assert SignResult.from_line(res.to_line()) == res
 
 
+def test_result_from_non_dict_json_raises_protocol_error():
+    """Valid JSON that is not an object must still be a ProtocolError, or it
+    escapes the socket client, which only catches OSError and ProtocolError."""
+    with pytest.raises(ProtocolError):
+        SignResult.from_line(b"[1, 2]\n")
+
+
 def test_malformed_json_raises_protocol_error():
     with pytest.raises(ProtocolError):
         SignRequest.from_line(b"not json\n")

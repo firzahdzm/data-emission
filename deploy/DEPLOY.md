@@ -141,7 +141,7 @@ To make a Basic-Auth user an admin, edit `config.yaml`:
 
 ```yaml
 admin_users:
-  - firza     # must exactly match the htpasswd username used at /etc/nginx/.htpasswd_emission
+  - admin     # must exactly match the htpasswd username used at /etc/nginx/.htpasswd_emission
 ```
 
 ```bash

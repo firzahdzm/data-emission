@@ -14,6 +14,10 @@ POOL_PATH = "/api/dtao/pool/latest/v1"
 TAO_PRICE_PATH = "/api/price/latest/v1"
 AUTH_HEADER = "Authorization"
 
+# One token refills every 12s at the configured 5/min. Retrying a 429 any
+# sooner than that is guaranteed to arrive before the budget has recovered.
+RATE_LIMIT_BACKOFF = 15.0
+
 
 @dataclass(frozen=True)
 class NeuronInfo:
@@ -66,6 +70,7 @@ class TaoStatsClient:
         timeout: float = 15.0,
         max_retries: int = 2,
         retry_backoff: float = 5.0,
+        rate_limit_backoff: float = RATE_LIMIT_BACKOFF,
     ):
         self._client = httpx.Client(
             base_url=base_url,
@@ -74,6 +79,7 @@ class TaoStatsClient:
         )
         self._max_retries = max_retries
         self._retry_backoff = retry_backoff
+        self._rate_limit_backoff = rate_limit_backoff
 
     def close(self) -> None:
         self._client.close()
@@ -150,8 +156,18 @@ class TaoStatsClient:
                     return resp
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 last_exc = exc
+                resp = None
             if attempt < self._max_retries:
-                time.sleep(self._retry_backoff * (2 ** attempt))
+                # A 429 means the shared token budget is already spent, and
+                # a retry does not go through the limiter — so retrying
+                # sooner than a token takes to refill (12s at 5/min) just
+                # adds to the flood that caused it. Back off past that.
+                rate_limited = resp is not None and resp.status_code == 429
+                backoff = (
+                    self._rate_limit_backoff if rate_limited
+                    else self._retry_backoff
+                )
+                time.sleep(backoff * (2 ** attempt))
         if last_exc:
             raise last_exc
         resp.raise_for_status()

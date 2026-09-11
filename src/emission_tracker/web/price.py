@@ -52,6 +52,12 @@ class AlphaPriceCache:
                 return fresh
 
         try:
+            # Twice, because get_alpha_price makes two HTTP calls: the
+            # subnet pool and the TAO market quote. Taking one token for
+            # two requests quietly spends more of the shared budget than
+            # the limiter thinks, and the emission snapshot pays for it in
+            # 429s.
+            self._rate_limiter.acquire()
             self._rate_limiter.acquire()
             price = self._client.get_alpha_price(self._subnet_id)
         except Exception as exc:

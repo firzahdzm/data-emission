@@ -25,6 +25,14 @@
                 <a href="/archive" class="{% if active_page == 'archive' %}active{% endif %}">Periods</a>
                 <a href="/kas" class="{% if active_page == 'kas' %}active{% endif %}">Fund</a>
             </nav>
+            {% if user %}
+            <div class="header-user">
+                <span>{{ user }}</span>
+                <form method="post" action="/logout">
+                    <button type="submit">Keluar</button>
+                </form>
+            </div>
+            {% endif %}
         </div>
         <p class="subtitle">Bittensor subnet 56 · team performance monitor</p>
         <p class="last-snap">

@@ -133,6 +133,77 @@ sudo certbot --nginx -d emission.example.com
 
 Open https://emission.example.com in a browser and log in.
 
+## 7bis. The app's own login (replaces Basic Auth)
+
+Basic Auth has no logout — the browser holds the credentials until every
+window is closed — and its prompt is the browser's, not the app's. The
+tracker now serves its own login page and issues a signed session cookie,
+so `auth_basic` in nginx can go.
+
+**Order matters.** Configure the users first, verify you can log in, and
+only then remove `auth_basic`. Doing it the other way round leaves the
+site open to the internet in between.
+
+### 1. Hash a password for each person
+
+```bash
+sudo -u emission /opt/emission-tracker/.venv/bin/python \
+    -m emission_tracker.web.passwords
+# asks twice, prints: scrypt$16384$8$1$…$…
+```
+
+### 2. Put them in `config.yaml`
+
+```yaml
+auth:
+  session_secret: "<32+ random characters — see below>"
+  session_hours: 168          # a week; the cookie expires on its own
+  users:
+    admin:  "scrypt$16384$8$1$…"
+    susnet: "scrypt$16384$8$1$…"
+```
+
+Generate the secret with `openssl rand -hex 32`. Changing it later logs
+everyone out, which is the emergency lever if a laptop goes missing.
+
+Only hashes live in the file — never a plaintext password. Keep it
+`chmod 600` and owned by the service user anyway; it also holds the
+TaoStats key.
+
+`admin_users` is unchanged and still names who may settle periods and
+spend from the wallets. A user in `auth.users` but not in `admin_users`
+can see the dashboard and nothing else.
+
+**An empty `auth.users` disables the gate** — that is what keeps an
+upgrade from locking out a deployment still fronted by Basic Auth. So
+never "disable login" by emptying it while nginx no longer asks either.
+
+### 3. Restart and check
+
+```bash
+sudo systemctl restart emission-tracker
+```
+
+Open the site in a private window: you should get the tracker's own login
+page, and your name plus a **Keluar** button in the header afterwards.
+
+### 4. Only now, remove Basic Auth from nginx
+
+```bash
+sudo nano /etc/nginx/sites-enabled/emission     # delete the two auth_basic lines
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Leave `proxy_set_header X-Remote-User $remote_user;` in place or remove
+it — with `auth_basic` gone it forwards an empty value either way, and
+the session cookie is what the app reads first.
+
+### Removing someone's access
+
+Delete their line from `auth.users` and restart. Their existing session
+stops working immediately: every request re-checks the name against the
+config, so revocation does not wait for the cookie to expire.
+
 ## 7a. Grant admin powers (settle/unsettle periods)
 
 The web UI has a `[Close period]` button and a `[Delete settlement]` button that only appear for usernames listed in `config.yaml` under `admin_users`. nginx forwards the Basic Auth username to the app via the `X-Remote-User` header (this is wired up in the example nginx config).

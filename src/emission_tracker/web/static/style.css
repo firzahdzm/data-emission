@@ -888,3 +888,61 @@ details.panel {
     z-index: 1;
     background: var(--sn-surface-1);
 }
+
+/* ---- Login ---- */
+.login-body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 1.5rem;
+}
+.login-card {
+    width: 100%;
+    max-width: 21rem;
+    background: var(--sn-surface-1);
+    border: 1px solid var(--sn-border);
+    border-radius: var(--sn-radius);
+    padding: 2rem 1.75rem 1.75rem;
+}
+.login-logo { height: 1.6rem; display: block; }
+.login-sub {
+    margin: 0.6rem 0 1.5rem;
+    font-size: 0.75rem;
+    color: var(--sn-text-dim);
+}
+.login-card label {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--sn-text-dim);
+    margin-bottom: 0.3rem;
+}
+.login-card input { margin-bottom: 1rem; }
+.login-card button { width: 100%; margin: 0; }
+.login-error {
+    margin: 0 0 1rem;
+    padding: 0.55rem 0.7rem;
+    border-radius: var(--sn-radius-sm);
+    font-size: 0.8rem;
+    color: var(--sn-warn);
+    background: var(--sn-warn-dim);
+}
+
+/* Who is signed in, and the way out — Basic Auth had neither. */
+.header-user {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--sn-text-dim);
+}
+.header-user form { margin: 0; }
+.header-user button {
+    margin: 0;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.72rem;
+    background: transparent;
+    border: 1px solid var(--sn-border);
+    color: var(--sn-text-dim);
+}
+.header-user button:hover { color: var(--sn-text); }

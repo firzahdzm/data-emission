@@ -9,7 +9,7 @@ from fastapi.templating import Jinja2Templates
 
 from emission_tracker.units import format_alpha, format_tao, rao_to_alpha
 from emission_tracker.web import queries
-from emission_tracker.web.auth import is_admin
+from emission_tracker.web.auth import current_user, is_admin
 from emission_tracker.web.range_parse import parse_range
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -176,6 +176,7 @@ def register_pages(app: FastAPI) -> None:
                 "last_settle": last_settle,
                 "active_page": "dashboard",
                 "is_admin": is_admin(request),
+                "user": current_user(request),
             },
         )
 
@@ -193,6 +194,7 @@ def register_pages(app: FastAPI) -> None:
                 "latest": latest,
                 "active_page": "archive",
                 "is_admin": is_admin(request),
+                "user": current_user(request),
             },
         )
 
@@ -232,6 +234,7 @@ def register_pages(app: FastAPI) -> None:
                 "latest": latest,
                 "active_page": "archive",
                 "is_admin": is_admin(request),
+                "user": current_user(request),
             },
         )
 
@@ -265,6 +268,7 @@ def register_pages(app: FastAPI) -> None:
                 "latest": latest,
                 "active_page": "kas",
                 "is_admin": is_admin(request),
+                "user": current_user(request),
             },
         )
 
@@ -283,6 +287,7 @@ def register_pages(app: FastAPI) -> None:
                 "latest": latest,
                 "active_page": "kas",
                 "is_admin": is_admin(request),
+                "user": current_user(request),
             },
         )
 

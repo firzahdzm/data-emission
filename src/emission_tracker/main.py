@@ -23,6 +23,7 @@ from emission_tracker.web.errors import install_error_handlers
 from emission_tracker.web.price import AlphaPriceCache
 from emission_tracker.web.routes_api import router as api_router
 from emission_tracker.web.signer_client import SignerClient
+from emission_tracker.web.routes_auth import register_auth
 from emission_tracker.web.routes_pages import register_pages
 
 log = logging.getLogger(__name__)
@@ -139,6 +140,7 @@ def create_app(
 
     app = FastAPI(lifespan=lifespan)
     install_error_handlers(app)
+    register_auth(app)
     app.include_router(api_router, prefix="/api")
     register_pages(app)
     return app

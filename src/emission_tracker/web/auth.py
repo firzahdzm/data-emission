@@ -7,6 +7,8 @@ import os
 
 from fastapi import HTTPException, Request
 
+from emission_tracker.web import sessions
+
 log = logging.getLogger(__name__)
 
 PROXY_SECRET_HEADER = "X-Auth-Proxy"
@@ -35,6 +37,30 @@ def proxy_secret_ok(request: Request) -> bool:
     return hmac.compare_digest(presented, expected)
 
 
+def _auth_config(request: Request):
+    config = getattr(request.app.state, "config", None)
+    return getattr(config, "auth", None) if config else None
+
+
+def session_user(request: Request) -> str | None:
+    """The user named by a valid session cookie, or None.
+
+    Checked before the proxy header: the login page is the tracker's own
+    now, and a session it issued is the strongest evidence it has. The
+    name must still be one the config knows — removing someone from
+    `auth.users` has to log them out, not merely stop them logging in.
+    """
+    auth = _auth_config(request)
+    if not auth or not auth.session_secret:
+        return None
+    user = sessions.read(
+        request.cookies.get(sessions.COOKIE_NAME), auth.session_secret
+    )
+    if user is None or user not in auth.users:
+        return None
+    return user
+
+
 def current_user(request: Request) -> str | None:
     """Return the authenticated username forwarded by nginx, or None when
     no auth layer is in front (local dev, tests).
@@ -44,6 +70,10 @@ def current_user(request: Request) -> str | None:
     Basic Auth. Never use in production — and it is ignored outright when
     `proxy_secret` is configured.
     """
+    from_session = session_user(request)
+    if from_session:
+        return from_session
+
     dev_user = os.environ.get("EMISSION_DEV_USER")
     if dev_user:
         if _proxy_secret_configured(request):

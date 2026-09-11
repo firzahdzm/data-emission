@@ -72,6 +72,22 @@ class TournamentConfig(BaseModel):
     fees_tao: dict[str, float]
 
 
+class AuthConfig(BaseModel):
+    """The tracker's own login, replacing nginx Basic Auth.
+
+    Basic Auth had no way out: the browser holds the credentials and
+    there is no logout, only closing every window. It also cannot be
+    styled, and it prompts before the site is ever seen.
+    """
+
+    # username -> scrypt hash (see emission_tracker.web.passwords).
+    users: dict[str, str] = Field(default_factory=dict)
+    # HMAC key for session cookies. Empty means no one can log in — a
+    # deployment that forgets it gets a locked door, never an open one.
+    session_secret: str = ""
+    session_hours: int = Field(default=168, gt=0)
+
+
 class AppConfig(BaseModel):
     subnet_id: int = Field(gt=0)
     polling: PollingConfig
@@ -86,6 +102,7 @@ class AppConfig(BaseModel):
     # Shared secret nginx sends as X-Auth-Proxy. Empty disables the check,
     # which is what a deployment without the matching nginx block needs.
     proxy_secret: str = ""
+    auth: AuthConfig = Field(default_factory=AuthConfig)
     tournament: TournamentConfig | None = None
     signer_socket: str = "/run/emission-signer/emission-signer.sock"
 

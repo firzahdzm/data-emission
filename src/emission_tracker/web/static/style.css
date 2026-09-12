@@ -960,3 +960,12 @@ details.panel {
     color: var(--sn-text-dim);
 }
 .header-user button:hover { color: var(--sn-text); }
+/* How old the figures above are. Quiet by default — it only matters
+   when someone is about to act on a number. */
+.coldkey-age {
+    margin-top: 0.35rem;
+    font-size: 0.62rem;
+    color: var(--sn-text-dim);
+    text-align: right;
+    letter-spacing: 0.03em;
+}

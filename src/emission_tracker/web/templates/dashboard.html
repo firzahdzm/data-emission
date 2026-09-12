@@ -289,6 +289,13 @@ _confirm.addEventListener('click', async () => {
                     {% endif %}
                 </span>
             </div>
+            {# Balances are read once a day. Without the age on the card,
+               a figure most of a day old looks like the chain's answer —
+               which is how "Stake 0.71 τ" sat beside btcli reporting
+               nothing to unstake. #}
+            <div class="coldkey-age" title="Saldo terakhir dibaca: {{ c.fetched_at | dt_s if c.fetched_at else 'belum pernah' }}">
+                {{ c.fetched_at | age }}
+            </div>
             {% if is_admin %}
             {% set la = c.last_action %}
             {# Always present so the script can repaint it after an action
@@ -566,26 +573,31 @@ _confirm.addEventListener('click', async () => {
         });
     }
 
-    cardButtons.forEach(b => {
-        b.addEventListener('click', async () => {
-            const ck = b.dataset.coldkey;
-            setCardsBusy(ck);
-            note.textContent = 'refreshing 1 coldkey…';
-            try {
-                const r = await fetch(`/api/balances/refresh/${encodeURIComponent(ck)}`,
-                                      { method: 'POST' });
-                const body = await r.json().catch(() => ({}));
-                if (!r.ok) {
-                    setCardsIdle();
-                    note.textContent = body.detail || `failed (${r.status})`;
-                    return;
-                }
-                watch();
-            } catch (e) {
+    // Refresh one wallet and reload when it lands. Shared by the card's
+    // own button and by every money action, which must not leave the
+    // operator looking at figures from before the transaction.
+    async function refreshOneColdkey(ck) {
+        setCardsBusy(ck);
+        note.textContent = 'memperbarui saldo wallet ini…';
+        try {
+            const r = await fetch(
+                `/api/balances/refresh/${encodeURIComponent(ck)}`,
+                { method: 'POST' });
+            const body = await r.json().catch(() => ({}));
+            if (!r.ok && r.status !== 409) {
                 setCardsIdle();
-                note.textContent = 'request failed';
+                note.textContent = body.detail || `gagal (${r.status})`;
+                return;
             }
-        });
+            watch();
+        } catch (e) {
+            setCardsIdle();
+            note.textContent = 'permintaan gagal';
+        }
+    }
+
+    cardButtons.forEach(b => {
+        b.addEventListener('click', () => refreshOneColdkey(b.dataset.coldkey));
     });
 
     // --- signed action history -------------------------------------
@@ -808,6 +820,12 @@ _confirm.addEventListener('click', async () => {
             // Repaint from the server's audit table rather than from what
             // we think happened — it is the record that actually counts.
             loadActions();
+            // Re-read this wallet from the chain, whichever way it went.
+            // After a success the figures are stale by definition; after
+            // a failure they are suspect — "tidak ada stake untuk
+            // di-unstake" arrived on a card confidently showing 0.71 τ of
+            // stake, because the card was most of a day old.
+            refreshOneColdkey(coldkey);
         };
 
         try {
@@ -822,11 +840,12 @@ _confirm.addEventListener('click', async () => {
                 settle();
                 return;
             }
-            note.textContent = 'berhasil — memuat ulang saldo';
+            note.textContent = 'berhasil — memperbarui saldo';
             loadActions();
-            // Reload only on success: the wallet balance has changed, and
-            // that figure is rendered server-side.
-            setTimeout(() => location.reload(), 1200);
+            // Re-read the chain before reloading. The page renders stored
+            // balances, so reloading on its own would show the same
+            // pre-transaction figures back to the operator.
+            settle();
         } catch (e) {
             note.textContent = 'permintaan gagal';
             settle();

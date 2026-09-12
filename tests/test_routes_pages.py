@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -269,3 +269,58 @@ def test_the_action_log_starts_collapsed(app, monkeypatch):
     assert tag.startswith("<details")
     assert " open" not in tag
     assert "loadActions" in html
+
+
+class TestBalancesShowTheirAge:
+    """A card showing "Stake 0.71 τ" sat next to btcli reporting nothing
+    to unstake. Both were right: the chain had changed and the card was
+    most of a day old. Without the age, the stale figure reads as the
+    chain's answer."""
+
+    def test_the_card_says_how_old_its_figures_are(self, app, monkeypatch):
+        from types import SimpleNamespace
+
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        app.state.config = SimpleNamespace(admin_users=["alice"], subnet_id=56)
+        html = TestClient(app).get("/", headers={"X-Remote-User": "alice"}).text
+        assert "coldkey-age" in html
+
+    def test_a_money_action_re_reads_the_wallet_before_reloading(
+        self, app, monkeypatch
+    ):
+        """Reloading alone re-renders the same stored balances, so the
+        operator would see pre-transaction figures after a payment."""
+        from types import SimpleNamespace
+
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        app.state.config = SimpleNamespace(
+            admin_users=["alice"],
+            subnet_id=56,
+            tournament=SimpleNamespace(
+                address="5Ef5", fees_tao={"text": 0.7}
+            ),
+        )
+        html = TestClient(app).get("/", headers={"X-Remote-User": "alice"}).text
+        assert "refreshOneColdkey(coldkey)" in html
+
+
+@pytest.mark.parametrize(
+    "delta,expected",
+    [
+        (timedelta(seconds=30), "baru saja"),
+        (timedelta(minutes=20), "20 menit lalu"),
+        (timedelta(hours=14), "14 jam lalu"),
+        (timedelta(days=3), "3 hari lalu"),
+    ],
+)
+def test_age_reads_as_a_person_would_say_it(delta, expected):
+    from emission_tracker.web.routes_pages import _format_age
+
+    now = datetime(2026, 9, 13, 12, 0, tzinfo=timezone.utc)
+    assert _format_age(now - delta, now=now) == expected
+
+
+def test_age_of_a_wallet_never_read_says_so():
+    from emission_tracker.web.routes_pages import _format_age
+
+    assert _format_age(None) == "belum pernah"

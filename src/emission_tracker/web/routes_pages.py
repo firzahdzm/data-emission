@@ -17,6 +17,29 @@ STATIC_DIR = Path(__file__).parent / "static"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
+def _format_age(value, *, now=None) -> str:
+    """How long ago, in words: "14 jam lalu".
+
+    Balances are read once a day, so a card can be most of a day behind
+    what the chain says — which is how a card showing 0.71 τ of stake sat
+    next to btcli reporting nothing to unstake. The age is what tells the
+    two apart.
+    """
+    moment = _to_datetime(value)
+    if moment is None:
+        return "belum pernah"
+    seconds = ((now or datetime.now(timezone.utc)) - moment).total_seconds()
+    if seconds < 90:
+        return "baru saja"
+    minutes = seconds / 60
+    if minutes < 60:
+        return f"{int(minutes)} menit lalu"
+    hours = minutes / 60
+    if hours < 36:
+        return f"{int(hours)} jam lalu"
+    return f"{int(hours / 24)} hari lalu"
+
+
 def _asset_version() -> str:
     """Cache-buster for /static assets — uses style.css mtime so the browser
     fetches the new file when we edit CSS."""
@@ -109,6 +132,7 @@ templates.env.filters["to_alpha"] = rao_to_alpha
 templates.env.filters["dt_s"] = _format_dt_seconds
 templates.env.filters["dt_short"] = _format_dt_short
 templates.env.filters["usd"] = _format_usd
+templates.env.filters["age"] = _format_age
 
 
 def _db(request: Request) -> sqlite3.Connection:

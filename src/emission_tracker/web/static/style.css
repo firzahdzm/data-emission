@@ -969,3 +969,18 @@ details.panel {
     text-align: right;
     letter-spacing: 0.03em;
 }
+
+/* Pick which wallets the bulk unstake touches. Sits with the address
+   row so the choice is next to the identity it applies to. */
+.coldkey-pick {
+    display: inline-flex;
+    align-items: center;
+    margin: 0 0 0 0.1rem;
+}
+.coldkey-pick input {
+    margin: 0;
+    width: 1rem;
+    height: 1rem;
+    cursor: pointer;
+}
+#bulk-unstake-btn:disabled { opacity: 0.45; }

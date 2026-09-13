@@ -324,3 +324,73 @@ def test_age_of_a_wallet_never_read_says_so():
     from emission_tracker.web.routes_pages import _format_age
 
     assert _format_age(None) == "belum pernah"
+
+
+class TestBulkUnstake:
+    """One button, several wallets, real money. What the page must not
+    do is as important as what it does."""
+
+    def _html(self, app, monkeypatch, user="alice"):
+        from types import SimpleNamespace
+
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        app.state.config = SimpleNamespace(
+            admin_users=["alice"],
+            subnet_id=56,
+            tournament=SimpleNamespace(
+                address="5Ef5", fees_tao={"text": 0.7, "image": 0.4}
+            ),
+        )
+        headers = {"X-Remote-User": user} if user else {}
+        return TestClient(app).get("/", headers=headers).text
+
+    def test_admin_gets_the_button_and_a_checkbox_per_wallet(
+        self, app, monkeypatch
+    ):
+        html = self._html(app, monkeypatch)
+        assert 'id="bulk-unstake-btn"' in html
+        assert 'class="coldkey-select"' in html
+
+    def test_nothing_is_selected_on_load(self, app, monkeypatch):
+        """A list that arrives pre-ticked is a list nobody reads — and
+        this one sells stake."""
+        html = self._html(app, monkeypatch)
+        start = html.index('class="coldkey-select"')
+        tag = html[html.rindex("<", 0, start):html.index(">", start)]
+        assert "checked" not in tag
+
+    def test_the_button_starts_disabled(self, app, monkeypatch):
+        html = self._html(app, monkeypatch)
+        start = html.index('id="bulk-unstake-btn"')
+        tag = html[html.rindex("<", 0, start):html.index(">", start)]
+        assert "disabled" in tag
+
+    def test_it_asks_for_the_typed_word_and_an_unlock_value(
+        self, app, monkeypatch
+    ):
+        html = self._html(app, monkeypatch)
+        bulk = html[html.index("--- bulk unstake"):]
+        assert "required: 'unstake'" in bulk
+        assert "secretLabel" in bulk
+
+    def test_a_failure_does_not_stop_the_remaining_wallets(
+        self, app, monkeypatch
+    ):
+        """Continuing is the whole point of running them separately."""
+        html = self._html(app, monkeypatch)
+        bulk = html[html.index("--- bulk unstake"):]
+        assert "failures.push" in bulk
+        assert "break" not in bulk.split("for (const [i, c] of chosen")[1][:1200]
+
+    def test_an_unknown_outcome_is_not_counted_as_a_failure(
+        self, app, monkeypatch
+    ):
+        """409 from this endpoint means the money may have moved; called
+        a failure, it invites the retry that unstakes twice."""
+        bulk = self._html(app, monkeypatch)
+        assert "r.status === 409 ? 'unknown' : 'failed'" in bulk
+
+    def test_non_admin_gets_none_of_it(self, app, monkeypatch):
+        html = self._html(app, monkeypatch, user="mallory")
+        assert 'id="bulk-unstake-btn"' not in html
+        assert 'class="coldkey-select"' not in html

@@ -240,6 +240,11 @@ _confirm.addEventListener('click', async () => {
             <span id="balance-refresh-bar" class="refresh-bar" hidden><span id="balance-refresh-fill"></span></span>
             <span id="balance-refresh-note" class="text-muted" style="font-size: 0.75rem; font-weight: 400;"></span>
             <button id="balance-refresh-btn" class="btn-subtle">Refresh balances</button>
+            {% if tournament %}
+            <button id="bulk-unstake-btn" class="btn-subtle btn-danger" disabled>
+                Unstake terpilih
+            </button>
+            {% endif %}
         </span>
         {% endif %}
     </header>
@@ -260,6 +265,16 @@ _confirm.addEventListener('click', async () => {
                 {% if is_admin %}
                 <button class="coldkey-refresh" data-coldkey="{{ c.coldkey }}"
                         title="Refresh saldo wallet ini saja">&#8635;</button>
+                {% endif %}
+                {% if is_admin and tournament %}
+                {# Which wallets the bulk unstake will touch. Nothing is
+                   ticked on load: a list that arrives pre-selected is a
+                   list nobody reads. #}
+                <label class="coldkey-pick" title="Pilih untuk unstake massal">
+                    <input type="checkbox" class="coldkey-select"
+                           data-coldkey="{{ c.coldkey }}"
+                           data-label="{{ c.name }}">
+                </label>
                 {% endif %}
             </div>
             <div class="coldkey-stat">
@@ -874,6 +889,117 @@ _confirm.addEventListener('click', async () => {
                            { types, secret: ans.secret }, b);
         });
     });
+
+    // --- bulk unstake ------------------------------------------------
+    // One run per coldkey, sequential. Not parallel: the signer handles
+    // one request at a time, and firing fifteen at once would just queue
+    // them behind each other while the page pretends otherwise. Each
+    // coldkey gets its own audit row, its own card status, and its own
+    // outcome — a failure on one is not allowed to stop the rest.
+    const bulkBtn = document.getElementById('bulk-unstake-btn');
+    const picks = Array.from(document.querySelectorAll('.coldkey-select'));
+
+    function selectedColdkeys() {
+        return picks.filter(p => p.checked)
+                    .map(p => ({ coldkey: p.dataset.coldkey,
+                                 label: p.dataset.label || p.dataset.coldkey }));
+    }
+
+    function refreshBulkButton() {
+        if (!bulkBtn) return;
+        const n = selectedColdkeys().length;
+        bulkBtn.disabled = n === 0;
+        bulkBtn.textContent = n ? `Unstake terpilih (${n})` : 'Unstake terpilih';
+    }
+
+    picks.forEach(p => p.addEventListener('change', refreshBulkButton));
+    refreshBulkButton();
+
+    async function unstakeOne(coldkey, secret) {
+        paintCardStatus(coldkey, { status: 'pending', op: 'unstake_all',
+                                   requested_by: '' });
+        try {
+            const r = await fetch(
+                `/api/stake/unstake-all/${encodeURIComponent(coldkey)}`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ secret }),
+                });
+            const payload = await r.json().catch(() => ({}));
+            if (r.ok) return { state: 'ok' };
+            // 409 from this endpoint means the outcome is unknown, which
+            // is not the same as a failure and must not be counted as one.
+            return {
+                state: r.status === 409 ? 'unknown' : 'failed',
+                detail: payload.detail || `HTTP ${r.status}`,
+            };
+        } catch (e) {
+            return { state: 'failed', detail: 'permintaan gagal' };
+        }
+    }
+
+    if (bulkBtn) {
+        bulkBtn.addEventListener('click', async () => {
+            const chosen = selectedColdkeys();
+            if (!chosen.length) return;
+
+            const names = chosen.map(c => `• ${c.label}`).join('\n');
+            const ans = await snAuthorize(
+                `Unstake SEMUA stake subnet {{ subnet_id }} dari `
+                + `${chosen.length} wallet:\n${names}\n\n`
+                + `Dijalankan satu per satu. Tidak bisa dibatalkan dan kena `
+                + `slippage. Semua wallet ini harus memakai unlock value yang `
+                + `sama.`,
+                {
+                    title: 'Unstake massal',
+                    okText: `Unstake ${chosen.length} wallet`,
+                    cancelText: 'Batal',
+                    required: 'unstake',
+                    secretLabel: 'Unlock value wallet:',
+                });
+            if (!ans || !ans.ok) return;
+
+            moneyButtons.forEach(b => { b.disabled = true; });
+            bulkBtn.disabled = true;
+            picks.forEach(p => { p.disabled = true; });
+
+            const failures = [];
+            let done = 0, unknown = 0;
+            for (const [i, c] of chosen.entries()) {
+                bulkBtn.textContent = `Unstake ${i + 1}/${chosen.length}…`;
+                note.textContent = `unstake ${c.label} (${i + 1}/${chosen.length})…`;
+                const outcome = await unstakeOne(c.coldkey, ans.secret);
+                if (outcome.state === 'ok') done += 1;
+                else if (outcome.state === 'unknown') unknown += 1;
+                else failures.push(`${c.label}: ${outcome.detail}`);
+                // The audit table is the record; repaint from it as we go
+                // so a long run is visibly progressing, not frozen.
+                loadActions();
+            }
+
+            picks.forEach(p => { p.disabled = false; p.checked = false; });
+            moneyButtons.forEach(b => { b.disabled = false; });
+            refreshBulkButton();
+            note.textContent = '';
+
+            const lines = [`${done}/${chosen.length} wallet berhasil.`];
+            if (unknown) {
+                lines.push(`${unknown} hasilnya tidak pasti — periksa chain `
+                           + `sebelum mencoba lagi.`);
+            }
+            if (failures.length) {
+                lines.push('', 'Gagal:', ...failures);
+            }
+            await snAlert(lines.join('\n'), {
+                title: 'Unstake massal selesai',
+                tone: failures.length || unknown ? 'error' : 'info',
+            });
+            // Balances are stale for every wallet touched, and the page
+            // renders stored figures.
+            location.reload();
+        });
+    }
 
     document.querySelectorAll('.unstake-all').forEach(b => {
         b.addEventListener('click', async () => {

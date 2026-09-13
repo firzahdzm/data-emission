@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from emission_tracker.signer.protocol import (
@@ -110,3 +112,80 @@ def test_a_whitespace_only_unlock_value_is_refused():
         SignRequest.from_line(
             b'{"op": "unstake_all", "coldkey": "5F", "secret": "   "}\n'
         )
+
+
+class TestTreasuryRequests:
+    """Sweep and distribute are the first operations where the caller
+    names a destination and an amount. Everything the caller can name is
+    something an attacker who reaches the web tier can name, so each
+    field is checked here before it can reach a wallet."""
+
+    DEST = "5HERhLCKSpmTiRD6EpnsY7DUnVqUThaANhYgXYAWqZZ28fLB"
+
+    def test_a_sweep_names_only_the_wallet_to_empty(self):
+        req = SignRequest.from_line(
+            json.dumps({"op": "sweep", "coldkey": CK, "secret": "s"}).encode()
+        )
+        assert req.op == "sweep"
+        assert req.amount_rao == 0
+        assert req.destination == ""
+
+    def test_a_sweep_may_not_carry_an_amount(self):
+        """How much to sweep is read from the chain by the signer. A
+        caller-supplied amount would be a stale figure at best and a
+        chosen one at worst."""
+        line = json.dumps(
+            {"op": "sweep", "coldkey": CK, "amount_rao": 1, "secret": "s"}
+        ).encode()
+        with pytest.raises(ProtocolError, match="amount"):
+            SignRequest.from_line(line)
+
+    def test_a_sweep_may_not_carry_a_destination(self):
+        """It has exactly one: the treasury wallet in the signer's own
+        config."""
+        line = json.dumps(
+            {"op": "sweep", "coldkey": CK, "destination": "5Evil", "secret": "s"}
+        ).encode()
+        with pytest.raises(ProtocolError, match="destination"):
+            SignRequest.from_line(line)
+
+    def test_a_distribution_carries_a_destination_and_an_amount(self):
+        req = SignRequest.from_line(
+            json.dumps({
+                "op": "distribute", "coldkey": CK, "destination": self.DEST,
+                "amount_rao": 2_500_000_000, "secret": "s",
+            }).encode()
+        )
+        assert req.destination == self.DEST
+        assert req.amount_rao == 2_500_000_000
+
+    @pytest.mark.parametrize("amount", [0, -1, "1.5", None, 1.5])
+    def test_a_distribution_without_a_positive_whole_amount_is_refused(
+        self, amount
+    ):
+        line = json.dumps({
+            "op": "distribute", "coldkey": CK, "destination": self.DEST,
+            "amount_rao": amount, "secret": "s",
+        }).encode()
+        with pytest.raises(ProtocolError):
+            SignRequest.from_line(line)
+
+    def test_a_distribution_without_a_destination_is_refused(self):
+        line = json.dumps({
+            "op": "distribute", "coldkey": CK, "amount_rao": 1, "secret": "s",
+        }).encode()
+        with pytest.raises(ProtocolError, match="destination"):
+            SignRequest.from_line(line)
+
+    def test_the_amount_and_destination_survive_a_round_trip(self):
+        sent = SignRequest(
+            "distribute", CK, destination=self.DEST, amount_rao=7, secret="s"
+        )
+        assert SignRequest.from_line(sent.to_line()) == sent
+
+    def test_the_secret_is_still_not_printable(self):
+        sent = SignRequest(
+            "distribute", CK, destination=self.DEST, amount_rao=7,
+            secret="sangat-rahasia",
+        )
+        assert "sangat-rahasia" not in repr(sent)

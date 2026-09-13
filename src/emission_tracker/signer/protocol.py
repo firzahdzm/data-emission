@@ -2,9 +2,12 @@
 
 One JSON object per line over a unix socket. Kept deliberately small:
 the caller names an intent, a coldkey, and the secret that authorises it.
-Amounts and destinations are the signer's to decide, so they have no
-place in a request — a field the caller controls is a field an attacker
-controls.
+Amounts and destinations are the signer's to decide wherever it can
+decide them — a field the caller controls is a field an attacker
+controls. Distribution is the one place where it cannot: only a person
+knows how much each wallet needs. So that op, and only that op, carries
+an amount and a destination, and the signer refuses any destination
+outside its own roster of the team's coldkeys.
 
 The wallet secret is the one deliberate exception, and it is a different
 kind of field: it does not choose *what* happens, only proves the person
@@ -18,7 +21,11 @@ from dataclasses import dataclass, field
 
 OP_PAY = "pay_tournament"
 OP_UNSTAKE = "unstake_all"
-OPS = (OP_PAY, OP_UNSTAKE)
+# Treasury moves, both restricted to the team's own coldkeys by the
+# signer's roster — see the sweep/distribute handling in server.py.
+OP_SWEEP = "sweep"
+OP_DISTRIBUTE = "distribute"
+OPS = (OP_PAY, OP_UNSTAKE, OP_SWEEP, OP_DISTRIBUTE)
 
 TOURNAMENT_TYPES = ("text", "image", "env")
 
@@ -35,11 +42,21 @@ class SignRequest:
     # repr=False: this object gets passed around and could land in a log
     # line or a traceback. The value must not be printable by accident.
     secret: str = field(default="", repr=False)
+    # distribute only. A sweep's amount is read from the chain and its
+    # destination is the treasury wallet named in the signer's config,
+    # so a sweep carrying either is a request that came from somewhere
+    # it should not have.
+    destination: str = ""
+    amount_rao: int = 0
 
     def to_line(self) -> bytes:
         payload = {"op": self.op, "coldkey": self.coldkey}
         if self.types:
             payload["types"] = list(self.types)
+        if self.destination:
+            payload["destination"] = self.destination
+        if self.amount_rao:
+            payload["amount_rao"] = self.amount_rao
         if self.secret:
             payload["secret"] = self.secret
         return (json.dumps(payload) + "\n").encode()
@@ -72,6 +89,23 @@ class SignRequest:
         if op == OP_PAY and not types:
             raise ProtocolError("pay_tournament needs at least one type")
 
+        destination = raw.get("destination") or ""
+        amount = raw.get("amount_rao") or 0
+        if op == OP_DISTRIBUTE:
+            if not isinstance(destination, str) or not destination:
+                raise ProtocolError("distribute needs a destination")
+            # bool is an int in Python, and True would sail through as 1
+            # rao. Rejected explicitly rather than relying on the reader
+            # to remember that.
+            if isinstance(amount, bool) or not isinstance(amount, int) \
+                    or amount <= 0:
+                raise ProtocolError("distribute needs a positive amount_rao")
+        else:
+            if destination:
+                raise ProtocolError(f"{op} takes no destination")
+            if amount:
+                raise ProtocolError(f"{op} takes no amount_rao")
+
         secret = raw.get("secret")
         # Stripped here as well as in the web tier: the signer has to be
         # defensible on its own, and whitespace reaches btcli as an unset
@@ -81,7 +115,10 @@ class SignRequest:
             raise ProtocolError("wallet secret is required")
 
         # Any other key in the payload is dropped here, by construction.
-        return cls(op=op, coldkey=coldkey, types=tuple(types), secret=secret)
+        return cls(
+            op=op, coldkey=coldkey, types=tuple(types), secret=secret,
+            destination=destination, amount_rao=amount,
+        )
 
 
 @dataclass(frozen=True)

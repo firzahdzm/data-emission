@@ -92,15 +92,23 @@ def test_admin_pays_and_the_attempt_is_recorded(app, monkeypatch):
     assert row["requested_by"] == "alice"
 
 
-def test_the_request_never_carries_an_amount(app, monkeypatch):
-    """The signer decides amounts; if the tracker could name one, moving
-    the boundary to the signer would have bought nothing."""
+def test_a_payment_request_never_carries_an_amount(app, monkeypatch):
+    """The signer decides what a tournament fee costs; if the tracker
+    could name it, moving the boundary to the signer would have bought
+    nothing. Distribution is the one op that does carry an amount — a
+    person has to say how much — and it is checked separately.
+
+    Asserted on the value and on the wire, not on the attribute: the
+    field exists on the dataclass now, and a request that quietly set it
+    would still pass an hasattr check."""
     monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
     fake = _FakeSigner()
     app.state.signer = fake
     _post(app, f"/api/tournament/pay/{CK}", {"types": ["text", "env"]})
-    assert not hasattr(fake.sent[0], "amount_tao")
-    assert not hasattr(fake.sent[0], "amount_rao")
+    sent = fake.sent[0]
+    assert sent.amount_rao == 0
+    assert sent.destination == ""
+    assert b"amount_rao" not in sent.to_line()
 
 
 def test_non_admin_cannot_pay(app, monkeypatch):

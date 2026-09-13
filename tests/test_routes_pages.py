@@ -394,3 +394,74 @@ class TestBulkUnstake:
         html = self._html(app, monkeypatch, user="mallory")
         assert 'id="bulk-unstake-btn"' not in html
         assert 'class="coldkey-select"' not in html
+
+
+class TestTreasuryButtons:
+    """Two buttons that move real money between the team's wallets."""
+
+    PARENT = "5HERhLCKSpmTiRD6EpnsY7DUnVqUThaANhYgXYAWqZZ28fLB"
+
+    def _html(self, app, monkeypatch, user="alice", treasury=None):
+        from types import SimpleNamespace
+
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        app.state.config = SimpleNamespace(
+            admin_users=["alice"],
+            subnet_id=56,
+            treasury_coldkey=self.PARENT if treasury is None else treasury,
+            tournament=SimpleNamespace(address="5Ef5", fees_tao={"text": 0.7}),
+        )
+        headers = {"X-Remote-User": user} if user else {}
+        return TestClient(app).get("/", headers=headers).text
+
+    def test_admin_gets_both_buttons(self, app, monkeypatch):
+        html = self._html(app, monkeypatch)
+        assert 'id="sweep-btn"' in html
+        assert 'id="distribute-btn"' in html
+
+    def test_they_are_hidden_until_a_treasury_is_configured(
+        self, app, monkeypatch
+    ):
+        """Rendering a button that can only 503 teaches people to ignore
+        errors."""
+        html = self._html(app, monkeypatch, treasury="")
+        assert 'id="sweep-btn"' not in html
+        assert 'id="distribute-btn"' not in html
+
+    def test_non_admin_gets_neither(self, app, monkeypatch):
+        html = self._html(app, monkeypatch, user="mallory")
+        assert 'id="sweep-btn"' not in html
+        assert 'id="distribute-btn"' not in html
+
+    def test_balances_come_from_the_chain_not_the_cards(self, app, monkeypatch):
+        """The cards are a once-a-day TaoStats read and have already been
+        wrong about a wallet this week."""
+        html = self._html(app, monkeypatch)
+        assert "/api/treasury/balances" in html
+
+    def test_both_dialogs_demand_a_typed_word(self, app, monkeypatch):
+        html = self._html(app, monkeypatch)
+        treasury = html[html.index("--- treasury: sweep in"):]
+        assert "required: 'satukan'" in treasury
+        assert "required: 'distribusi'" in treasury
+
+    def test_a_wallet_whose_balance_is_unreadable_is_never_swept(
+        self, app, monkeypatch
+    ):
+        """null means "we could not read it". Treated as a number it
+        would become a nonsense amount."""
+        html = self._html(app, monkeypatch)
+        treasury = html[html.index("--- treasury: sweep in"):]
+        assert "rao === null) continue" in treasury
+
+    def test_the_treasury_is_never_swept_into_itself(self, app, monkeypatch):
+        html = self._html(app, monkeypatch)
+        treasury = html[html.index("--- treasury: sweep in"):]
+        assert "coldkey === TREASURY" in treasury
+
+    def test_an_unknown_outcome_is_counted_apart_from_a_failure(
+        self, app, monkeypatch
+    ):
+        html = self._html(app, monkeypatch)
+        treasury = html[html.index("--- treasury: sweep in"):]
+        assert "r.status === 409" in treasury

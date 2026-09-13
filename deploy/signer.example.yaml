@@ -16,3 +16,16 @@ daily_cap_tao: 30.0
 # Persists the running daily spend across restarts/crashes — must be on
 # disk, not tmpfs (see StateDirectory= in emission-signer.service).
 state_path: /var/lib/emission-signer/spend.json
+
+# --- Wallet induk (treasury) -----------------------------------------
+# Tujuan tombol "Satukan dana" dan satu-satunya wallet yang boleh
+# mengirim lewat tombol "Distribusi". Kosong = kedua operasi ditolak;
+# deployment yang belum menamainya gagal tertutup, bukan menebak tujuan
+# untuk TAO orang lain.
+parent_coldkey: "5HERhLCKSpmTiRD6EpnsY7DUnVqUThaANhYgXYAWqZZ28fLB"
+
+# Sisa yang ditinggalkan di tiap wallet setelah disapu, supaya wallet itu
+# masih punya ongkos untuk transaksi berikutnya. Biaya transaksi dipotong
+# dari jumlah yang dikirim, jadi sisanya berakhir sedikit di bawah angka
+# ini.
+sweep_leave_tao: 0.015

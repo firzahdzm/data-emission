@@ -192,6 +192,11 @@ def register_pages(app: FastAPI) -> None:
                 "coldkey_fetched_at": coldkey_fetched_at,
                 "subnet_id": subnet_id,
                 "tournament": tournament,
+                "treasury_coldkey": getattr(
+                    getattr(request.app.state, "config", None),
+                    "treasury_coldkey", "",
+                ),
+                "sweep_leave_tao": 0.015,
                 "total_cumulative": total_cumulative,
                 "total_registered": total_registered,
                 "total_hotkeys": total_hotkeys,

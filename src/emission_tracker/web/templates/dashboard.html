@@ -245,6 +245,10 @@ _confirm.addEventListener('click', async () => {
                 Unstake terpilih
             </button>
             {% endif %}
+            {% if treasury_coldkey %}
+            <button id="sweep-btn" class="btn-subtle">Satukan dana</button>
+            <button id="distribute-btn" class="btn-subtle">Distribusi</button>
+            {% endif %}
         </span>
         {% endif %}
     </header>
@@ -998,6 +1002,214 @@ _confirm.addEventListener('click', async () => {
             // Balances are stale for every wallet touched, and the page
             // renders stored figures.
             location.reload();
+        });
+    }
+
+    // --- treasury: sweep in, distribute out ---------------------------
+    // Both read balances from the chain through the signer first. The
+    // cards' own figures come from a once-a-day TaoStats read and have
+    // already been wrong about a wallet this week; a dialog that
+    // proposes moving money off a figure that old proposes the wrong
+    // number.
+    const sweepBtn = document.getElementById('sweep-btn');
+    const distributeBtn = document.getElementById('distribute-btn');
+    const TREASURY = '{{ treasury_coldkey or "" }}';
+    const RESERVE_TAO = {{ sweep_leave_tao or 0.015 }};
+
+    const tao = rao => (rao / 1e9);
+
+    async function chainBalances() {
+        const r = await fetch('/api/treasury/balances');
+        if (!r.ok) {
+            const body = await r.json().catch(() => ({}));
+            throw new Error(body.detail || `gagal membaca saldo (${r.status})`);
+        }
+        return (await r.json()).balances || {};
+    }
+
+    // Both buttons drive the same loop: one request per wallet, in
+    // order, a failure on one never stopping the rest.
+    async function runTreasuryBatch(button, jobs, secret) {
+        const others = [sweepBtn, distributeBtn, ...moneyButtons];
+        others.forEach(b => b && (b.disabled = true));
+        const original = button.textContent;
+
+        let done = 0, unknown = 0;
+        const failures = [];
+        for (const [i, job] of jobs.entries()) {
+            button.textContent = `${i + 1}/${jobs.length}…`;
+            note.textContent = `${job.label} (${i + 1}/${jobs.length})…`;
+            paintCardStatus(job.cardColdkey, { status: 'pending', op: job.op,
+                                               requested_by: '' });
+            try {
+                const r = await fetch(job.url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...(job.body || {}), secret }),
+                });
+                const payload = await r.json().catch(() => ({}));
+                if (r.ok) done += 1;
+                // 409 here means the outcome is unknown, not that it
+                // failed — counted apart so the summary never invites a
+                // retry of something that may already have moved.
+                else if (r.status === 409) { unknown += 1; failures.push(`${job.label}: ${payload.detail || 'tidak pasti'}`); }
+                else failures.push(`${job.label}: ${payload.detail || `HTTP ${r.status}`}`);
+            } catch (e) {
+                failures.push(`${job.label}: permintaan gagal`);
+            }
+            loadActions();
+        }
+
+        button.textContent = original;
+        others.forEach(b => b && (b.disabled = false));
+        refreshBulkButton();
+        note.textContent = '';
+
+        const lines = [`${done}/${jobs.length} transfer berhasil.`];
+        if (unknown) lines.push(`${unknown} hasilnya tidak pasti — periksa chain sebelum mengulang.`);
+        if (failures.length) lines.push('', 'Catatan:', ...failures);
+        await snAlert(lines.join('\n'), {
+            title: 'Selesai',
+            tone: failures.length ? 'error' : 'info',
+        });
+        location.reload();
+    }
+
+    if (sweepBtn) {
+        sweepBtn.addEventListener('click', async () => {
+            sweepBtn.disabled = true;
+            note.textContent = 'membaca saldo dari chain…';
+            let balances;
+            try {
+                balances = await chainBalances();
+            } catch (e) {
+                sweepBtn.disabled = false;
+                note.textContent = '';
+                await snAlert(e.message, { title: 'Gagal', tone: 'error' });
+                return;
+            }
+            note.textContent = '';
+            sweepBtn.disabled = false;
+
+            const jobs = [];
+            let total = 0;
+            for (const [coldkey, rao] of Object.entries(balances)) {
+                // null means the wallet could not be read — skipped and
+                // named, never treated as empty.
+                if (coldkey === TREASURY || rao === null) continue;
+                const amount = tao(rao) - RESERVE_TAO;
+                if (amount <= 0) continue;
+                total += amount;
+                jobs.push({
+                    label: `${walletNames[coldkey] || shortKey(coldkey)} `
+                         + `(${amount.toFixed(4)} τ)`,
+                    url: `/api/treasury/sweep/${encodeURIComponent(coldkey)}`,
+                    cardColdkey: coldkey,
+                    op: 'sweep',
+                });
+            }
+            const unreadable = Object.entries(balances)
+                .filter(([, rao]) => rao === null)
+                .map(([ck]) => walletNames[ck] || shortKey(ck));
+
+            if (!jobs.length) {
+                await snAlert('Tidak ada wallet dengan saldo di atas '
+                              + `${RESERVE_TAO} τ.`, { title: 'Satukan dana' });
+                return;
+            }
+            const ans = await snAuthorize(
+                `Kirim saldo ${jobs.length} wallet ke wallet induk, `
+                + `menyisakan ${RESERVE_TAO} τ di tiap wallet.\n\n`
+                + jobs.map(j => `• ${j.label}`).join('\n')
+                + `\n\nTotal ± ${total.toFixed(4)} τ.`
+                + (unreadable.length
+                    ? `\n\nTidak terbaca dan dilewati: ${unreadable.join(', ')}.`
+                    : ''),
+                {
+                    title: 'Satukan dana',
+                    okText: `Kirim dari ${jobs.length} wallet`,
+                    cancelText: 'Batal',
+                    required: 'satukan',
+                    secretLabel: 'Unlock value wallet:',
+                });
+            if (!ans || !ans.ok) return;
+            await runTreasuryBatch(sweepBtn, jobs, ans.secret);
+        });
+    }
+
+    if (distributeBtn) {
+        distributeBtn.addEventListener('click', async () => {
+            distributeBtn.disabled = true;
+            note.textContent = 'membaca saldo dari chain…';
+            let balances;
+            try {
+                balances = await chainBalances();
+            } catch (e) {
+                distributeBtn.disabled = false;
+                note.textContent = '';
+                await snAlert(e.message, { title: 'Gagal', tone: 'error' });
+                return;
+            }
+            note.textContent = '';
+            distributeBtn.disabled = false;
+
+            const members = Object.keys(balances)
+                .filter(ck => ck !== TREASURY)
+                .sort((a, b) => (walletNames[a] || a).localeCompare(walletNames[b] || b));
+            const rows = members.map(ck => ({
+                key: ck,
+                label: walletNames[ck] || shortKey(ck),
+                hint: balances[ck] === null
+                    ? 'saldo tidak terbaca'
+                    : `sekarang ${tao(balances[ck]).toFixed(4)} τ`,
+            }));
+
+            const form = await snForm(
+                'Isi jumlah TAO untuk tiap wallet. Kosongkan yang tidak '
+                + 'ingin dikirimi.',
+                rows,
+                { title: 'Distribusi dari wallet induk', okText: 'Lanjut' });
+            if (!form || !form.ok) return;
+
+            const picked = Object.entries(form.values);
+            if (!picked.length) return;
+
+            const total = picked.reduce((sum, [, v]) => sum + v, 0);
+            const parentFree = balances[TREASURY];
+            const short = parentFree !== null && parentFree !== undefined
+                && total > tao(parentFree);
+
+            const ans = await snAuthorize(
+                picked.map(([ck, v]) =>
+                    `• ${walletNames[ck] || shortKey(ck)}: ${v.toFixed(4)} τ`
+                ).join('\n')
+                + `\n\nTotal ${total.toFixed(4)} τ dari wallet induk`
+                + (parentFree === null || parentFree === undefined
+                    ? ' (saldo induk tidak terbaca).'
+                    : ` (saldo ${tao(parentFree).toFixed(4)} τ).`)
+                + (short
+                    ? '\n\nTOTAL MELEBIHI SALDO INDUK — sebagian transfer '
+                      + 'pasti akan ditolak.'
+                    : ''),
+                {
+                    title: 'Konfirmasi distribusi',
+                    okText: `Kirim ke ${picked.length} wallet`,
+                    cancelText: 'Batal',
+                    required: 'distribusi',
+                    secretLabel: 'Unlock value wallet induk:',
+                });
+            if (!ans || !ans.ok) return;
+
+            const jobs = picked.map(([ck, v]) => ({
+                label: `${walletNames[ck] || shortKey(ck)} (${v.toFixed(4)} τ)`,
+                url: `/api/treasury/distribute/${encodeURIComponent(ck)}`,
+                body: { amount_rao: Math.round(v * 1e9) },
+                // The treasury signs, so its card is the one that shows
+                // the attempt.
+                cardColdkey: TREASURY,
+                op: 'distribute',
+            }));
+            await runTreasuryBatch(distributeBtn, jobs, ans.secret);
         });
     }
 

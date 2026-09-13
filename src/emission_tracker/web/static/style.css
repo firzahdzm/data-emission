@@ -984,3 +984,19 @@ details.panel {
     cursor: pointer;
 }
 #bulk-unstake-btn:disabled { opacity: 0.45; }
+
+/* One amount per wallet, inside the shared dialog. */
+.sn-row {
+    display: grid;
+    grid-template-columns: 1fr 7.5rem;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.2rem 0;
+}
+.sn-row label { margin: 0; font-size: 0.8rem; }
+.sn-row-hint {
+    display: block;
+    font-size: 0.68rem;
+    color: var(--sn-text-dim);
+}
+.sn-row input { margin: 0; padding: 0.3rem 0.5rem; font-size: 0.85rem; }

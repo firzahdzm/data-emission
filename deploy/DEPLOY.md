@@ -478,6 +478,54 @@ app being compromised:
 sudo journalctl -u emission-signer -n 50 --no-pager
 ```
 
+## 7b-bis. Wallet induk: satukan dana dan distribusi
+
+Dua tombol di panel wallet, keduanya memindahkan TAO antar coldkey tim.
+Keduanya mati sampai dua hal dikonfigurasi:
+
+1. **Di signer** (`/etc/emission-signer/config.yaml`):
+
+```yaml
+parent_coldkey: "5HERhLCKSpmTiRD6EpnsY7DUnVqUThaANhYgXYAWqZZ28fLB"
+sweep_leave_tao: 0.015
+```
+
+`hotkeys:` (roster coldkey → hotkey) harus sudah terisi — daftar kunci di
+peta itulah satu-satunya alamat yang boleh menerima transfer. Tidak ada
+plafon jumlah; penguncian tujuan inilah penggantinya, jadi roster yang
+kedaluwarsa bukan sekadar merepotkan, ia melonggarkan satu-satunya batas
+yang ada.
+
+2. **Di tracker** (`/opt/emission-tracker/config.yaml`):
+
+```yaml
+treasury_coldkey: "5HERhLCKSpmTiRD6EpnsY7DUnVqUThaANhYgXYAWqZZ28fLB"
+```
+
+Salinan di tracker hanya untuk memberi label baris audit dan
+menyembunyikan tombolnya kalau belum diisi. Kalau keduanya berbeda,
+jawaban signer yang berlaku.
+
+Restart keduanya:
+
+```bash
+sudo systemctl restart emission-signer emission-tracker
+```
+
+### Yang harus diperiksa setelah dinyalakan
+
+- **Satukan dana** membaca saldo tiap wallet dari chain lebih dulu (lewat
+  btcli, bukan TaoStats), lalu mengirim `saldo − 0,015 τ` ke wallet induk.
+  Wallet yang saldonya tidak terbaca dilewati dan disebut namanya di
+  dialog — jangan abaikan daftar itu, wallet yang tidak terbaca bukan
+  wallet yang kosong.
+- **Distribusi** hanya bisa mengirim dari wallet induk ke coldkey yang ada
+  di roster signer. Jumlahnya diketik admin per wallet; kolom kosong
+  berarti wallet itu dilewati.
+- Keduanya menjalankan satu transfer per wallet secara berurutan, jadi
+  kegagalan satu wallet tidak menghentikan sisanya, dan ringkasan di akhir
+  memisahkan berhasil / gagal / tidak pasti.
+
 ## 7c. Why a transfer was refused
 
 `btcli` reports a refused transfer as `{"success": false}` and **gives no

@@ -55,6 +55,7 @@
             <h3 id="sn-modal-title" style="margin: 0;">Notice</h3>
         </header>
         <p id="sn-modal-message" style="margin: 0 0 1rem; white-space: pre-wrap; line-height: 1.5;"></p>
+        <div id="sn-modal-rows" hidden style="margin: 0 0 1rem; max-height: 46vh; overflow-y: auto;"></div>
         <div id="sn-modal-input-wrap" hidden style="margin: 0 0 1rem;">
             <label id="sn-modal-input-label" for="sn-modal-input"
                    style="display: block; font-size: 0.8rem; margin-bottom: 0.3rem;"></label>
@@ -82,11 +83,59 @@
         const pwWrap = document.getElementById('sn-modal-pw-wrap');
         const pwEl = document.getElementById('sn-modal-pw');
         const pwLabel = document.getElementById('sn-modal-pw-label');
+        const rowsEl = document.getElementById('sn-modal-rows');
         let currentResolve = null;
-        function openWith(title, message, buttons, typed, pw) {
+        // One labelled number field per row, for dialogs that ask for a
+        // figure per wallet. Returns a function that reads them back.
+        function buildRows(rows) {
+            rowsEl.innerHTML = '';
+            rowsEl.hidden = !rows;
+            if (!rows) return () => ({});
+            const inputs = new Map();
+            rows.forEach(row => {
+                const line = document.createElement('div');
+                line.className = 'sn-row';
+                const label = document.createElement('label');
+                label.textContent = row.label;
+                if (row.hint) {
+                    const hint = document.createElement('span');
+                    hint.className = 'sn-row-hint';
+                    hint.textContent = row.hint;
+                    label.appendChild(hint);
+                }
+                const input = document.createElement('input');
+                input.type = 'number';
+                input.step = '0.0001';
+                input.min = '0';
+                input.placeholder = row.placeholder || '';
+                input.id = `sn-row-${row.key}`;
+                label.htmlFor = input.id;
+                line.appendChild(label);
+                line.appendChild(input);
+                rowsEl.appendChild(line);
+                inputs.set(row.key, input);
+            });
+            return () => {
+                const out = {};
+                inputs.forEach((input, key) => {
+                    const raw = input.value.trim();
+                    // Blank means "skip this wallet". Not zero, not an
+                    // error: an empty field is the normal way to leave a
+                    // wallet out, and the caller must be able to tell the
+                    // two apart.
+                    if (raw === '') return;
+                    const value = Number(raw);
+                    if (Number.isFinite(value) && value > 0) out[key] = value;
+                });
+                return out;
+            };
+        }
+
+        function openWith(title, message, buttons, typed, pw, rows) {
             titleEl.textContent = title;
             msgEl.textContent = message;
             actionsEl.innerHTML = '';
+            const readRows = buildRows(rows);
             // `typed` turns the shared dialog into a type-to-confirm: the OK
             // button stays disabled until the exact word is entered, so a
             // destructive action cannot be completed by reflex.
@@ -115,9 +164,12 @@
                 b.addEventListener('click', () => {
                     const r = currentResolve; currentResolve = null;
                     // Read before close(), which clears the fields.
-                    const answer = (btn.value === true && pw)
-                        ? { ok: true, secret: pwEl.value }
-                        : btn.value;
+                    let answer = btn.value;
+                    if (btn.value === true && (pw || rows)) {
+                        answer = { ok: true };
+                        if (pw) answer.secret = pwEl.value;
+                        if (rows) answer.values = readRows();
+                    }
                     dlg.close();
                     if (r) r(answer);
                 });
@@ -143,7 +195,8 @@
                 if (i === buttons.length - 1 && !typed && !pw) setTimeout(() => b.focus(), 0);
             });
             dlg.showModal();
-            if (typed) setTimeout(() => inputEl.focus(), 0);
+            if (rows) setTimeout(() => rowsEl.querySelector('input')?.focus(), 0);
+            else if (typed) setTimeout(() => inputEl.focus(), 0);
             else if (pw) setTimeout(() => pwEl.focus(), 0);
         }
         dlg.addEventListener('close', () => {
@@ -151,6 +204,7 @@
             // The value must not sit in the DOM after the dialog is gone.
             pwEl.value = '';
             inputEl.value = '';
+            rowsEl.innerHTML = '';
             if (currentResolve) { const r = currentResolve; currentResolve = null; r(false); }
         });
 
@@ -174,6 +228,21 @@
                     ? { required, label: typedLabel || `Ketik "${required}" untuk melanjutkan:` }
                     : null,
                 { label: secretLabel });
+            });
+        };
+        // A form of one number per row — how much to send to each wallet.
+        // Resolves to false when cancelled, or {ok: true, values} where
+        // values holds only the rows that were actually filled in.
+        window.snForm = function (message, rows, opts = {}) {
+            const {
+                title = 'Isi jumlah', okText = 'Lanjut', cancelText = 'Batal',
+            } = opts;
+            return new Promise(resolve => {
+                currentResolve = resolve;
+                openWith(title, message, [
+                    { label: cancelText, value: false, className: 'secondary' },
+                    { label: okText, value: true },
+                ], null, null, rows);
             });
         };
         window.snAlert = function (message, opts = {}) {

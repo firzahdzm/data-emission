@@ -18,6 +18,8 @@ from emission_tracker.signer.btcli import (
     BtcliError,
     base_env,
     coldkey_password_env_var,
+    balance_argv,
+    free_balance_rao,
     hotkeys_with_stake,
     list_wallets,
     unlisted_stake,
@@ -33,7 +35,9 @@ from emission_tracker.signer.btcli import (
     unstake_argv,
 )
 from emission_tracker.signer.protocol import (
+    OP_DISTRIBUTE,
     OP_PAY,
+    OP_SWEEP,
     OP_UNSTAKE,
     ProtocolError,
     SignRequest,
@@ -54,6 +58,8 @@ TRANSFER_TIMEOUT = 90
 UNSTAKE_TIMEOUT = 180
 # Reading the coldkey's stake is one chain query and needs no password.
 STAKE_LIST_TIMEOUT = 90
+# One chain read, no password.
+BALANCE_TIMEOUT = 60
 # A whole unstake request, across every hotkey. Below the web client's
 # own timeout on purpose: a caller that gives up first sees a failure
 # for work that is still running.
@@ -85,6 +91,15 @@ class SignerConfig:
     # hotkeys would make that split decorative. Empty means "no roster
     # configured" and falls back to whatever the chain shows.
     hotkeys: dict = field(default_factory=dict)
+    # The team's treasury wallet: where a sweep sends, and the only
+    # wallet a distribution may spend from. Empty means neither
+    # operation is available — a deployment that has not named it fails
+    # closed rather than guessing a destination for other people's TAO.
+    parent_coldkey: str = ""
+    # Left behind by a sweep so the wallet can still pay for its next
+    # transaction. Transaction fees come out of the amount sent, so the
+    # remainder ends a hair under this.
+    sweep_leave_tao: float = 0.015
 
 
 @dataclass
@@ -178,6 +193,13 @@ class Signer:
                      request.coldkey, name, len(hotkeys))
             return self._unstake_each(request, name, env, hotkeys)
 
+        if request.op == OP_SWEEP:
+            return self._sweep(request, name, env=self._env_for(name, request.secret))
+
+        if request.op == OP_DISTRIBUTE:
+            return self._distribute(request, name,
+                                    env=self._env_for(name, request.secret))
+
         amount_rao = sum(
             round(self._config.fees_tao[t] * RAO) for t in request.types
         )
@@ -230,6 +252,112 @@ class Signer:
         )
         tx_hash = parse_transfer_output(output)
         self._record_spend(amount_rao)
+        return SignResult(True, request.op, request.coldkey,
+                          amount_rao=amount_rao, tx_hash=tx_hash)
+
+    def _roster(self) -> set:
+        return set(self._config.hotkeys or {})
+
+    def _free_rao(self, wallet_name: str) -> int | None:
+        payload = run_btcli(
+            balance_argv(wallet_name, self._config.wallet_path),
+            env=base_env(), timeout=BALANCE_TIMEOUT, run=self._run,
+        )
+        return free_balance_rao(payload, wallet_name)
+
+    def balances(self) -> dict:
+        """Free balance per rostered coldkey, straight from the chain.
+
+        Signs nothing and takes no unlock value: it exists so the sweep
+        and distribute dialogs can show figures fresher than the
+        dashboard's once-a-day TaoStats read. A wallet that cannot be
+        read comes back as None, never as zero.
+        """
+        wallets = list_wallets(run=self._run, wallet_path=self._config.wallet_path)
+        out = {}
+        for coldkey in self._roster():
+            name = wallets.get(coldkey)
+            out[coldkey] = self._free_rao(name) if name else None
+        return out
+
+    def _sweep(self, request, name, env) -> SignResult:
+        parent = self._config.parent_coldkey
+        if not parent:
+            log.warning("refused sweep: no parent_coldkey configured")
+            return SignResult(False, request.op, request.coldkey,
+                              error="wallet induk belum dikonfigurasi di signer")
+        if request.coldkey == parent:
+            return SignResult(False, request.op, request.coldkey,
+                              error="wallet induk tidak menyapu dirinya sendiri")
+        if request.coldkey not in self._roster():
+            log.warning("refused sweep: %s is not in the roster", request.coldkey)
+            return SignResult(False, request.op, request.coldkey,
+                              error="coldkey tidak ada di roster")
+
+        free = self._free_rao(name)
+        if free is None:
+            return SignResult(False, request.op, request.coldkey,
+                              error="saldo wallet tidak terbaca")
+        leave = round(self._config.sweep_leave_tao * RAO)
+        amount_rao = free - leave
+        if amount_rao <= 0:
+            # Not an error and not unknown: there is nothing worth
+            # moving, and sweeping would spend a fee to shift dust.
+            return SignResult(
+                False, request.op, request.coldkey,
+                error=f"saldo {free / RAO:.4f} τ di bawah ambang "
+                      f"{self._config.sweep_leave_tao} τ",
+            )
+
+        log.info("sweep coldkey=%s wallet=%s free=%s amount=%s unlock_len=%d",
+                 request.coldkey, name, free, amount_rao, len(request.secret))
+        return self._send(request, name, env, parent, amount_rao)
+
+    def _distribute(self, request, name, env) -> SignResult:
+        parent = self._config.parent_coldkey
+        if not parent:
+            log.warning("refused distribute: no parent_coldkey configured")
+            return SignResult(False, request.op, request.coldkey,
+                              error="wallet induk belum dikonfigurasi di signer")
+        if request.coldkey != parent:
+            # Only the treasury spends here. A member wallet paying on
+            # another member's behalf is not a flow this has, and
+            # allowing it would let one forged request reach any wallet
+            # rather than only the one the operator chose.
+            log.warning("refused distribute: %s is not the treasury",
+                        request.coldkey)
+            return SignResult(False, request.op, request.coldkey,
+                              error="hanya wallet induk yang boleh distribusi")
+        if request.destination == parent:
+            return SignResult(False, request.op, request.coldkey,
+                              error="tujuan sama dengan wallet induk")
+        if request.destination not in self._roster():
+            # This is what stands in for an amount cap. With it, the
+            # worst a compromised web tier can do is shuffle money
+            # between the team's own wallets.
+            log.warning("refused distribute: destination %s is not in the roster",
+                        request.destination)
+            return SignResult(False, request.op, request.coldkey,
+                              error="tujuan tidak ada di roster")
+
+        log.info("distribute from=%s to=%s amount=%s unlock_len=%d",
+                 request.coldkey, request.destination, request.amount_rao,
+                 len(request.secret))
+        return self._send(request, name, env, request.destination,
+                          request.amount_rao)
+
+    def _send(self, request, name, env, destination, amount_rao) -> SignResult:
+        """The transfer itself, shared by both treasury operations.
+
+        Same pseudo-terminal path as a tournament payment: btcli reads
+        the unlock value with getpass, which never sees a pipe.
+        """
+        output = self._run_transfer(
+            transfer_argv(name, destination, amount_rao / RAO,
+                          self._config.wallet_path),
+            env, request.secret,
+        )
+        tx_hash = parse_transfer_output(output)
         return SignResult(True, request.op, request.coldkey,
                           amount_rao=amount_rao, tx_hash=tx_hash)
 

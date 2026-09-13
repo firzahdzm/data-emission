@@ -14,6 +14,7 @@ import time
 
 log = logging.getLogger("emission_signer.btcli")
 
+RAO = 10**9
 BTCLI = "btcli"
 
 
@@ -62,6 +63,36 @@ def transfer_argv(
         # than reading JSON; it is btcli's constraint, not a preference.
         # parse_transfer_output does that reading, and refuses to guess.
     ]
+
+
+def balance_argv(wallet_name: str, wallet_path: str) -> list[str]:
+    """Read one wallet's balance. No password: it is public chain data,
+    and a read that asked for the unlock value would carry it down a
+    path that never signs anything."""
+    return [
+        BTCLI, "wallet", "balance",
+        "--wallet-name", wallet_name,
+        "--wallet-path", wallet_path,
+        "--json-output",
+    ]
+
+
+def free_balance_rao(payload: dict, wallet_name: str) -> int | None:
+    """The wallet's free (unstaked, transferable) balance in rao.
+
+    None when the figure cannot be read — never zero. Zero means "empty,
+    nothing to sweep"; unreadable means "we do not know", and the two
+    lead to different actions. Collapsing them would make a failed read
+    look like a wallet that needed no attention, and a sweep would
+    quietly skip it every time.
+    """
+    try:
+        free = (payload.get("balances") or {})[wallet_name]["free"]
+    except (AttributeError, KeyError, TypeError):
+        return None
+    if isinstance(free, bool) or not isinstance(free, (int, float)):
+        return None
+    return round(free * RAO)
 
 
 def stake_hotkeys_argv(wallet_name: str, wallet_path: str) -> list[str]:

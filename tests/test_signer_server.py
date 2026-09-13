@@ -3,7 +3,13 @@ import json
 import pytest
 
 from emission_tracker.signer.btcli import coldkey_password_env_var
-from emission_tracker.signer.protocol import OP_PAY, OP_UNSTAKE, SignRequest
+from emission_tracker.signer.protocol import (
+    OP_DISTRIBUTE,
+    OP_PAY,
+    OP_SWEEP,
+    OP_UNSTAKE,
+    SignRequest,
+)
 from emission_tracker.signer.server import Signer, SignerConfig
 
 CK = "5FnhiibtJkvCDSnfrp1iUQiZZaYJv31h114Pv7wtoztt9FP9"
@@ -12,6 +18,7 @@ WALLETS = {"wallets": [{"name": "prj1", "ss58_address": CK, "hotkeys": []}]}
 HK = "5GcAxvH7oAr9hT2bauAU8y2B8GUiZbvmwrrnj1B4op9toCnY"
 # One hotkey, staked on two subnets — the shape that made btcli's own
 # --all-hotkeys ask the chain to remove the same alpha twice.
+BALANCE = {"balances": {"prj1": {"free": 2.0}}}
 STAKE = {"stake_info": {HK: [
     {"netuid": 56, "stake_value": 102.7587},
     {"netuid": 24, "stake_value": 0.0087},
@@ -59,7 +66,9 @@ class _Recorder:
             stderr = ""
 
         if argv[1:3] == ["wallet", "list"]:
-            R.stdout = json.dumps(WALLETS)
+            R.stdout = json.dumps(self._results.get("wallets", WALLETS))
+        elif argv[1:3] == ["wallet", "balance"]:
+            R.stdout = json.dumps(self._results.get("balance", BALANCE))
         elif argv[1:3] == ["stake", "list"]:
             R.stdout = json.dumps(self._results.get("stake", STAKE))
         elif "transfer" in argv:
@@ -463,3 +472,172 @@ class TestTheSharedWalletsManyHotkeys:
         )
         res = signer.handle(_req(OP_UNSTAKE, CK))
         assert res.tx_hash.count(",") == 10
+
+
+class TestSweep:
+    """Each member coldkey sends its free balance to the treasury,
+    keeping a little back for transaction fees."""
+
+    PARENT = "5HERhLCKSpmTiRD6EpnsY7DUnVqUThaANhYgXYAWqZZ28fLB"
+
+    def _signer(self, tmp_path, free_tao=2.0, **over):
+        rec = _Recorder(results={"balance": {
+            "balances": {"prj1": {"free": free_tao}}
+        }})
+        opts = dict(parent_coldkey=self.PARENT, hotkeys={CK: [HK]})
+        opts.update(over)
+        s = _signer(rec, tmp_path, **opts)
+        self.rec = rec
+        return s
+
+    def test_it_sends_everything_above_the_reserve(self, tmp_path):
+        res = self._signer(tmp_path, free_tao=2.0).handle(_req(OP_SWEEP, CK))
+        assert res.ok
+        # 2.0 - 0.015, the reserve that leaves the wallet able to pay for
+        # its next transaction.
+        assert res.amount_rao == 1_985_000_000
+        transfer = [c for c in self.rec.calls if "transfer" in c][0]
+        assert transfer[transfer.index("--amount") + 1] == "1.985000000"
+        assert transfer[transfer.index("--destination") + 1] == self.PARENT
+
+    def test_the_amount_comes_from_the_chain_not_the_caller(self, tmp_path):
+        """The dashboard's figures are a day old. If the caller could
+        name the amount, every stale card would become a wrong transfer
+        or a chain rejection."""
+        signer = self._signer(tmp_path, free_tao=0.5)
+        res = signer.handle(_req(OP_SWEEP, CK))
+        assert res.amount_rao == 485_000_000
+        assert any(c[1:3] == ["wallet", "balance"] for c in self.rec.calls)
+
+    @pytest.mark.parametrize("free", [0.015, 0.0149, 0.0])
+    def test_a_balance_at_or_below_the_reserve_moves_nothing(
+        self, tmp_path, free
+    ):
+        """Not an error and not "unknown": there is simply nothing to
+        sweep, and sweeping would cost a fee to move dust."""
+        signer = self._signer(tmp_path, free_tao=free)
+        res = signer.handle(_req(OP_SWEEP, CK))
+        assert not res.ok
+        assert not res.unknown
+        assert "ambang" in res.error
+        assert not any("transfer" in c for c in self.rec.calls)
+
+    def test_an_unreadable_balance_does_not_become_a_zero_transfer(
+        self, tmp_path
+    ):
+        rec = _Recorder(results={"balance": {"balances": {}}})
+        res = _signer(
+            rec, tmp_path, parent_coldkey=self.PARENT, hotkeys={CK: [HK]}
+        ).handle(_req(OP_SWEEP, CK))
+        assert not res.ok
+        assert not any("transfer" in c for c in rec.calls)
+
+    def test_the_treasury_does_not_sweep_itself(self, tmp_path):
+        signer = self._signer(
+            tmp_path, hotkeys={CK: [HK], self.PARENT: []},
+        )
+        res = signer.handle(_req(OP_SWEEP, self.PARENT))
+        assert not res.ok
+        assert not any("transfer" in c for c in self.rec.calls)
+
+    def test_without_a_configured_treasury_nothing_moves(self, tmp_path):
+        """A deployment that has not named its treasury wallet must fail
+        closed, not guess a destination."""
+        signer = self._signer(tmp_path, parent_coldkey="")
+        res = signer.handle(_req(OP_SWEEP, CK))
+        assert not res.ok
+        assert not any("transfer" in c for c in self.rec.calls)
+
+    def test_the_reserve_is_configurable(self, tmp_path):
+        signer = self._signer(tmp_path, free_tao=2.0, sweep_leave_tao=0.5)
+        assert signer.handle(_req(OP_SWEEP, CK)).amount_rao == 1_500_000_000
+
+
+class TestDistribute:
+    """The treasury sends a named amount to a member coldkey. The only
+    op where the caller names both — and so the only one where the
+    roster is doing real work."""
+
+    PARENT = "5HERhLCKSpmTiRD6EpnsY7DUnVqUThaANhYgXYAWqZZ28fLB"
+    MEMBER = "5GxjPJokWhd8sZ7kecxQ9JWiqX8vV8R6Hg29SVNPcs6mu8YL"
+
+    def _req(self, destination, amount_rao=2_000_000_000, coldkey=None):
+        return SignRequest(
+            OP_DISTRIBUTE, coldkey or self.PARENT, secret=UNLOCK,
+            destination=destination, amount_rao=amount_rao,
+        )
+
+    def _signer(self, tmp_path, **over):
+        wallets = {"wallets": [
+            {"name": "utama", "ss58_address": self.PARENT, "hotkeys": []},
+            {"name": "birong", "ss58_address": self.MEMBER, "hotkeys": []},
+        ]}
+        rec = _Recorder(results={"wallets": wallets})
+        opts = dict(
+            parent_coldkey=self.PARENT,
+            hotkeys={self.PARENT: [], self.MEMBER: [], CK: [HK]},
+        )
+        opts.update(over)
+        s = _signer(rec, tmp_path, **opts)
+        self.rec = rec
+        return s
+
+    def test_it_sends_the_named_amount_from_the_treasury(self, tmp_path):
+        res = self._signer(tmp_path).handle(self._req(self.MEMBER))
+        assert res.ok
+        assert res.amount_rao == 2_000_000_000
+        transfer = [c for c in self.rec.calls if "transfer" in c][0]
+        assert transfer[transfer.index("--wallet-name") + 1] == "utama"
+        assert transfer[transfer.index("--destination") + 1] == self.MEMBER
+        assert transfer[transfer.index("--amount") + 1] == "2.000000000"
+
+    def test_a_destination_outside_the_roster_is_refused(self, tmp_path):
+        """This is what replaces an amount cap. With it, the worst a
+        compromised web tier can do is shuffle money between the team's
+        own wallets; without it, there is nothing between a stranger and
+        the treasury."""
+        res = self._signer(tmp_path).handle(self._req("5EvilAddress"))
+        assert not res.ok
+        assert "roster" in res.error.lower()
+        assert not any("transfer" in c for c in self.rec.calls)
+
+    def test_the_treasury_cannot_pay_itself(self, tmp_path):
+        res = self._signer(tmp_path).handle(self._req(self.PARENT))
+        assert not res.ok
+        assert not any("transfer" in c for c in self.rec.calls)
+
+    def test_only_the_treasury_may_distribute(self, tmp_path):
+        """A member wallet spending on another member's behalf is not a
+        flow this button has; allowing it would let a single compromised
+        request drain any wallet, not just the one the operator chose."""
+        res = self._signer(tmp_path).handle(
+            self._req(self.MEMBER, coldkey=CK)
+        )
+        assert not res.ok
+        assert not any("transfer" in c for c in self.rec.calls)
+
+    def test_the_unlock_value_never_reaches_the_argv(self, tmp_path):
+        self._signer(tmp_path).handle(self._req(self.MEMBER))
+        for argv in self.rec.calls:
+            assert not any(UNLOCK in str(part) for part in argv)
+
+
+class TestReadingEveryBalance:
+    """What fills both dialogs. It signs nothing, so it takes no unlock
+    value — and the dialogs are worth having only if their figures are
+    fresher than the dashboard's once-a-day read."""
+
+    def test_it_reports_each_rostered_coldkey(self, tmp_path):
+        rec = _Recorder(results={"balance": {
+            "balances": {"prj1": {"free": 3.25}}
+        }})
+        signer = _signer(rec, tmp_path, hotkeys={CK: [HK]})
+        out = signer.balances()
+        assert out == {CK: 3_250_000_000}
+
+    def test_a_wallet_that_cannot_be_read_is_reported_as_unknown(
+        self, tmp_path
+    ):
+        rec = _Recorder(results={"balance": {"balances": {}}})
+        signer = _signer(rec, tmp_path, hotkeys={CK: [HK]})
+        assert signer.balances() == {CK: None}

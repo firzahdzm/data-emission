@@ -7,7 +7,9 @@ import pytest
 from emission_tracker.signer.btcli import (
     BtcliError,
     UNSTAKE_PROMPTS,
+    balance_argv,
     base_env,
+    free_balance_rao,
     hotkeys_with_stake,
     stake_hotkeys_argv,
     unlisted_stake,
@@ -899,3 +901,49 @@ class TestOnlyTheTeamsOwnHotkeys:
         """A deployment that has not configured one must not silently
         unstake nothing."""
         assert hotkeys_with_stake(self.PAYLOAD, 56, None) == [HK_A, self.STRAY]
+
+
+class TestReadingAFreeBalance:
+    """The sweep amount comes from here, not from the dashboard. The
+    dashboard's figures are a day old and have already been wrong once
+    this week — a card showed 0.71 τ of stake on a wallet that held
+    none."""
+
+    # Captured from the host (btcli 9.23.2, wallet goy).
+    PAYLOAD = {
+        "balances": {
+            "goy": {
+                "coldkey": "5D4TxRCygaB19og7mWHpFtiZ24nzaFcrVHpW9LmZpDPHwGHZ",
+                "free": 1.709312021,
+                "staked": 0.0,
+                "total": 1.709312021,
+            }
+        },
+        "totals": {"free": 1.709312021, "staked": 0.0, "total": 1.709312021},
+    }
+
+    def test_reading_a_balance_needs_no_password(self):
+        """It is public chain data, and a read that asked for the unlock
+        value would put it on a path that never signs anything."""
+        argv = balance_argv("goy", WP)
+        assert argv[:3] == ["btcli", "wallet", "balance"]
+        assert argv[argv.index("--wallet-name") + 1] == "goy"
+        assert "--json-output" in argv
+
+    def test_the_free_balance_comes_back_in_rao(self):
+        assert free_balance_rao(self.PAYLOAD, "goy") == 1_709_312_021
+
+    def test_an_empty_wallet_reads_as_zero_not_as_missing(self):
+        payload = {"balances": {"goy": {"free": 0.0}}}
+        assert free_balance_rao(payload, "goy") == 0
+
+    @pytest.mark.parametrize("payload", [
+        {}, {"balances": {}}, {"balances": {"lain": {"free": 1.0}}},
+        {"balances": {"goy": {}}}, {"balances": {"goy": {"free": "banyak"}}},
+        {"balances": None},
+    ])
+    def test_anything_unreadable_is_none_never_zero(self, payload):
+        """Zero means "empty, nothing to sweep" and unreadable means "we
+        do not know". Collapsing the second into the first would make a
+        failed read look like a wallet that needed no attention."""
+        assert free_balance_rao(payload, "goy") is None

@@ -24,6 +24,7 @@ from emission_tracker.signer.btcli import (
     parse_transfer_output,
     parse_unstake_output,
     run_btcli_pty,
+    strip_ansi,
     transfer_argv,
     unstake_argv,
 )
@@ -141,8 +142,20 @@ class Signer:
                              mev_protection=self._config.mev_protection),
                 env, request.secret,
             )
+            try:
+                tx_hash = parse_unstake_output(output)
+            except Exception:
+                # The whole exchange, once, when it did not plainly work.
+                # The stored reason is a single clamped sentence, and
+                # several wrong diagnoses in a row came from reasoning
+                # about a failure nobody had the transcript of. btcli
+                # never echoes the unlock value, and journald is the same
+                # trust boundary as the signer itself.
+                log.error("unstake transcript coldkey=%s wallet=%s:\n%s",
+                          request.coldkey, name, strip_ansi(output)[-4000:])
+                raise
             return SignResult(True, request.op, request.coldkey,
-                              tx_hash=parse_unstake_output(output))
+                              tx_hash=tx_hash)
 
         amount_rao = sum(
             round(self._config.fees_tao[t] * RAO) for t in request.types

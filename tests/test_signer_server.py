@@ -319,3 +319,23 @@ def test_the_unstake_tolerance_is_configurable_and_reaches_btcli(tmp_path):
     signer.handle(_req(OP_UNSTAKE, CK))
     argv = calls[0]
     assert argv[argv.index("--tolerance") + 1] == "0.25"
+
+
+def test_a_failing_unstake_logs_the_whole_exchange(tmp_path, caplog):
+    """The stored reason is one clamped sentence. Diagnosing the
+    NotEnoughStakeToWithdraw failures meant reasoning about a transcript
+    nobody had kept, and produced three wrong answers in a row."""
+    rec = _Recorder()
+    signer = _signer(rec, tmp_path)
+    signer._run_unstake = lambda argv, env, secret: (
+        "Unstake all: 102.7587 from 5GcA on netuid: 56? y\n"
+        "❌ Batch unstaking failed: Subtensor returned "
+        "`NotEnoughStakeToWithdraw(Module)` error.\n"
+    )
+    with caplog.at_level("ERROR", logger="emission_signer"):
+        res = signer.handle(_req(OP_UNSTAKE, CK))
+
+    assert not res.ok
+    transcript = "\n".join(r.getMessage() for r in caplog.records)
+    assert "Unstake all: 102.7587" in transcript
+    assert UNLOCK not in transcript

@@ -481,6 +481,38 @@ _BENIGN_NOTICE = re.compile(
 )
 
 
+# btcli's MEV shield submits the unstake encrypted and then watches a
+# fixed number of blocks for the inner extrinsic to appear. When it does
+# not appear in time btcli gives up watching — but the protected
+# extrinsic can still be decrypted and executed afterwards. So this is an
+# unknown outcome, not a failure: recorded as "failed" it invites the
+# retry that unstakes twice.
+_SHIELD_TIMEOUT = (
+    "Failed to find outcome of the shield extrinsic",
+    "protected extrinsic wasn't decrypted",
+)
+
+# Chain errors, in the words the operator needs. The card shows the first
+# 60 characters of the reason, and `Subtensor returned
+# \`NotEnoughStakeToWithdraw(Module)\` error. This means:` spends all of
+# them saying nothing. The original text is kept after the summary.
+_CHAIN_HINTS = (
+    ("ReservesTooLow",
+     "cadangan pool subnet sedang tipis — coba lagi nanti"),
+    ("NotEnoughStakeToWithdraw",
+     "stake berubah sebelum transaksi masuk — coba lagi"),
+    ("Not enough balance",
+     "saldo wallet tidak cukup"),
+)
+
+
+def _with_hint(reason: str) -> str:
+    for marker, hint in _CHAIN_HINTS:
+        if marker in reason:
+            return f"{hint} ({reason})"
+    return reason
+
+
 def _real_failure(flat: str) -> str | None:
     """The part of the output that explains a failure, or None.
 
@@ -508,6 +540,17 @@ def parse_unstake_output(text: str) -> str | None:
     ok = any(marker in flat for marker in _UNSTAKE_OK_MARKERS)
     failure = _real_failure(flat)
 
+    if any(marker in flat for marker in _SHIELD_TIMEOUT):
+        # Checked before everything else: the shield's own report is
+        # "I stopped looking", and btcli prints it wrapped in ❌ and
+        # followed by "Unstaking operations completed." — both of which
+        # would otherwise be read as a settled outcome.
+        raise TransferUnknown(
+            "MEV shield tidak menemukan hasil dalam batas waktunya — "
+            "extrinsic terlindungi bisa saja masih dieksekusi. Periksa "
+            "stake di chain sebelum mencoba lagi."
+        )
+
     if ok and not failure:
         match = _EXTRINSIC_ID.search(flat)
         if match:
@@ -517,7 +560,7 @@ def parse_unstake_output(text: str) -> str | None:
                 return token.rstrip(".,")
         return None
     if failure and not ok:
-        raise BtcliError(failure)
+        raise BtcliError(_with_hint(failure))
     if not ok and any(marker in flat for marker in _NOTHING_TO_DO):
         # A plain failure, not "unknown": nothing was submitted, and
         # "check the chain" would send the operator after an extrinsic

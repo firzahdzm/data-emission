@@ -753,3 +753,48 @@ class TestPerHotkeyNoticesAreNotTheOutcome:
         with pytest.raises(TransferUnknown) as exc:
             parse_unstake_output(out)
         assert "inconclusive at the end" in str(exc.value)
+
+
+class TestTheMevShieldsTimeoutIsNotAFailure:
+    """btcli submits the unstake encrypted and watches a fixed number of
+    blocks for it to appear. When it does not, btcli stops looking — but
+    the protected extrinsic can still be decrypted and executed after
+    that. Recorded as "failed", it invites the retry that unstakes
+    twice."""
+
+    SHIELD = (
+        "❌ ❌ Batch unstaking failed: Failed to find outcome of the shield "
+        "extrinsic (The protected extrinsic wasn't decrypted) "
+        "Unstaking operations completed.\n"
+    )
+
+    def test_it_is_reported_as_unknown(self):
+        with pytest.raises(TransferUnknown) as exc:
+            parse_unstake_output(self.SHIELD)
+        assert "chain" in str(exc.value).lower()
+
+    def test_a_finalized_run_is_unaffected(self):
+        assert parse_unstake_output(
+            "✅ Your extrinsic has been included as 9060181-10\n✅ Finalized\n"
+        ) == "9060181-10"
+
+
+def test_a_chain_error_leads_with_what_it_means():
+    """The card shows the first 60 characters of the reason, and
+    "Subtensor returned `NotEnoughStakeToWithdraw(Module)` error. This
+    means:" spends all of them saying nothing."""
+    with pytest.raises(BtcliError) as exc:
+        parse_unstake_output(
+            "❌ Batch unstaking failed: Subtensor returned "
+            "`NotEnoughStakeToWithdraw(Module)` error. This means: …\n"
+        )
+    message = str(exc.value)
+    assert message.startswith("stake berubah sebelum transaksi masuk")
+    assert "NotEnoughStakeToWithdraw" in message   # the original is kept
+
+    with pytest.raises(BtcliError) as exc:
+        parse_unstake_output(
+            "❌ Batch unstaking failed: Subtensor returned "
+            "`ReservesTooLow(Module)` error.\n"
+        )
+    assert str(exc.value).startswith("cadangan pool subnet sedang tipis")

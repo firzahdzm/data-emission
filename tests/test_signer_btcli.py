@@ -14,6 +14,7 @@ from emission_tracker.signer.btcli import (
     run_btcli,
     run_btcli_pty,
     strip_ansi,
+    TransferUnknown,
     transfer_argv,
     unstake_argv,
 )
@@ -701,3 +702,52 @@ def test_an_empty_subnet_position_is_a_plain_failure_not_an_unknown():
             "Unstaking to: …\nNo unstake operations to perform.\n"
         )
     assert "tidak ada stake" in str(exc.value)
+
+
+class TestPerHotkeyNoticesAreNotTheOutcome:
+    """Walking a coldkey's hotkeys, btcli marks each one holding nothing
+    on the subnet with a ❌ and then unstakes the one that does hold
+    something. Reading the first ❌ as the outcome mislabels a success —
+    and buries the real reason when it genuinely fails."""
+
+    NOTICES = (
+        "❌ No stake to unstake from 5FWSPfZfijud1LMDCr7NPQxxg on netuid: 56\n"
+        "❌ No stake to unstake from 5FWqcodTKorML46bG67hccFJnj on netuid: 56\n"
+        "❌ No stake to unstake from 5Dyj6rv3C8atyk4X4kbbsa37Ldc on netuid: 56\n"
+    )
+
+    def test_a_success_behind_those_notices_is_still_a_success(self):
+        out = (
+            self.NOTICES
+            + "Unstake all: 274.0754 ج from 5GcA…oCnY on netuid: 56? y\n"
+            + "✅ Your extrinsic has been included as 9059300-4\n✅ Finalized\n"
+        )
+        assert parse_unstake_output(out) == "9059300-4"
+
+    def test_the_reason_reported_is_the_real_one_not_the_first_notice(self):
+        """What the operator was actually told for wallet birong was
+        "No stake to unstake from 5FWSPfZf…" — a hotkey that was never
+        the point — while the chain's own refusal sat past the clamp."""
+        out = (
+            self.NOTICES
+            + "Unstake all: 274.0754 ج from 5GcA…oCnY on netuid: 56? y\n"
+            + "❌ Batch unstaking failed: Subtensor returned "
+              "`ReservesTooLow(Module)` error.\n"
+        )
+        with pytest.raises(BtcliError) as exc:
+            parse_unstake_output(out)
+        assert "ReservesTooLow" in str(exc.value)
+        assert "5FWSPfZf" not in str(exc.value)
+
+    def test_notices_alone_still_mean_nothing_was_staked(self):
+        with pytest.raises(BtcliError) as exc:
+            parse_unstake_output(self.NOTICES + "No unstake operations to perform.\n")
+        assert "tidak ada stake" in str(exc.value)
+
+    def test_an_unreadable_ending_reports_the_tail_not_the_opening(self):
+        """"Check the chain" is only useful with the part that describes
+        how the run ended; the opening lines never do."""
+        out = "Unstaking to: …\n" + "x" * 3000 + "\nsomething inconclusive at the end\n"
+        with pytest.raises(TransferUnknown) as exc:
+            parse_unstake_output(out)
+        assert "inconclusive at the end" in str(exc.value)

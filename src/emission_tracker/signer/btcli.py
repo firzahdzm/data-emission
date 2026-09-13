@@ -458,6 +458,37 @@ _EXTRINSIC_ID = re.compile(r"has been included as\s+(\d+-\d+)")
 # btcli says this and stops when the wallet holds nothing on the subnet.
 _NOTHING_TO_DO = ("No unstake operations to perform", "No stake to unstake")
 
+# Not every ❌ is a failure. Walking the coldkey's hotkeys, btcli marks
+# each one holding nothing on the subnet:
+#
+#     ❌ No stake to unstake from 5FWSPfZf… on netuid: 56
+#
+# and then gets on with unstaking the hotkey that does hold something.
+# Three of those notices preceded a real unstake on wallet birong; the
+# reason recorded for the operator was the first ❌ — a hotkey that was
+# never the point — while the actual outcome at the end of the output
+# was thrown away by the 300-character clamp.
+_BENIGN_NOTICE = re.compile(
+    r"❌\s*(No stake to unstake from|No stake found for hotkey|"
+    r"Nothing to unstake from)[^❌]*"
+)
+
+
+def _real_failure(flat: str) -> str | None:
+    """The part of the output that explains a failure, or None.
+
+    Per-hotkey notices are stripped first. What remains is a genuine
+    refusal — a chain error, a rejected key — and the text returned
+    starts there rather than at the first ❌ in the stream, so the clamp
+    keeps the sentence that says why.
+    """
+    meaningful = _BENIGN_NOTICE.sub(" ", flat)
+    if "❌" in meaningful:
+        return tidy(meaningful[meaningful.find("❌"):], limit=300)
+    if "unstaking failed" in meaningful:
+        return tidy(meaningful[meaningful.find("unstaking failed"):], limit=300)
+    return None
+
 
 def parse_unstake_output(text: str) -> str | None:
     """Return the extrinsic reference for a completed unstake.
@@ -466,11 +497,11 @@ def parse_unstake_output(text: str) -> str | None:
     never read as success. An unstake that may have reached the chain is
     reported as unknown so nobody submits it twice.
     """
-    flat = tidy(text, limit=4000)
+    flat = tidy(text, limit=8000)
     ok = any(marker in flat for marker in _UNSTAKE_OK_MARKERS)
-    failed = _FAIL_MARKER in flat or "unstaking failed" in flat
+    failure = _real_failure(flat)
 
-    if ok and not failed:
+    if ok and not failure:
         match = _EXTRINSIC_ID.search(flat)
         if match:
             return match.group(1)
@@ -478,15 +509,16 @@ def parse_unstake_output(text: str) -> str | None:
             if token.startswith("0x") and len(token) > 18:
                 return token.rstrip(".,")
         return None
-    if failed and not ok:
-        marker = flat.find(_FAIL_MARKER)
-        raise BtcliError(tidy(flat[marker:] if marker >= 0 else flat, limit=300))
-    if any(marker in flat for marker in _NOTHING_TO_DO):
+    if failure and not ok:
+        raise BtcliError(failure)
+    if not ok and any(marker in flat for marker in _NOTHING_TO_DO):
         # A plain failure, not "unknown": nothing was submitted, and
         # "check the chain" would send the operator after an extrinsic
         # that does not exist — which is how a real warning gets cheap.
         raise BtcliError("tidak ada stake untuk di-unstake di subnet ini")
-    raise TransferUnknown(tidy(flat, limit=400) or "btcli printed nothing")
+    # Both, or neither. Report the tail, not the head: whatever btcli
+    # said last is the part that describes how it ended.
+    raise TransferUnknown(tidy(flat[-400:], limit=400) or "btcli printed nothing")
 
 
 def _normalise(prompt) -> tuple[str, str | None, bool]:

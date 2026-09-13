@@ -246,8 +246,8 @@ _confirm.addEventListener('click', async () => {
             </button>
             {% endif %}
             {% if treasury_coldkey %}
-            <button id="sweep-btn" class="btn-subtle">Satukan dana</button>
-            <button id="distribute-btn" class="btn-subtle">Distribusi</button>
+            <button id="sweep-btn" class="btn-subtle">Pooling balance</button>
+            <button id="distribute-btn" class="btn-subtle">Distribute balance</button>
             {% endif %}
         </span>
         {% endif %}
@@ -1114,7 +1114,7 @@ _confirm.addEventListener('click', async () => {
 
             if (!jobs.length) {
                 await snAlert('Tidak ada wallet dengan saldo di atas '
-                              + `${RESERVE_TAO} τ.`, { title: 'Satukan dana' });
+                              + `${RESERVE_TAO} τ.`, { title: 'Pooling balance' });
                 return;
             }
             const ans = await snAuthorize(
@@ -1126,10 +1126,10 @@ _confirm.addEventListener('click', async () => {
                     ? `\n\nTidak terbaca dan dilewati: ${unreadable.join(', ')}.`
                     : ''),
                 {
-                    title: 'Satukan dana',
+                    title: 'Pooling balance',
                     okText: `Kirim dari ${jobs.length} wallet`,
                     cancelText: 'Batal',
-                    required: 'satukan',
+                    required: 'pooling',
                     secretLabel: 'Unlock value wallet:',
                 });
             if (!ans || !ans.ok) return;
@@ -1168,7 +1168,7 @@ _confirm.addEventListener('click', async () => {
                 'Isi jumlah TAO untuk tiap wallet. Kosongkan yang tidak '
                 + 'ingin dikirimi.',
                 rows,
-                { title: 'Distribusi dari wallet induk', okText: 'Lanjut' });
+                { title: 'Distribute balance', okText: 'Lanjut' });
             if (!form || !form.ok) return;
 
             const picked = Object.entries(form.values);
@@ -1192,10 +1192,10 @@ _confirm.addEventListener('click', async () => {
                       + 'pasti akan ditolak.'
                     : ''),
                 {
-                    title: 'Konfirmasi distribusi',
+                    title: 'Konfirmasi distribute balance',
                     okText: `Kirim ke ${picked.length} wallet`,
                     cancelText: 'Batal',
-                    required: 'distribusi',
+                    required: 'distribute',
                     secretLabel: 'Unlock value wallet induk:',
                 });
             if (!ans || !ans.ok) return;

@@ -439,8 +439,8 @@ class TestTreasuryButtons:
     def test_both_dialogs_demand_a_typed_word(self, app, monkeypatch):
         html = self._html(app, monkeypatch)
         treasury = html[html.index("--- treasury: sweep in"):]
-        assert "required: 'satukan'" in treasury
-        assert "required: 'distribusi'" in treasury
+        assert "required: 'pooling'" in treasury
+        assert "required: 'distribute'" in treasury
 
     def test_a_wallet_whose_balance_is_unreadable_is_never_swept(
         self, app, monkeypatch

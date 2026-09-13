@@ -5,7 +5,10 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, SecretStr
 
 from emission_tracker.signer.protocol import (
+    OP_BALANCES,
+    OP_DISTRIBUTE,
     OP_PAY,
+    OP_SWEEP,
     OP_UNSTAKE,
     TOURNAMENT_TYPES,
     SignRequest,
@@ -478,7 +481,8 @@ def _require_secret(body) -> None:
         raise HTTPException(status_code=400, detail="Wallet unlock value is required")
 
 
-def _run_signed_action(request: Request, sign_request, amount_rao: int, user: str):
+def _run_signed_action(request: Request, sign_request, amount_rao: int, user: str,
+                       counterparty: str | None = None):
     """Record, send, record the outcome. Shared by both endpoints so the
     audit row can never be skipped by one of them."""
     conn = _db(request)
@@ -494,6 +498,7 @@ def _run_signed_action(request: Request, sign_request, amount_rao: int, user: st
         action_id = queries.record_action(
             conn, sign_request.coldkey, sign_request.op,
             list(sign_request.types), amount_rao, user,
+            counterparty=counterparty,
         )
     except sqlite3.IntegrityError:
         # The partial unique index caught a concurrent request that slipped
@@ -621,6 +626,112 @@ def unstake_all(
         0,
         user,
     )
+
+
+class DistributeBody(BaseModel):
+    amount_rao: int
+    secret: SecretStr
+
+
+def _treasury_coldkey(request: Request) -> str:
+    """The wallet a distribution spends from.
+
+    Read from the tracker's config only to name the signing wallet in
+    the audit row and the pending-lock. The signer holds its own copy
+    and checks against that — if the two ever disagree, the signer's
+    answer is the one that decides, and this one is a label.
+    """
+    config = getattr(request.app.state, "config", None)
+    parent = getattr(config, "treasury_coldkey", "") if config else ""
+    if not parent:
+        raise HTTPException(
+            status_code=503, detail="Wallet induk belum dikonfigurasi"
+        )
+    return parent
+
+
+@router.post("/treasury/sweep/{coldkey}")
+def sweep_to_treasury(
+    request: Request,
+    coldkey: str,
+    body: UnstakeBody,
+    user: str = Depends(require_admin),
+):
+    """Send this coldkey's free balance to the treasury wallet.
+
+    No amount travels from here. The signer reads the wallet's balance
+    from the chain and keeps a reserve back; the dashboard's own figures
+    are a day old and have been wrong about a wallet this week.
+    """
+    _known_coldkey(request, coldkey)
+    _require_secret(body)
+    parent = _treasury_coldkey(request)
+    if coldkey == parent:
+        raise HTTPException(
+            status_code=400, detail="Wallet induk tidak menyapu dirinya sendiri"
+        )
+    return _run_signed_action(
+        request,
+        SignRequest(OP_SWEEP, coldkey, secret=body.secret.get_secret_value()),
+        0,
+        user,
+        counterparty=parent,
+    )
+
+
+@router.post("/treasury/distribute/{coldkey}")
+def distribute_from_treasury(
+    request: Request,
+    coldkey: str,
+    body: DistributeBody,
+    user: str = Depends(require_admin),
+):
+    """Send TAO from the treasury wallet to one member coldkey.
+
+    `{coldkey}` is the RECIPIENT. The sender is always the treasury and
+    never comes from the caller — the audit row is written against the
+    treasury, which is the wallet that actually signs.
+    """
+    _known_coldkey(request, coldkey)
+    _require_secret(body)
+    parent = _treasury_coldkey(request)
+    if coldkey == parent:
+        raise HTTPException(
+            status_code=400, detail="Tujuan sama dengan wallet induk"
+        )
+    if body.amount_rao <= 0:
+        raise HTTPException(status_code=400, detail="Jumlah harus di atas nol")
+
+    return _run_signed_action(
+        request,
+        SignRequest(
+            OP_DISTRIBUTE, parent,
+            secret=body.secret.get_secret_value(),
+            destination=coldkey, amount_rao=body.amount_rao,
+        ),
+        body.amount_rao,
+        user,
+        counterparty=coldkey,
+    )
+
+
+@router.get("/treasury/balances")
+def treasury_balances(request: Request, user: str = Depends(require_admin)):
+    """Free balance per coldkey, read from the chain right now.
+
+    Fills both treasury dialogs. Not from `coldkey_balances`: those come
+    from a once-a-day TaoStats read, and a dialog that proposes moving
+    money off a figure that old is proposing the wrong number.
+    """
+    signer = _signer(request)
+    try:
+        result = signer.send(SignRequest(OP_BALANCES, ""))
+    except SignerUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not result.ok:
+        raise HTTPException(status_code=502,
+                            detail=result.error or "balance read failed")
+    return {"balances": result.balances or {}}
 
 
 @router.get("/actions/recent")

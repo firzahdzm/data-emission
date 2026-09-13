@@ -103,6 +103,11 @@ class AppConfig(BaseModel):
     # which is what a deployment without the matching nginx block needs.
     proxy_secret: str = ""
     auth: AuthConfig = Field(default_factory=AuthConfig)
+    # The team's treasury wallet — where sweeps send and distributions
+    # come from. Named here only to label audit rows and to hide the
+    # buttons when it is unset; the signer keeps its own copy and that
+    # is the one that decides what may move.
+    treasury_coldkey: str = ""
     tournament: TournamentConfig | None = None
     signer_socket: str = "/run/emission-signer/emission-signer.sock"
 

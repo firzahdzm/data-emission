@@ -28,7 +28,11 @@ class _FakeSigner:
             raise self._boom
         return self._result or SignResult(
             True, request.op, request.coldkey,
-            amount_rao=700_000_000, tx_hash="0xdead",
+            # A real signer echoes what it actually moved: for a
+            # distribution that is the amount asked for, for a fee its
+            # own table's figure.
+            amount_rao=request.amount_rao or 700_000_000,
+            tx_hash="0xdead",
         )
 
 
@@ -56,6 +60,7 @@ def app():
     a.state.config = SimpleNamespace(
         admin_users=["alice"],
         proxy_secret="",
+        treasury_coldkey="",
         tournament=SimpleNamespace(
             address="5Ef5", fees_tao={"text": 0.7, "image": 0.4, "env": 0.6}
         ),
@@ -485,3 +490,140 @@ class TestUnknownBalanceDoesNotBlockPayment:
         app.state.signer = fake
         r = _post(app, f"/api/tournament/pay/{CK}", {"types": ["text"]})
         assert r.status_code == 200
+
+
+class TestTreasuryEndpoints:
+    """Sweep and distribute, from the web tier's side."""
+
+    PARENT = "5HERhLCKSpmTiRD6EpnsY7DUnVqUThaANhYgXYAWqZZ28fLB"
+
+    @pytest.fixture
+    def treasury_app(self, app):
+        conn = app.state.db_conn
+        conn.execute(
+            "INSERT INTO hotkeys (ss58, person_id, subnet_id, coldkey_ss58) "
+            "VALUES ('5HKtreasuryhotkey', 1, 56, ?)", (self.PARENT,),
+        )
+        conn.commit()
+        app.state.config.treasury_coldkey = self.PARENT
+        return app
+
+    def test_a_sweep_names_no_amount(self, treasury_app, monkeypatch):
+        """The signer reads the balance from the chain. An amount from
+        here would be the dashboard's day-old figure."""
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        fake = _FakeSigner()
+        treasury_app.state.signer = fake
+        r = _post(treasury_app, f"/api/treasury/sweep/{CK}")
+        assert r.status_code == 200
+        sent = fake.sent[0]
+        assert sent.op == "sweep"
+        assert sent.coldkey == CK
+        assert sent.amount_rao == 0
+        assert sent.destination == ""
+
+    def test_a_sweep_records_the_treasury_as_the_other_side(
+        self, treasury_app, monkeypatch
+    ):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        treasury_app.state.signer = _FakeSigner()
+        _post(treasury_app, f"/api/treasury/sweep/{CK}")
+        row = queries.recent_actions(treasury_app.state.db_conn)[0]
+        assert row["counterparty_ss58"] == self.PARENT
+
+    def test_the_treasury_cannot_sweep_itself(self, treasury_app, monkeypatch):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        fake = _FakeSigner()
+        treasury_app.state.signer = fake
+        r = _post(treasury_app, f"/api/treasury/sweep/{self.PARENT}")
+        assert r.status_code == 400
+        assert fake.sent == []
+
+    def test_a_distribution_is_signed_by_the_treasury_not_the_recipient(
+        self, treasury_app, monkeypatch
+    ):
+        """The URL names who receives. Reading it as who signs would let
+        the dashboard spend from any wallet it liked."""
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        fake = _FakeSigner()
+        treasury_app.state.signer = fake
+        r = _post(treasury_app, f"/api/treasury/distribute/{CK}",
+                  {"amount_rao": 2_000_000_000})
+        assert r.status_code == 200
+        sent = fake.sent[0]
+        assert sent.coldkey == self.PARENT      # signs
+        assert sent.destination == CK           # receives
+        assert sent.amount_rao == 2_000_000_000
+
+    def test_a_distribution_records_the_recipient(
+        self, treasury_app, monkeypatch
+    ):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        treasury_app.state.signer = _FakeSigner()
+        _post(treasury_app, f"/api/treasury/distribute/{CK}",
+              {"amount_rao": 2_000_000_000})
+        row = queries.recent_actions(treasury_app.state.db_conn)[0]
+        assert row["coldkey_ss58"] == self.PARENT
+        assert row["counterparty_ss58"] == CK
+        assert row["amount_rao"] == 2_000_000_000
+
+    @pytest.mark.parametrize("amount", [0, -5])
+    def test_a_non_positive_amount_is_refused_before_signing(
+        self, treasury_app, monkeypatch, amount
+    ):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        fake = _FakeSigner()
+        treasury_app.state.signer = fake
+        r = _post(treasury_app, f"/api/treasury/distribute/{CK}",
+                  {"amount_rao": amount})
+        assert r.status_code == 400
+        assert fake.sent == []
+
+    def test_an_unknown_recipient_is_refused(self, treasury_app, monkeypatch):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        fake = _FakeSigner()
+        treasury_app.state.signer = fake
+        r = _post(treasury_app, "/api/treasury/distribute/5Stranger",
+                  {"amount_rao": 1})
+        assert r.status_code == 404
+        assert fake.sent == []
+
+    def test_without_a_configured_treasury_nothing_is_signed(
+        self, app, monkeypatch
+    ):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        app.state.config.treasury_coldkey = ""
+        fake = _FakeSigner()
+        app.state.signer = fake
+        assert _post(app, f"/api/treasury/sweep/{CK}").status_code == 503
+        assert fake.sent == []
+
+    def test_non_admin_can_reach_none_of_it(self, treasury_app, monkeypatch):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        fake = _FakeSigner()
+        treasury_app.state.signer = fake
+        for path, body in (
+            (f"/api/treasury/sweep/{CK}", {}),
+            (f"/api/treasury/distribute/{CK}", {"amount_rao": 1}),
+        ):
+            assert _post(treasury_app, path, body, user="mallory").status_code == 403
+        r = TestClient(treasury_app).get(
+            "/api/treasury/balances", headers={"X-Remote-User": "mallory"}
+        )
+        assert r.status_code == 403
+        assert fake.sent == []
+
+    def test_the_balance_read_carries_no_unlock_value(
+        self, treasury_app, monkeypatch
+    ):
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        fake = _FakeSigner(
+            result=SignResult(True, "balances", "", balances={CK: 5})
+        )
+        treasury_app.state.signer = fake
+        r = TestClient(treasury_app).get(
+            "/api/treasury/balances", headers={"X-Remote-User": "alice"}
+        )
+        assert r.status_code == 200
+        assert r.json() == {"balances": {CK: 5}}
+        assert fake.sent[0].secret == ""

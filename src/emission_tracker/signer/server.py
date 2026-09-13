@@ -59,6 +59,10 @@ class SignerConfig:
     max_transfer_tao: float
     daily_cap_tao: float
     state_path: str = "/var/lib/emission-signer/spend.json"
+    # How far the alpha rate may move against us mid-unstake before the
+    # chain refuses. Tunable without a deploy because the right value is
+    # a property of the subnet's liquidity, not of this code.
+    unstake_tolerance: float = 0.15
 
 
 @dataclass
@@ -126,7 +130,9 @@ class Signer:
             # btcli reads the unlock value with getpass, which never sees
             # a pipe. The prompt table differs — see UNSTAKE_PROMPTS.
             output = self._run_unstake(
-                unstake_argv(name, self._config.netuid, self._config.wallet_path),
+                unstake_argv(name, self._config.netuid,
+                             self._config.wallet_path,
+                             tolerance=self._config.unstake_tolerance),
                 env, request.secret,
             )
             return SignResult(True, request.op, request.coldkey,

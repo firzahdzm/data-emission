@@ -65,7 +65,7 @@ def transfer_argv(
 
 
 def unstake_argv(
-    wallet_name: str, netuid: int, wallet_path: str, tolerance: float = 0.05
+    wallet_name: str, netuid: int, wallet_path: str, tolerance: float = 0.15
 ) -> list[str]:
     """Unstake everything this wallet holds on one subnet.
 
@@ -76,6 +76,13 @@ def unstake_argv(
     beside it reads as scoped and is not: it would empty every subnet the
     coldkey holds, root stake included. Verified in the installed btcli
     source on the host (cli.py never forwards netuid on that branch).
+
+    The rate tolerance is how far the alpha rate may move against us
+    mid-unstake before the chain refuses. 5% was too tight for this
+    subnet: the shared wallet's unstakes came back as `ReservesTooLow`
+    twice, having paid the transaction fee for nothing. 15% accepts a
+    worse price rather than no sale — with --allow-partial-stake, what
+    fits inside the tolerance still goes through.
 
     The scoped path instead asks, per hotkey, "Unstake all: <amount> …
     on netuid: 56? [y/n/q]" — answered by UNSTAKE_PROMPTS.

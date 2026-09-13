@@ -92,7 +92,7 @@ Perintah yang sekarang dijalankan tombolnya sudah tidak memakai flag itu:
 
 ```
 btcli stake remove --netuid 56 --all-hotkeys --safe-staking \
-    --tolerance 0.05 --allow-partial-stake --wallet-name <nama> \
+    --tolerance 0.15 --allow-partial-stake --wallet-name <nama> \
     --wallet-path /root/.bittensor/wallets
 ```
 
@@ -110,7 +110,7 @@ dulu supaya kamu yang membaca daftarnya:
 ```bash
 sudo -u signer env HOME=/tmp TERM=dumb NO_COLOR=1 \
   /usr/local/bin/btcli stake remove --netuid 56 --all-hotkeys \
-      --safe-staking --tolerance 0.05 --allow-partial-stake \
+      --safe-staking --tolerance 0.15 --allow-partial-stake \
       --wallet-name goy --wallet-path /root/.bittensor/wallets
 ```
 

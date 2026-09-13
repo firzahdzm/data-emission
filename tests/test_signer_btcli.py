@@ -83,7 +83,9 @@ def test_unstake_always_carries_the_slippage_guard():
     without a tolerance sells into that hole."""
     argv = unstake_argv("utama", 56, WP)
     assert "--safe-staking" in argv
-    assert "--tolerance" in argv and argv[argv.index("--tolerance") + 1] == "0.05"
+    # 15%, not 5%: at 5% this subnet refused two real unstakes with
+    # ReservesTooLow, charging the transaction fee for nothing.
+    assert "--tolerance" in argv and argv[argv.index("--tolerance") + 1] == "0.15"
     assert "--allow-partial-stake" in argv
 
 

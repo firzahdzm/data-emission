@@ -304,3 +304,18 @@ def test_a_capped_request_never_builds_the_unlock_environment(tmp_path):
     assert not res.ok
     assert "cap" in res.error.lower()
     assert not any("transfer" in c for c in rec.calls)
+
+
+def test_the_unstake_tolerance_is_configurable_and_reaches_btcli(tmp_path):
+    """The right tolerance is a property of the subnet's liquidity, not
+    of this code — 5% cost two refused unstakes and their fees before
+    anyone could change it without a deploy."""
+    rec = _Recorder()
+    calls = []
+    signer = _signer(rec, tmp_path, unstake_tolerance=0.25)
+    signer._run_unstake = lambda argv, env, secret: (
+        calls.append(argv) or UNSTAKE_OK
+    )
+    signer.handle(_req(OP_UNSTAKE, CK))
+    argv = calls[0]
+    assert argv[argv.index("--tolerance") + 1] == "0.25"

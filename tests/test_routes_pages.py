@@ -474,3 +474,43 @@ def test_the_action_log_header_has_one_caret_and_is_not_a_link(app, monkeypatch)
     css = (Path(rp.__file__).parent / "static" / "style.css").read_text()
     assert ".panel-compact > summary::after { display: none; }" in css
     assert "details.panel > summary:not([role])" in css
+
+
+class TestEveryPageKnowsWhoIsLookingAtIt:
+    """The header renders the signed-in name and the Keluar button from
+    the same two values. They were passed by hand per handler, so
+    Emissions and Snapshots rendered a header missing both — and the
+    next page added would have missed them too."""
+
+    PAGES = ["/", "/captures", "/history", "/archive", "/kas"]
+
+    def _client(self, app, monkeypatch):
+        from types import SimpleNamespace
+
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        app.state.config = SimpleNamespace(
+            admin_users=["alice"], subnet_id=56, treasury_coldkey="",
+            tournament=None,
+        )
+        return TestClient(app)
+
+    @pytest.mark.parametrize("path", PAGES)
+    def test_the_header_names_the_user_and_offers_a_way_out(
+        self, app, monkeypatch, path
+    ):
+        r = self._client(app, monkeypatch).get(
+            path, headers={"X-Remote-User": "alice"}
+        )
+        assert r.status_code == 200
+        assert 'action="/logout"' in r.text
+        assert "Keluar" in r.text
+
+    @pytest.mark.parametrize("path", PAGES)
+    def test_no_logout_button_when_nobody_is_signed_in(
+        self, app, monkeypatch, path
+    ):
+        """Behind Basic Auth or on a dev box there is no session to end,
+        and a button that cannot work is worse than no button."""
+        r = self._client(app, monkeypatch).get(path)
+        assert r.status_code == 200
+        assert 'action="/logout"' not in r.text

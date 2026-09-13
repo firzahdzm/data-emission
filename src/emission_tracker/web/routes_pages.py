@@ -14,7 +14,21 @@ from emission_tracker.web.range_parse import parse_range
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+def _viewer(request: Request) -> dict:
+    """Who is looking, on every page.
+
+    A context processor rather than a key in each handler's dict: the
+    header renders the signed-in name and the Keluar button from these,
+    and passing them by hand meant Emissions and Snapshots quietly
+    rendered a header missing both. A page added next month would have
+    made the same mistake.
+    """
+    return {"user": current_user(request), "is_admin": is_admin(request)}
+
+
+templates = Jinja2Templates(
+    directory=str(TEMPLATES_DIR), context_processors=[_viewer]
+)
 
 
 def _format_age(value, *, now=None) -> str:
@@ -204,8 +218,6 @@ def register_pages(app: FastAPI) -> None:
                 "latest": latest,
                 "last_settle": last_settle,
                 "active_page": "dashboard",
-                "is_admin": is_admin(request),
-                "user": current_user(request),
             },
         )
 
@@ -222,8 +234,6 @@ def register_pages(app: FastAPI) -> None:
                 "limit": limit,
                 "latest": latest,
                 "active_page": "archive",
-                "is_admin": is_admin(request),
-                "user": current_user(request),
             },
         )
 
@@ -262,8 +272,6 @@ def register_pages(app: FastAPI) -> None:
                 "persons": persons_list,
                 "latest": latest,
                 "active_page": "archive",
-                "is_admin": is_admin(request),
-                "user": current_user(request),
             },
         )
 
@@ -296,8 +304,6 @@ def register_pages(app: FastAPI) -> None:
                 "limit": limit,
                 "latest": latest,
                 "active_page": "kas",
-                "is_admin": is_admin(request),
-                "user": current_user(request),
             },
         )
 
@@ -315,8 +321,6 @@ def register_pages(app: FastAPI) -> None:
                 "distribution": detail,
                 "latest": latest,
                 "active_page": "kas",
-                "is_admin": is_admin(request),
-                "user": current_user(request),
             },
         )
 

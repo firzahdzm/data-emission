@@ -798,3 +798,16 @@ def test_a_chain_error_leads_with_what_it_means():
             "`ReservesTooLow(Module)` error.\n"
         )
     assert str(exc.value).startswith("cadangan pool subnet sedang tipis")
+
+
+def test_unstake_does_not_go_through_the_mev_shield_by_default():
+    """The shield waits a fixed number of blocks for its encrypted
+    extrinsic to be decrypted, and on this subnet that wait kept
+    expiring: btcli reported no outcome, the operator retried, and each
+    retry queued another pending extrinsic. Ilhamr's stake fell from 274
+    α to 103 α with no successful run recorded. Safe-staking's 15%
+    tolerance is what guards the price instead."""
+    assert "--no-mev-protection" in unstake_argv("utama", 56, WP)
+    assert "--no-mev-protection" not in unstake_argv(
+        "utama", 56, WP, mev_protection=True
+    )

@@ -65,7 +65,11 @@ def transfer_argv(
 
 
 def unstake_argv(
-    wallet_name: str, netuid: int, wallet_path: str, tolerance: float = 0.15
+    wallet_name: str,
+    netuid: int,
+    wallet_path: str,
+    tolerance: float = 0.15,
+    mev_protection: bool = False,
 ) -> list[str]:
     """Unstake everything this wallet holds on one subnet.
 
@@ -84,6 +88,23 @@ def unstake_argv(
     worse price rather than no sale — with --allow-partial-stake, what
     fits inside the tolerance still goes through.
 
+    MEV protection is off by default here, and that is a deliberate
+    trade. btcli's shield submits the unstake encrypted and waits a fixed
+    number of blocks for it to be decrypted and executed. On this subnet
+    it repeatedly ran past that window: btcli reported "Failed to find
+    outcome", the operator saw a failure, clicked again — and each click
+    left another shielded extrinsic pending. Ilhamr's stake fell from 274
+    α to 103 α with no successful run recorded, which is what a late
+    decryption looks like from the outside. The clicks that followed then
+    failed with NotEnoughStakeToWithdraw, because the stake they were
+    planned against had already gone.
+
+    The shield exists to stop a large unstake being sandwiched. What
+    replaces it here is safe-staking with a 15% rate tolerance, which
+    refuses a price that has moved too far — protection against the same
+    loss, enforced at execution rather than by hiding the intent. Set
+    `mev_protection: true` in the signer config to put the shield back.
+
     The scoped path instead asks, per hotkey, "Unstake all: <amount> …
     on netuid: 56? [y/n/q]" — answered by UNSTAKE_PROMPTS.
     """
@@ -96,6 +117,7 @@ def unstake_argv(
         "--allow-partial-stake",
         "--wallet-name", wallet_name,
         "--wallet-path", wallet_path,
+        *([] if mev_protection else ["--no-mev-protection"]),
         # No --json-output: like transfer, it cannot be combined with the
         # prompting this command needs to receive an unlock value. The
         # outcome is read from the prose by parse_unstake_output.

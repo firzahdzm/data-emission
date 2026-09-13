@@ -63,6 +63,11 @@ class SignerConfig:
     # chain refuses. Tunable without a deploy because the right value is
     # a property of the subnet's liquidity, not of this code.
     unstake_tolerance: float = 0.15
+    # btcli's encrypted-submission shield. Off because its fixed wait
+    # kept expiring on this subnet, turning every unstake into an unknown
+    # outcome and leaving duplicate extrinsics pending behind each retry.
+    # See unstake_argv for the full account.
+    mev_protection: bool = False
 
 
 @dataclass
@@ -132,7 +137,8 @@ class Signer:
             output = self._run_unstake(
                 unstake_argv(name, self._config.netuid,
                              self._config.wallet_path,
-                             tolerance=self._config.unstake_tolerance),
+                             tolerance=self._config.unstake_tolerance,
+                             mev_protection=self._config.mev_protection),
                 env, request.secret,
             )
             return SignResult(True, request.op, request.coldkey,

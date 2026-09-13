@@ -104,20 +104,37 @@
                     label.appendChild(hint);
                 }
                 const input = document.createElement('input');
-                input.type = 'number';
-                input.step = '0.0001';
-                input.min = '0';
-                input.placeholder = row.placeholder || '';
+                if (row.type === 'check') {
+                    input.type = 'checkbox';
+                    // Never pre-ticked. A list that arrives selected is
+                    // a list nobody reads, and these lists move money.
+                    input.checked = false;
+                } else {
+                    input.type = 'number';
+                    input.step = '0.0001';
+                    input.min = '0';
+                    input.placeholder = row.placeholder || '';
+                }
                 input.id = `sn-row-${row.key}`;
                 label.htmlFor = input.id;
-                line.appendChild(label);
-                line.appendChild(input);
+                if (row.type === 'check') {
+                    line.className = 'sn-row sn-row-check';
+                    line.appendChild(input);
+                    line.appendChild(label);
+                } else {
+                    line.appendChild(label);
+                    line.appendChild(input);
+                }
                 rowsEl.appendChild(line);
                 inputs.set(row.key, input);
             });
             return () => {
                 const out = {};
                 inputs.forEach((input, key) => {
+                    if (input.type === 'checkbox') {
+                        if (input.checked) out[key] = true;
+                        return;
+                    }
                     const raw = input.value.trim();
                     // Blank means "skip this wallet". Not zero, not an
                     // error: an empty field is the normal way to leave a
@@ -244,6 +261,22 @@
                     { label: okText, value: true },
                 ], null, null, rows);
             });
+        };
+        // A list of wallets to tick. Resolves to false when cancelled,
+        // or {ok: true, keys} with the ones selected.
+        window.snPick = function (message, rows, opts = {}) {
+            const {
+                title = 'Pilih', okText = 'Lanjut', cancelText = 'Batal',
+            } = opts;
+            return new Promise(resolve => {
+                currentResolve = resolve;
+                openWith(title, message, [
+                    { label: cancelText, value: false, className: 'secondary' },
+                    { label: okText, value: true },
+                ], null, null, rows.map(r => ({ ...r, type: 'check' })));
+            }).then(answer => (answer && answer.ok)
+                ? { ok: true, keys: Object.keys(answer.values || {}) }
+                : answer);
         };
         window.snAlert = function (message, opts = {}) {
             const { title = 'Notice', okText = 'OK', tone = 'info' } = opts;

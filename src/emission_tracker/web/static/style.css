@@ -970,19 +970,6 @@ details.panel {
     letter-spacing: 0.03em;
 }
 
-/* Pick which wallets the bulk unstake touches. Sits with the address
-   row so the choice is next to the identity it applies to. */
-.coldkey-pick {
-    display: inline-flex;
-    align-items: center;
-    margin: 0 0 0 0.1rem;
-}
-.coldkey-pick input {
-    margin: 0;
-    width: 1rem;
-    height: 1rem;
-    cursor: pointer;
-}
 #bulk-unstake-btn:disabled { opacity: 0.45; }
 
 /* One amount per wallet, inside the shared dialog. */
@@ -1000,3 +987,5 @@ details.panel {
     color: var(--sn-text-dim);
 }
 .sn-row input { margin: 0; padding: 0.3rem 0.5rem; font-size: 0.85rem; }
+.sn-row-check { grid-template-columns: 1.2rem 1fr; }
+.sn-row-check input { justify-self: start; width: 1rem; height: 1rem; }

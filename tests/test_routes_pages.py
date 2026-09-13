@@ -337,6 +337,7 @@ class TestBulkUnstake:
         app.state.config = SimpleNamespace(
             admin_users=["alice"],
             subnet_id=56,
+            treasury_coldkey="",
             tournament=SimpleNamespace(
                 address="5Ef5", fees_tao={"text": 0.7, "image": 0.4}
             ),
@@ -344,26 +345,16 @@ class TestBulkUnstake:
         headers = {"X-Remote-User": user} if user else {}
         return TestClient(app).get("/", headers=headers).text
 
-    def test_admin_gets_the_button_and_a_checkbox_per_wallet(
-        self, app, monkeypatch
-    ):
-        html = self._html(app, monkeypatch)
-        assert 'id="bulk-unstake-btn"' in html
-        assert 'class="coldkey-select"' in html
+    def test_admin_gets_the_button(self, app, monkeypatch):
+        assert 'id="bulk-unstake-btn"' in self._html(app, monkeypatch)
 
-    def test_nothing_is_selected_on_load(self, app, monkeypatch):
-        """A list that arrives pre-ticked is a list nobody reads — and
-        this one sells stake."""
+    def test_the_wallets_are_chosen_inside_the_dialog(self, app, monkeypatch):
+        """Not with checkboxes scattered across the grid: it is one
+        decision, and it reads better as one list than as fifteen ticks
+        the operator has to scroll past to count."""
         html = self._html(app, monkeypatch)
-        start = html.index('class="coldkey-select"')
-        tag = html[html.rindex("<", 0, start):html.index(">", start)]
-        assert "checked" not in tag
-
-    def test_the_button_starts_disabled(self, app, monkeypatch):
-        html = self._html(app, monkeypatch)
-        start = html.index('id="bulk-unstake-btn"')
-        tag = html[html.rindex("<", 0, start):html.index(">", start)]
-        assert "disabled" in tag
+        assert "snPick(" in html
+        assert 'class="coldkey-select"' not in html
 
     def test_it_asks_for_the_typed_word_and_an_unlock_value(
         self, app, monkeypatch
@@ -372,6 +363,12 @@ class TestBulkUnstake:
         bulk = html[html.index("--- bulk unstake"):]
         assert "required: 'unstake'" in bulk
         assert "secretLabel" in bulk
+
+    def test_cancelling_the_picker_sends_nothing(self, app, monkeypatch):
+        """Escape and Cancel both resolve falsy, and an empty selection
+        must be treated the same way."""
+        bulk = self._html(app, monkeypatch)
+        assert "!picked.ok || !picked.keys.length) return" in bulk
 
     def test_a_failure_does_not_stop_the_remaining_wallets(
         self, app, monkeypatch
@@ -393,7 +390,7 @@ class TestBulkUnstake:
     def test_non_admin_gets_none_of_it(self, app, monkeypatch):
         html = self._html(app, monkeypatch, user="mallory")
         assert 'id="bulk-unstake-btn"' not in html
-        assert 'class="coldkey-select"' not in html
+        assert "snPick(" not in html
 
 
 class TestTreasuryButtons:

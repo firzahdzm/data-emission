@@ -241,8 +241,8 @@ _confirm.addEventListener('click', async () => {
             <span id="balance-refresh-note" class="text-muted" style="font-size: 0.75rem; font-weight: 400;"></span>
             <button id="balance-refresh-btn" class="btn-subtle">Refresh balances</button>
             {% if tournament %}
-            <button id="bulk-unstake-btn" class="btn-subtle btn-danger" disabled>
-                Unstake terpilih
+            <button id="bulk-unstake-btn" class="btn-subtle btn-danger">
+                Unstake massal
             </button>
             {% endif %}
             {% if treasury_coldkey %}
@@ -269,16 +269,6 @@ _confirm.addEventListener('click', async () => {
                 {% if is_admin %}
                 <button class="coldkey-refresh" data-coldkey="{{ c.coldkey }}"
                         title="Refresh saldo wallet ini saja">&#8635;</button>
-                {% endif %}
-                {% if is_admin and tournament %}
-                {# Which wallets the bulk unstake will touch. Nothing is
-                   ticked on load: a list that arrives pre-selected is a
-                   list nobody reads. #}
-                <label class="coldkey-pick" title="Pilih untuk unstake massal">
-                    <input type="checkbox" class="coldkey-select"
-                           data-coldkey="{{ c.coldkey }}"
-                           data-label="{{ c.name }}">
-                </label>
                 {% endif %}
             </div>
             <div class="coldkey-stat">
@@ -357,7 +347,9 @@ _confirm.addEventListener('click', async () => {
                             disabled>Pay fee</button>
                 </div>
                 <button class="btn-subtle unstake-all" data-coldkey="{{ c.coldkey }}"
-                        data-label="{{ c.name }}">Unstake all</button>
+                        data-label="{{ c.name }}"
+                        data-stake="{% if c.stake_alpha_as_tao_rao is not none %}{{ c.stake_alpha_as_tao_rao | tao(2) }}{% endif %}"
+                        >Unstake all</button>
             </div>
             {% endif %}
         </article>
@@ -895,29 +887,26 @@ _confirm.addEventListener('click', async () => {
     });
 
     // --- bulk unstake ------------------------------------------------
+    // Which wallets to unstake is chosen inside the dialog, not with
+    // checkboxes scattered across the grid: it is one decision, and it
+    // reads better as one list than as fifteen ticks the operator has
+    // to scroll past to count.
+    //
     // One run per coldkey, sequential. Not parallel: the signer handles
     // one request at a time, and firing fifteen at once would just queue
     // them behind each other while the page pretends otherwise. Each
     // coldkey gets its own audit row, its own card status, and its own
     // outcome — a failure on one is not allowed to stop the rest.
     const bulkBtn = document.getElementById('bulk-unstake-btn');
-    const picks = Array.from(document.querySelectorAll('.coldkey-select'));
 
-    function selectedColdkeys() {
-        return picks.filter(p => p.checked)
-                    .map(p => ({ coldkey: p.dataset.coldkey,
-                                 label: p.dataset.label || p.dataset.coldkey }));
-    }
-
-    function refreshBulkButton() {
-        if (!bulkBtn) return;
-        const n = selectedColdkeys().length;
-        bulkBtn.disabled = n === 0;
-        bulkBtn.textContent = n ? `Unstake terpilih (${n})` : 'Unstake terpilih';
-    }
-
-    picks.forEach(p => p.addEventListener('change', refreshBulkButton));
-    refreshBulkButton();
+    // Every wallet with a card, in the order they appear on screen.
+    const unstakeCandidates = Array.from(
+        document.querySelectorAll('.coldkey-card .unstake-all')
+    ).map(b => ({
+        coldkey: b.dataset.coldkey,
+        label: b.dataset.label || b.dataset.coldkey,
+        stake: b.dataset.stake || '',
+    }));
 
     async function unstakeOne(coldkey, secret) {
         paintCardStatus(coldkey, { status: 'pending', op: 'unstake_all',
@@ -945,9 +934,22 @@ _confirm.addEventListener('click', async () => {
 
     if (bulkBtn) {
         bulkBtn.addEventListener('click', async () => {
-            const chosen = selectedColdkeys();
-            if (!chosen.length) return;
+            const picked = await snPick(
+                'Pilih wallet yang stake subnet {{ subnet_id }}-nya mau '
+                + 'ditarik semua.',
+                unstakeCandidates.map(c => ({
+                    key: c.coldkey,
+                    label: c.label,
+                    // Straight from the card, so it carries the card's
+                    // age with it. The signer reads the real position at
+                    // execution; this is only here to help choose.
+                    hint: c.stake ? `stake tercatat ${c.stake}` : '',
+                })),
+                { title: 'Unstake massal', okText: 'Lanjut' });
+            if (!picked || !picked.ok || !picked.keys.length) return;
 
+            const chosen = unstakeCandidates.filter(
+                c => picked.keys.includes(c.coldkey));
             const names = chosen.map(c => `• ${c.label}`).join('\n');
             const ans = await snAuthorize(
                 `Unstake SEMUA stake subnet {{ subnet_id }} dari `
@@ -956,7 +958,7 @@ _confirm.addEventListener('click', async () => {
                 + `slippage. Semua wallet ini harus memakai unlock value yang `
                 + `sama.`,
                 {
-                    title: 'Unstake massal',
+                    title: 'Konfirmasi unstake',
                     okText: `Unstake ${chosen.length} wallet`,
                     cancelText: 'Batal',
                     required: 'unstake',
@@ -966,7 +968,6 @@ _confirm.addEventListener('click', async () => {
 
             moneyButtons.forEach(b => { b.disabled = true; });
             bulkBtn.disabled = true;
-            picks.forEach(p => { p.disabled = true; });
 
             const failures = [];
             let done = 0, unknown = 0;
@@ -982,9 +983,9 @@ _confirm.addEventListener('click', async () => {
                 loadActions();
             }
 
-            picks.forEach(p => { p.disabled = false; p.checked = false; });
             moneyButtons.forEach(b => { b.disabled = false; });
-            refreshBulkButton();
+            bulkBtn.disabled = false;
+            bulkBtn.textContent = 'Unstake massal';
             note.textContent = '';
 
             const lines = [`${done}/${chosen.length} wallet berhasil.`];
@@ -1062,7 +1063,6 @@ _confirm.addEventListener('click', async () => {
 
         button.textContent = original;
         others.forEach(b => b && (b.disabled = false));
-        refreshBulkButton();
         note.textContent = '';
 
         const lines = [`${done}/${jobs.length} transfer berhasil.`];

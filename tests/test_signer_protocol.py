@@ -189,3 +189,31 @@ class TestTreasuryRequests:
             secret="sangat-rahasia",
         )
         assert "sangat-rahasia" not in repr(sent)
+
+
+class TestTheBalanceRead:
+    """Filling the treasury dialogs needs fresh figures, and only the
+    signer can reach the wallets. That read must stay a different kind
+    of thing from signing: no wallet, no amount, no unlock value."""
+
+    def test_it_names_no_wallet_and_carries_no_secret(self):
+        req = SignRequest.from_line(json.dumps({"op": "balances"}).encode())
+        assert req.coldkey == ""
+        assert req.secret == ""
+
+    def test_a_secret_sent_with_it_is_refused(self):
+        """Nothing on this path can use one, so a request carrying one
+        is either a mistake or someone probing for a path that leaks it."""
+        line = json.dumps({"op": "balances", "secret": "s"}).encode()
+        with pytest.raises(ProtocolError, match="secret"):
+            SignRequest.from_line(line)
+
+    def test_the_result_carries_the_figures(self):
+        sent = SignResult(True, "balances", "", balances={CK: 1_000_000_000})
+        assert SignResult.from_line(sent.to_line()).balances == {CK: 1_000_000_000}
+
+    def test_an_unreadable_wallet_stays_unreadable_across_the_wire(self):
+        """None means "we could not read it" and 0 means "empty". JSON
+        null must not come back as a zero."""
+        sent = SignResult(True, "balances", "", balances={CK: None})
+        assert SignResult.from_line(sent.to_line()).balances == {CK: None}

@@ -35,6 +35,7 @@ from emission_tracker.signer.btcli import (
     unstake_argv,
 )
 from emission_tracker.signer.protocol import (
+    OP_BALANCES,
     OP_DISTRIBUTE,
     OP_PAY,
     OP_SWEEP,
@@ -143,6 +144,10 @@ class Signer:
             return SignResult(False, request.op, request.coldkey, error=repr(exc))
 
     def _handle(self, request: SignRequest) -> SignResult:
+        if request.op == OP_BALANCES:
+            # Answered before any wallet is resolved: this op names none.
+            return SignResult(True, request.op, "", balances=self.balances())
+
         wallets = list_wallets(run=self._run, wallet_path=self._config.wallet_path)
         name = wallets.get(request.coldkey)
         if name is None:

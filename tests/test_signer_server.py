@@ -641,3 +641,17 @@ class TestReadingEveryBalance:
         rec = _Recorder(results={"balance": {"balances": {}}})
         signer = _signer(rec, tmp_path, hotkeys={CK: [HK]})
         assert signer.balances() == {CK: None}
+
+
+def test_the_balance_op_is_answered_without_touching_a_wallet(tmp_path):
+    """It signs nothing, so it must not need a wallet resolved, a secret,
+    or anything that could fail for a signing reason."""
+    from emission_tracker.signer.protocol import OP_BALANCES
+
+    rec = _Recorder(results={"balance": {"balances": {"prj1": {"free": 1.5}}}})
+    signer = _signer(rec, tmp_path, hotkeys={CK: [HK]})
+    res = signer.handle(SignRequest(OP_BALANCES, ""))
+
+    assert res.ok
+    assert res.balances == {CK: 1_500_000_000}
+    assert not any("transfer" in c for c in rec.calls)

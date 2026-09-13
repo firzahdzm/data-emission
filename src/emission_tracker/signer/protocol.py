@@ -25,7 +25,13 @@ OP_UNSTAKE = "unstake_all"
 # signer's roster — see the sweep/distribute handling in server.py.
 OP_SWEEP = "sweep"
 OP_DISTRIBUTE = "distribute"
-OPS = (OP_PAY, OP_UNSTAKE, OP_SWEEP, OP_DISTRIBUTE)
+# Reads every rostered wallet's free balance. The odd one out: it signs
+# nothing, so it names no wallet and carries no unlock value — and a
+# request that brings one is refused rather than tolerated, because the
+# only reason to send a secret down a path that cannot use it is to find
+# out where it ends up.
+OP_BALANCES = "balances"
+OPS = (OP_PAY, OP_UNSTAKE, OP_SWEEP, OP_DISTRIBUTE, OP_BALANCES)
 
 TOURNAMENT_TYPES = ("text", "image", "env")
 
@@ -74,8 +80,11 @@ class SignRequest:
         if op not in OPS:
             raise ProtocolError(f"unknown op {op!r}")
 
-        coldkey = raw.get("coldkey")
-        if not isinstance(coldkey, str) or not coldkey:
+        coldkey = raw.get("coldkey") or ""
+        if op == OP_BALANCES:
+            if coldkey:
+                raise ProtocolError("balances takes no coldkey")
+        elif not isinstance(coldkey, str) or not coldkey:
             raise ProtocolError("coldkey is required")
 
         types = raw.get("types") or []
@@ -107,6 +116,10 @@ class SignRequest:
                 raise ProtocolError(f"{op} takes no amount_rao")
 
         secret = raw.get("secret")
+        if op == OP_BALANCES:
+            if secret:
+                raise ProtocolError("balances takes no wallet secret")
+            return cls(op=op, coldkey="")
         # Stripped here as well as in the web tier: the signer has to be
         # defensible on its own, and whitespace reaches btcli as an unset
         # variable, which makes it prompt — and --no-prompt turns that into
@@ -134,6 +147,9 @@ class SignResult:
     # Distinct from ok=False because "it failed" invites a retry, and
     # retrying a payment that did go through pays twice.
     unknown: bool = False
+    # OP_BALANCES only: coldkey ss58 -> free balance in rao, or None for
+    # a wallet whose balance could not be read.
+    balances: dict | None = None
 
     def to_line(self) -> bytes:
         return (
@@ -146,6 +162,7 @@ class SignResult:
                     "tx_hash": self.tx_hash,
                     "error": self.error,
                     "unknown": self.unknown,
+                    "balances": self.balances,
                 }
             )
             + "\n"
@@ -167,4 +184,5 @@ class SignResult:
             tx_hash=raw.get("tx_hash"),
             error=raw.get("error"),
             unknown=bool(raw.get("unknown")),
+            balances=raw.get("balances"),
         )

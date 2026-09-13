@@ -11,7 +11,7 @@ import os
 import socket
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from emission_tracker.signer.btcli import (
@@ -20,6 +20,7 @@ from emission_tracker.signer.btcli import (
     coldkey_password_env_var,
     hotkeys_with_stake,
     list_wallets,
+    unlisted_stake,
     run_btcli,
     stake_hotkeys_argv,
     TransferUnknown,
@@ -74,6 +75,12 @@ class SignerConfig:
     # outcome and leaving duplicate extrinsics pending behind each retry.
     # See unstake_argv for the full account.
     mev_protection: bool = False
+    # coldkey ss58 -> the hotkeys the team has registered under it. The
+    # roster lives here rather than arriving with the request: the
+    # signer decides what may be touched, and a caller that could name
+    # hotkeys would make that split decorative. Empty means "no roster
+    # configured" and falls back to whatever the chain shows.
+    hotkeys: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -145,13 +152,20 @@ class Signer:
             # --all-hotkeys queues a hotkey once per subnet it is staked
             # on, then unstakes "all" from each — asking the chain for
             # twice the alpha that exists. See hotkeys_with_stake.
-            hotkeys = hotkeys_with_stake(
-                run_btcli(
-                    stake_hotkeys_argv(name, self._config.wallet_path),
-                    env=base_env(), timeout=STAKE_LIST_TIMEOUT, run=self._run,
-                ),
-                self._config.netuid,
+            stake = run_btcli(
+                stake_hotkeys_argv(name, self._config.wallet_path),
+                env=base_env(), timeout=STAKE_LIST_TIMEOUT, run=self._run,
             )
+            roster = self._config.hotkeys.get(request.coldkey) or None
+            hotkeys = hotkeys_with_stake(stake, self._config.netuid, roster)
+            if roster:
+                # Loud, because "Unstake all" did not: a position left
+                # behind must never be discovered by surprise later.
+                for stray in unlisted_stake(stake, self._config.netuid, roster):
+                    log.warning(
+                        "coldkey=%s holds stake on %s, which is not in the "
+                        "roster — left untouched", request.coldkey, stray,
+                    )
             if not hotkeys:
                 raise BtcliError(
                     "tidak ada stake untuk di-unstake di subnet ini"

@@ -348,3 +348,34 @@ def test_a_failing_unstake_logs_the_whole_exchange(tmp_path, caplog):
     transcript = "\n".join(r.getMessage() for r in caplog.records)
     assert "Unstake all: 102.7587" in transcript
     assert UNLOCK not in transcript
+
+
+def test_unstake_touches_only_the_rostered_hotkeys(tmp_path, caplog):
+    """The roster lives in the signer's config, not in the request: a
+    caller that could name hotkeys would make the privilege split
+    decorative."""
+    STRAY = "5C7vE26G77n7CvUkAdgHKjT7scqfiNhWcaCg8WVyB8A57Mt1"
+    rec = _Recorder(results={"stake": {"stake_info": {
+        HK: [{"netuid": 56, "stake_value": 102.7587}],
+        STRAY: [{"netuid": 56, "stake_value": 33.0155}],
+    }}})
+    calls = []
+    signer = _signer(rec, tmp_path, hotkeys={CK: [HK]})
+    signer._run_unstake = lambda argv, env, secret: (
+        calls.append(argv) or UNSTAKE_OK
+    )
+    with caplog.at_level("WARNING", logger="emission_signer"):
+        res = signer.handle(_req(OP_UNSTAKE, CK))
+
+    assert res.ok
+    argv = calls[0]
+    assert argv[argv.index("--include-hotkeys") + 1] == HK
+    # And the position it did not touch is stated, not swallowed.
+    assert any(STRAY in r.getMessage() for r in caplog.records)
+
+
+def test_a_roster_hotkey_that_holds_nothing_fails_before_any_signing(tmp_path):
+    rec = _Recorder(results={"stake": {"stake_info": {}}})
+    res = _signer(rec, tmp_path, hotkeys={CK: [HK]}).handle(_req(OP_UNSTAKE, CK))
+    assert not res.ok
+    assert "tidak ada stake" in res.error

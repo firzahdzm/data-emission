@@ -74,28 +74,57 @@ def stake_hotkeys_argv(wallet_name: str, wallet_path: str) -> list[str]:
     ]
 
 
-def hotkeys_with_stake(payload: dict, netuid: int) -> list[str]:
+def hotkeys_with_stake(
+    payload: dict, netuid: int, allowed: list[str] | None = None
+) -> list[str]:
     """Hotkeys holding stake on one subnet — each listed once.
 
-    Deduplication is the whole point. btcli's own `--all-hotkeys` builds
-    its list from the coldkey's stake rows, which are one per (hotkey,
-    subnet), and never collapses them: a hotkey staked on two subnets is
-    queued twice, and with a per-subnet "unstake all" that means asking
-    the chain to remove the same alpha twice. Captured from a real run
-    on wallet birong — two identical rows in btcli's own summary table,
-    102.7587 α each against an account holding 102.7587 α, and the chain
-    answering NotEnoughStakeToWithdraw. Wallets whose hotkey files are
-    on this host took a different branch and never hit it, which is why
-    some coldkeys worked and others never did.
+    Two jobs, and both are about what NOT to unstake.
+
+    Deduplication: btcli's own `--all-hotkeys` builds its list from the
+    coldkey's stake rows, which are one per (hotkey, subnet), and never
+    collapses them. A hotkey staked on two subnets is queued twice, and
+    with a per-subnet "unstake all" that means asking the chain to
+    remove the same alpha twice. Captured on wallet birong — two
+    identical rows of 102.7587 α against an account holding 102.7587 α,
+    and the chain answering NotEnoughStakeToWithdraw.
+
+    `allowed`: the team's own roster for this coldkey. A coldkey can
+    hold stake on hotkeys nobody here registered, and the chain is happy
+    to unstake those too. Naming the roster means the button can only
+    touch positions the team has declared; anything else is left alone
+    and reported rather than sold. Pass None to fall back to whatever
+    the chain shows.
     """
+    permitted = set(allowed) if allowed is not None else None
     found: list[str] = []
     for hotkey, rows in (payload.get("stake_info") or {}).items():
+        if permitted is not None and hotkey not in permitted:
+            continue
         for row in rows or []:
             if row.get("netuid") == netuid and (row.get("stake_value") or 0) > 0:
                 if hotkey not in found:
                     found.append(hotkey)
                 break
     return found
+
+
+def unlisted_stake(payload: dict, netuid: int, allowed: list[str]) -> list[str]:
+    """Hotkeys holding stake here that the roster does not mention.
+
+    Never unstaked, always surfaced: silence would mean a coldkey quietly
+    keeping a position that "Unstake all" claims to have cleared.
+    """
+    permitted = set(allowed)
+    return [
+        hotkey
+        for hotkey, rows in (payload.get("stake_info") or {}).items()
+        if hotkey not in permitted
+        and any(
+            row.get("netuid") == netuid and (row.get("stake_value") or 0) > 0
+            for row in rows or []
+        )
+    ]
 
 
 def unstake_argv(

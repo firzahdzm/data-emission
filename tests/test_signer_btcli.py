@@ -10,6 +10,7 @@ from emission_tracker.signer.btcli import (
     base_env,
     hotkeys_with_stake,
     stake_hotkeys_argv,
+    unlisted_stake,
     coldkey_password_env_var,
     list_wallets,
     parse_unstake_output,
@@ -867,3 +868,34 @@ class TestHotkeysAreCountedOnce:
         argv = stake_hotkeys_argv("birong", WP)
         assert argv[:3] == ["btcli", "stake", "list"]
         assert "--json-output" in argv
+
+
+class TestOnlyTheTeamsOwnHotkeys:
+    """A coldkey can hold stake on hotkeys nobody here registered, and
+    the chain will happily unstake those too. The roster is what the
+    team declared; the button may not reach past it."""
+
+    STRAY = "5C7vE26G77n7CvUkAdgHKjT7scqfiNhWcaCg8WVyB8A57Mt1"
+    PAYLOAD = {
+        "stake_info": {
+            HK_A: [{"netuid": 56, "stake_value": 102.7587}],
+            STRAY: [{"netuid": 56, "stake_value": 33.0155}],
+        }
+    }
+
+    def test_a_hotkey_outside_the_roster_is_not_unstaked(self):
+        assert hotkeys_with_stake(self.PAYLOAD, 56, [HK_A]) == [HK_A]
+
+    def test_it_is_reported_instead_of_ignored(self):
+        """Silence would leave the coldkey holding a position that
+        "Unstake all" claims to have cleared."""
+        assert unlisted_stake(self.PAYLOAD, 56, [HK_A]) == [self.STRAY]
+
+    def test_a_roster_hotkey_with_nothing_staked_is_not_named(self):
+        """btcli answers each one with a ❌ line and nothing else."""
+        assert hotkeys_with_stake(self.PAYLOAD, 56, [HK_A, HK_B]) == [HK_A]
+
+    def test_no_roster_falls_back_to_what_the_chain_shows(self):
+        """A deployment that has not configured one must not silently
+        unstake nothing."""
+        assert hotkeys_with_stake(self.PAYLOAD, 56, None) == [HK_A, self.STRAY]

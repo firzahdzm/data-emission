@@ -1047,12 +1047,14 @@ def record_action(
     types: list[str],
     amount_rao: int,
     requested_by: str,
+    counterparty: str | None = None,
 ) -> int:
     cursor = conn.execute(
         "INSERT INTO signed_actions (coldkey_ss58, op, types, amount_rao, status, "
-        "requested_by, requested_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
+        "requested_by, requested_at, counterparty_ss58) "
+        "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)",
         (coldkey, op, ",".join(types), amount_rao, requested_by,
-         datetime.now(timezone.utc)),
+         datetime.now(timezone.utc), counterparty),
     )
     conn.commit()
     return cursor.lastrowid

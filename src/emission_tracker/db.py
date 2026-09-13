@@ -165,7 +165,12 @@ SCHEMA_STATEMENTS = [
         -- said neither success nor failure, so the money may have moved.
         -- A retry here can pay twice, which is why it must not read as an
         -- ordinary failure in the UI.
-        outcome_unknown INTEGER NOT NULL DEFAULT 0
+        outcome_unknown INTEGER NOT NULL DEFAULT 0,
+        -- The other side of a transfer. For a distribution every row is
+        -- signed by the treasury wallet, so without this the history
+        -- cannot answer the only question that matters about it: who
+        -- received the money.
+        counterparty_ss58 TEXT
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_signed_actions_coldkey "
@@ -210,6 +215,7 @@ MIGRATIONS = [
     "ALTER TABLE coldkey_balances ADD COLUMN stake_alpha_rao INTEGER",
     "ALTER TABLE coldkey_balances ADD COLUMN stake_alpha_as_tao_rao INTEGER",
     "ALTER TABLE signed_actions ADD COLUMN outcome_unknown INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE signed_actions ADD COLUMN counterparty_ss58 TEXT",
 ]
 
 

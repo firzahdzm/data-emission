@@ -379,3 +379,87 @@ def test_a_roster_hotkey_that_holds_nothing_fails_before_any_signing(tmp_path):
     res = _signer(rec, tmp_path, hotkeys={CK: [HK]}).handle(_req(OP_UNSTAKE, CK))
     assert not res.ok
     assert "tidak ada stake" in res.error
+
+
+class TestTheSharedWalletsManyHotkeys:
+    """Eleven hotkeys hold stake under the shared coldkey. btcli would
+    submit them as one Utility.batch_all — atomic, so one refusal takes
+    the other ten with it, and ReservesTooLow is exactly the refusal a
+    large combined unstake provokes. One run per hotkey also stays
+    inside its timeout, where one combined run may not."""
+
+    HOTKEYS = [f"5Test{n:039d}" for n in range(11)]
+
+    def _signer_with(self, tmp_path, outcomes):
+        stake = {"stake_info": {hk: [{"netuid": 56, "stake_value": 1.0}]
+                                for hk in self.HOTKEYS}}
+        rec = _Recorder(results={"stake": stake})
+        signer = _signer(rec, tmp_path, hotkeys={CK: self.HOTKEYS})
+        self.runs = []
+
+        def run_one(argv, env, secret):
+            hotkey = argv[argv.index("--include-hotkeys") + 1]
+            self.runs.append(hotkey)
+            return outcomes(hotkey)
+
+        signer._run_unstake = run_one
+        return signer
+
+    def test_each_hotkey_is_its_own_run(self, tmp_path):
+        signer = self._signer_with(tmp_path, lambda hk: UNSTAKE_OK)
+        res = signer.handle(_req(OP_UNSTAKE, CK))
+        assert res.ok
+        assert self.runs == self.HOTKEYS
+        assert res.error is None
+
+    def test_one_refusal_does_not_cost_the_other_ten(self, tmp_path):
+        def outcome(hotkey):
+            if hotkey == self.HOTKEYS[3]:
+                return ("❌ Batch unstaking failed: Subtensor returned "
+                        "`ReservesTooLow(Module)` error.\n")
+            return UNSTAKE_OK
+
+        res = self._signer_with(tmp_path, outcome).handle(_req(OP_UNSTAKE, CK))
+        assert len(self.runs) == 11          # it kept going
+        assert res.ok                        # ten of them worked
+        assert "10/11" in res.error          # and it says so
+        assert "cadangan pool" in res.error
+
+    def test_a_partly_done_run_is_not_reported_as_unknown(self, tmp_path):
+        """"Check the chain before trying again" applied to the whole
+        request would put the successes up for a retry too."""
+        def outcome(hotkey):
+            return ("nothing readable" if hotkey == self.HOTKEYS[0]
+                    else UNSTAKE_OK)
+
+        res = self._signer_with(tmp_path, outcome).handle(_req(OP_UNSTAKE, CK))
+        assert res.ok
+        assert not res.unknown
+        assert "tidak pasti" in res.error    # still named, per hotkey
+
+    def test_nothing_done_and_something_unresolved_is_unknown(self, tmp_path):
+        res = self._signer_with(
+            tmp_path, lambda hk: "nothing readable"
+        ).handle(_req(OP_UNSTAKE, CK))
+        assert not res.ok
+        assert res.unknown
+
+    def test_a_rejected_unlock_value_stops_after_the_first_hotkey(self, tmp_path):
+        """Ten more attempts would each be another wrong-password round
+        trip, and would say nothing the first one did not."""
+        from emission_tracker.signer.btcli import BtcliError
+
+        def outcome(hotkey):
+            raise BtcliError("btcli rejected the unlock value — nothing was submitted")
+
+        res = self._signer_with(tmp_path, outcome).handle(_req(OP_UNSTAKE, CK))
+        assert len(self.runs) == 1
+        assert not res.ok
+
+    def test_every_successful_reference_is_kept(self, tmp_path):
+        signer = self._signer_with(
+            tmp_path,
+            lambda hk: f"✅ Your extrinsic has been included as 90{hk[-2:]}-1\n✅ Finalized\n",
+        )
+        res = signer.handle(_req(OP_UNSTAKE, CK))
+        assert res.tx_hash.count(",") == 10

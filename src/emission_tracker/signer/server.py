@@ -54,6 +54,10 @@ TRANSFER_TIMEOUT = 90
 UNSTAKE_TIMEOUT = 180
 # Reading the coldkey's stake is one chain query and needs no password.
 STAKE_LIST_TIMEOUT = 90
+# A whole unstake request, across every hotkey. Below the web client's
+# own timeout on purpose: a caller that gives up first sees a failure
+# for work that is still running.
+UNSTAKE_BUDGET = 420
 BTCLI_TIMEOUT = UNSTAKE_TIMEOUT
 
 
@@ -170,29 +174,9 @@ class Signer:
                 raise BtcliError(
                     "tidak ada stake untuk di-unstake di subnet ini"
                 )
-            log.info("unstake_all coldkey=%s hotkeys=%s",
-                     request.coldkey, ",".join(hotkeys))
-            output = self._run_unstake(
-                unstake_argv(name, self._config.netuid,
-                             self._config.wallet_path, hotkeys,
-                             tolerance=self._config.unstake_tolerance,
-                             mev_protection=self._config.mev_protection),
-                env, request.secret,
-            )
-            try:
-                tx_hash = parse_unstake_output(output)
-            except Exception:
-                # The whole exchange, once, when it did not plainly work.
-                # The stored reason is a single clamped sentence, and
-                # several wrong diagnoses in a row came from reasoning
-                # about a failure nobody had the transcript of. btcli
-                # never echoes the unlock value, and journald is the same
-                # trust boundary as the signer itself.
-                log.error("unstake transcript coldkey=%s wallet=%s:\n%s",
-                          request.coldkey, name, strip_ansi(output)[-4000:])
-                raise
-            return SignResult(True, request.op, request.coldkey,
-                              tx_hash=tx_hash)
+            log.info("unstake_all coldkey=%s wallet=%s hotkeys=%d",
+                     request.coldkey, name, len(hotkeys))
+            return self._unstake_each(request, name, env, hotkeys)
 
         amount_rao = sum(
             round(self._config.fees_tao[t] * RAO) for t in request.types
@@ -252,6 +236,74 @@ class Signer:
     def _run_transfer(self, argv, env, secret) -> str:
         """Seam for tests, which must never spawn a real pty."""
         return run_btcli_pty(argv, env, TRANSFER_TIMEOUT, secret)
+
+    def _unstake_each(self, request, name, env, hotkeys) -> SignResult:
+        """One btcli run per hotkey, not one batch over all of them.
+
+        btcli submits multiple operations as a single Utility.batch_all,
+        which is atomic: on the shared wallet — eleven hotkeys holding
+        stake — one refusal takes the other ten down with it, and
+        `ReservesTooLow` is exactly the kind of refusal a large combined
+        unstake provokes. Eleven separate runs also stay well inside
+        their timeouts, where one combined run does not: a request that
+        times out mid-batch is the one outcome nobody can act on.
+
+        The cost is that a run can end partly done. That is reported as
+        such — never as a plain success, and never as a plain failure
+        while some of it went through.
+        """
+        done, failed, unknown = [], [], []
+        deadline = time.monotonic() + UNSTAKE_BUDGET
+
+        for hotkey in hotkeys:
+            if time.monotonic() > deadline:
+                failed.append((hotkey, "kehabisan waktu sebelum dicoba"))
+                continue
+            argv = unstake_argv(
+                name, self._config.netuid, self._config.wallet_path, [hotkey],
+                tolerance=self._config.unstake_tolerance,
+                mev_protection=self._config.mev_protection,
+            )
+            output = ""
+            try:
+                output = self._run_unstake(argv, env, request.secret)
+                done.append((hotkey, parse_unstake_output(output)))
+            except (TransferUnknown, BtcliError) as exc:
+                if output:
+                    # The whole exchange, once, when it did not plainly
+                    # work. The stored reason is a single clamped
+                    # sentence, and several wrong diagnoses in a row came
+                    # from reasoning about a failure nobody had the
+                    # transcript of. btcli never echoes the unlock value,
+                    # and journald is the signer's own trust boundary.
+                    log.error("unstake transcript coldkey=%s hotkey=%s:\n%s",
+                              request.coldkey, hotkey, strip_ansi(output)[-4000:])
+                if isinstance(exc, TransferUnknown):
+                    unknown.append((hotkey, str(exc)))
+                else:
+                    failed.append((hotkey, str(exc)))
+                    if "unlock value" in str(exc):
+                        # Every remaining hotkey would fail the same way,
+                        # each one another wrong-password round trip.
+                        log.warning("stopping: the unlock value was rejected")
+                        break
+
+        for hotkey, reason in failed + unknown:
+            log.warning("unstake coldkey=%s hotkey=%s: %s",
+                        request.coldkey, hotkey, reason)
+
+        summary = _summarise(len(hotkeys), done, failed, unknown)
+        refs = ",".join(ref for _, ref in done if ref)[:200] or None
+        return SignResult(
+            bool(done), request.op, request.coldkey,
+            tx_hash=refs,
+            error=None if (done and not failed and not unknown) else summary,
+            # Only when nothing succeeded and something is genuinely
+            # unresolved: a run with successes must not read as "check
+            # the chain before touching anything", or the successes get
+            # retried too.
+            unknown=bool(unknown) and not done,
+        )
 
     def _run_unstake(self, argv, env, secret) -> str:
         """Seam for tests, which must never spawn a real pty."""
@@ -322,6 +374,16 @@ class Signer:
         omission.
         """
         return base_env()
+
+
+def _summarise(total: int, done, failed, unknown) -> str:
+    """What happened, per hotkey, in one line the card can show."""
+    parts = [f"{len(done)}/{total} hotkey berhasil"]
+    if failed:
+        parts.append(f"{len(failed)} gagal ({failed[0][1]})")
+    if unknown:
+        parts.append(f"{len(unknown)} tidak pasti — periksa chain")
+    return "; ".join(parts)
 
 
 def serve(socket_path: str, signer: Signer) -> None:

@@ -462,3 +462,15 @@ class TestTreasuryButtons:
         html = self._html(app, monkeypatch)
         treasury = html[html.index("--- treasury: sweep in"):]
         assert "r.status === 409" in treasury
+
+
+def test_the_action_log_header_has_one_caret_and_is_not_a_link(app, monkeypatch):
+    """pico styles every <summary> with its own chevron and accordion
+    colour, so the heading rendered with two carets and in link blue."""
+    from pathlib import Path
+
+    import emission_tracker.web.routes_pages as rp
+
+    css = (Path(rp.__file__).parent / "static" / "style.css").read_text()
+    assert ".panel-compact > summary::after { display: none; }" in css
+    assert "details.panel > summary:not([role])" in css

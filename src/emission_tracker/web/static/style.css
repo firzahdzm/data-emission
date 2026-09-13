@@ -817,7 +817,7 @@ a:hover {
    bad message cannot stretch the history table past the viewport; the full
    text stays available in the cell's tooltip. */
 #actions-table { table-layout: fixed; width: 100%; }
-#actions-table td, #actions-table th { vertical-align: top; }
+#actions-table td, #actions-table th { vertical-align: middle; }
 .action-detail {
     max-width: 0;            /* with table-layout:fixed, lets the cell shrink */
     overflow: hidden;
@@ -825,13 +825,16 @@ a:hover {
     white-space: nowrap;
     font-size: 0.78rem;
 }
-/* Six columns now — "Oleh" moved into the row tooltip. Keterangan takes
-   whatever is left, which is where the long btcli text goes. */
-#actions-table th:nth-child(1), #actions-table td:nth-child(1) { width: 9%; }
-#actions-table th:nth-child(2), #actions-table td:nth-child(2) { width: 13%; }
-#actions-table th:nth-child(3), #actions-table td:nth-child(3) { width: 13%; }
-#actions-table th:nth-child(4), #actions-table td:nth-child(4) { width: 10%; }
-#actions-table th:nth-child(5), #actions-table td:nth-child(5) { width: 11%; }
+/* Six columns — "Oleh" lives in the row tooltip. The first five are
+   sized to their content so they sit close together; Keterangan takes
+   everything left, which is where btcli's long text goes. Without this
+   the short columns spread across half the width and the eye has to
+   travel between a wallet and its status. */
+#actions-table th:nth-child(1), #actions-table td:nth-child(1) { width: 8.5rem; }
+#actions-table th:nth-child(2), #actions-table td:nth-child(2) { width: 9rem; }
+#actions-table th:nth-child(3), #actions-table td:nth-child(3) { width: 8rem; }
+#actions-table th:nth-child(4), #actions-table td:nth-child(4) { width: 6.5rem; }
+#actions-table th:nth-child(5), #actions-table td:nth-child(5) { width: 7rem; }
 
 /* Neither success nor failure: the money may have moved. Amber rather
    than the failure red, because red reads as "nothing happened" and the
@@ -861,6 +864,13 @@ details.panel {
     align-items: baseline;
 }
 .panel-compact > summary::-webkit-details-marker { display: none; }
+/* pico adds its own chevron to every summary. Two carets on one row
+   read as a rendering bug, and its accordion colour makes the heading
+   look like a link. Both are overridden here rather than fought with
+   !important. */
+.panel-compact > summary::after { display: none; }
+details.panel > summary:not([role]) { color: var(--sn-text-dim); }
+details.panel > summary:not([role]):hover { color: var(--sn-text); }
 .panel-compact > summary::before {
     content: "▸";
     font-size: 0.7rem;

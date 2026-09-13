@@ -64,22 +64,58 @@ def transfer_argv(
     ]
 
 
+def stake_hotkeys_argv(wallet_name: str, wallet_path: str) -> list[str]:
+    """Read the coldkey's stake. No password: this is public chain data."""
+    return [
+        BTCLI, "stake", "list",
+        "--wallet-name", wallet_name,
+        "--wallet-path", wallet_path,
+        "--json-output",
+    ]
+
+
+def hotkeys_with_stake(payload: dict, netuid: int) -> list[str]:
+    """Hotkeys holding stake on one subnet — each listed once.
+
+    Deduplication is the whole point. btcli's own `--all-hotkeys` builds
+    its list from the coldkey's stake rows, which are one per (hotkey,
+    subnet), and never collapses them: a hotkey staked on two subnets is
+    queued twice, and with a per-subnet "unstake all" that means asking
+    the chain to remove the same alpha twice. Captured from a real run
+    on wallet birong — two identical rows in btcli's own summary table,
+    102.7587 α each against an account holding 102.7587 α, and the chain
+    answering NotEnoughStakeToWithdraw. Wallets whose hotkey files are
+    on this host took a different branch and never hit it, which is why
+    some coldkeys worked and others never did.
+    """
+    found: list[str] = []
+    for hotkey, rows in (payload.get("stake_info") or {}).items():
+        for row in rows or []:
+            if row.get("netuid") == netuid and (row.get("stake_value") or 0) > 0:
+                if hotkey not in found:
+                    found.append(hotkey)
+                break
+    return found
+
+
 def unstake_argv(
     wallet_name: str,
     netuid: int,
     wallet_path: str,
+    hotkeys: list[str],
     tolerance: float = 0.15,
     mev_protection: bool = False,
 ) -> list[str]:
-    """Unstake everything this wallet holds on one subnet.
+    """Unstake everything the named hotkeys hold on one subnet.
+
+    The hotkeys are named explicitly rather than with `--all-hotkeys`,
+    which double-counts (see hotkeys_with_stake).
 
     Deliberately NOT `--unstake-all`. That flag routes to a different
-    command in btcli 9.23 — `remove_stake.unstake_all()`, which takes no
-    netuid at all ("Unstakes all stakes from all hotkeys in all subnets")
-    and ignores the safe-staking options too. Passing `--netuid 56`
-    beside it reads as scoped and is not: it would empty every subnet the
-    coldkey holds, root stake included. Verified in the installed btcli
-    source on the host (cli.py never forwards netuid on that branch).
+    command in btcli 9.23 — `remove_stake_all()`, which takes no netuid
+    at all ("all stakes from all hotkeys in all subnets") and ignores the
+    safe-staking options too. Passing `--netuid 56` beside it reads as
+    scoped and is not: it would empty every subnet the coldkey holds.
 
     The rate tolerance is how far the alpha rate may move against us
     mid-unstake before the chain refuses. 5% was too tight for this
@@ -90,28 +126,20 @@ def unstake_argv(
 
     MEV protection is off by default here, and that is a deliberate
     trade. btcli's shield submits the unstake encrypted and waits a fixed
-    number of blocks for it to be decrypted and executed. On this subnet
-    it repeatedly ran past that window: btcli reported "Failed to find
-    outcome", the operator saw a failure, clicked again — and each click
-    left another shielded extrinsic pending. Ilhamr's stake fell from 274
-    α to 103 α with no successful run recorded, which is what a late
-    decryption looks like from the outside. The clicks that followed then
-    failed with NotEnoughStakeToWithdraw, because the stake they were
-    planned against had already gone.
+    number of blocks for it to be decrypted and executed; on this subnet
+    that wait kept expiring, and btcli then reports no outcome at all —
+    the one answer that cannot be acted on. What replaces it is
+    safe-staking with a 15% rate tolerance, which refuses a price that
+    has moved too far. Set `mev_protection: true` in the signer config
+    to put the shield back.
 
-    The shield exists to stop a large unstake being sandwiched. What
-    replaces it here is safe-staking with a 15% rate tolerance, which
-    refuses a price that has moved too far — protection against the same
-    loss, enforced at execution rather than by hiding the intent. Set
-    `mev_protection: true` in the signer config to put the shield back.
-
-    The scoped path instead asks, per hotkey, "Unstake all: <amount> …
-    on netuid: 56? [y/n/q]" — answered by UNSTAKE_PROMPTS.
+    This path asks, per hotkey, "Unstake all: <amount> α … on netuid:
+    56? [y/n/q]" — answered by UNSTAKE_PROMPTS.
     """
     return [
         BTCLI, "stake", "remove",
         "--netuid", str(netuid),
-        "--all-hotkeys",
+        "--include-hotkeys", ",".join(hotkeys),
         "--safe-staking",
         "--tolerance", f"{tolerance:g}",
         "--allow-partial-stake",

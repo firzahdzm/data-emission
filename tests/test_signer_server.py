@@ -9,6 +9,13 @@ from emission_tracker.signer.server import Signer, SignerConfig
 CK = "5FnhiibtJkvCDSnfrp1iUQiZZaYJv31h114Pv7wtoztt9FP9"
 DEST = "5Ef5JgNv14LY4UEQFHbRQkf8TnegDV3AfAbcsJe5T2w6VQdo"
 WALLETS = {"wallets": [{"name": "prj1", "ss58_address": CK, "hotkeys": []}]}
+HK = "5GcAxvH7oAr9hT2bauAU8y2B8GUiZbvmwrrnj1B4op9toCnY"
+# One hotkey, staked on two subnets — the shape that made btcli's own
+# --all-hotkeys ask the chain to remove the same alpha twice.
+STAKE = {"stake_info": {HK: [
+    {"netuid": 56, "stake_value": 102.7587},
+    {"netuid": 24, "stake_value": 0.0087},
+]}}
 
 # Obvious dummy. The unlock value now travels with each request instead of
 # being read from disk, so every request in these tests carries one.
@@ -53,6 +60,8 @@ class _Recorder:
 
         if argv[1:3] == ["wallet", "list"]:
             R.stdout = json.dumps(WALLETS)
+        elif argv[1:3] == ["stake", "list"]:
+            R.stdout = json.dumps(self._results.get("stake", STAKE))
         elif "transfer" in argv:
             # Shaped like a real transfer on btcli 9.23.2 — prose, not
             # JSON, because btcli refuses --json-output alongside the

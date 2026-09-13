@@ -18,7 +18,10 @@ from emission_tracker.signer.btcli import (
     BtcliError,
     base_env,
     coldkey_password_env_var,
+    hotkeys_with_stake,
     list_wallets,
+    run_btcli,
+    stake_hotkeys_argv,
     TransferUnknown,
     UNSTAKE_PROMPTS,
     parse_transfer_output,
@@ -48,6 +51,8 @@ TRANSFER_TIMEOUT = 90
 # Unstake can wait on chain submission and slippage checks, so it gets
 # more room than a transfer — but still far less than five minutes.
 UNSTAKE_TIMEOUT = 180
+# Reading the coldkey's stake is one chain query and needs no password.
+STAKE_LIST_TIMEOUT = 90
 BTCLI_TIMEOUT = UNSTAKE_TIMEOUT
 
 
@@ -135,9 +140,27 @@ class Signer:
             # Same pseudo-terminal as a transfer, and for the same reason:
             # btcli reads the unlock value with getpass, which never sees
             # a pipe. The prompt table differs — see UNSTAKE_PROMPTS.
+            # Which hotkeys actually hold stake here is decided before
+            # the unstake runs, and each is named once. btcli's own
+            # --all-hotkeys queues a hotkey once per subnet it is staked
+            # on, then unstakes "all" from each — asking the chain for
+            # twice the alpha that exists. See hotkeys_with_stake.
+            hotkeys = hotkeys_with_stake(
+                run_btcli(
+                    stake_hotkeys_argv(name, self._config.wallet_path),
+                    env=base_env(), timeout=STAKE_LIST_TIMEOUT, run=self._run,
+                ),
+                self._config.netuid,
+            )
+            if not hotkeys:
+                raise BtcliError(
+                    "tidak ada stake untuk di-unstake di subnet ini"
+                )
+            log.info("unstake_all coldkey=%s hotkeys=%s",
+                     request.coldkey, ",".join(hotkeys))
             output = self._run_unstake(
                 unstake_argv(name, self._config.netuid,
-                             self._config.wallet_path,
+                             self._config.wallet_path, hotkeys,
                              tolerance=self._config.unstake_tolerance,
                              mev_protection=self._config.mev_protection),
                 env, request.secret,

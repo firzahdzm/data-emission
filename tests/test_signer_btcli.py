@@ -8,6 +8,8 @@ from emission_tracker.signer.btcli import (
     BtcliError,
     UNSTAKE_PROMPTS,
     base_env,
+    hotkeys_with_stake,
+    stake_hotkeys_argv,
     coldkey_password_env_var,
     list_wallets,
     parse_unstake_output,
@@ -21,6 +23,8 @@ from emission_tracker.signer.btcli import (
 
 DEST = "5Ef5JgNv14LY4UEQFHbRQkf8TnegDV3AfAbcsJe5T2w6VQdo"
 WP = "/root/.bittensor/wallets"
+HK_A = "5GcAxvH7oAr9hT2bauAU8y2B8GUiZbvmwrrnj1B4op9toCnY"
+HK_B = "5EhyCWPuyYUDD5RMQ8FM5jknMqfTtSQZ3a3PDARRhjSdCAYb"
 
 
 class _Completed:
@@ -81,7 +85,7 @@ def test_transfer_command_keeps_the_prompts_it_needs_to_answer():
 def test_unstake_always_carries_the_slippage_guard():
     """526 alpha into the pool moves the price against itself; an unstake
     without a tolerance sells into that hole."""
-    argv = unstake_argv("utama", 56, WP)
+    argv = unstake_argv("utama", 56, WP, [HK_A, HK_B])
     assert "--safe-staking" in argv
     # 15%, not 5%: at 5% this subnet refused two real unstakes with
     # ReservesTooLow, charging the transaction fee for nothing.
@@ -90,9 +94,12 @@ def test_unstake_always_carries_the_slippage_guard():
 
 
 def test_unstake_is_scoped_to_one_subnet_and_frees_tao():
-    argv = unstake_argv("utama", 56, WP)
+    argv = unstake_argv("utama", 56, WP, [HK_A, HK_B])
     assert "--netuid" in argv and argv[argv.index("--netuid") + 1] == "56"
-    assert "--all-hotkeys" in argv
+    # Named hotkeys, not --all-hotkeys: that flag queues a hotkey once
+    # per subnet it is staked on and then unstakes "all" from each.
+    assert "--all-hotkeys" not in argv
+    assert argv[argv.index("--include-hotkeys") + 1] == f"{HK_A},{HK_B}"
     # NOT --unstake-all. In btcli 9.23 that flag selects a different code
     # path which takes no netuid — "all stakes from all hotkeys in all
     # subnets" — so the --netuid beside it would be silently ignored and
@@ -331,7 +338,7 @@ def test_transfer_must_not_pass_no_prompt():
     """--no-prompt stops btcli asking for the password at all, which is
     exactly why every transfer came back success=false."""
     assert "--no-prompt" not in transfer_argv("prj1", DEST, 0.4, WP)
-    assert "--no-prompt" not in unstake_argv("utama", 56, WP)
+    assert "--no-prompt" not in unstake_argv("utama", 56, WP, [HK_A, HK_B])
 
 
 def test_json_is_extracted_from_output_that_also_carries_prompts():
@@ -807,7 +814,56 @@ def test_unstake_does_not_go_through_the_mev_shield_by_default():
     retry queued another pending extrinsic. Ilhamr's stake fell from 274
     α to 103 α with no successful run recorded. Safe-staking's 15%
     tolerance is what guards the price instead."""
-    assert "--no-mev-protection" in unstake_argv("utama", 56, WP)
+    assert "--no-mev-protection" in unstake_argv("utama", 56, WP, [HK_A, HK_B])
     assert "--no-mev-protection" not in unstake_argv(
-        "utama", 56, WP, mev_protection=True
+        "utama", 56, WP, [HK_A], mev_protection=True
     )
+
+
+class TestHotkeysAreCountedOnce:
+    """btcli's --all-hotkeys builds its list from the coldkey's stake
+    rows — one per (hotkey, subnet) — and never collapses them. With a
+    per-subnet "unstake all", a hotkey staked on two subnets is queued
+    twice and the chain is asked to remove the same alpha twice. Wallet
+    birong's own summary table showed two identical 102.7587 α rows
+    against an account holding 102.7587 α; the chain answered
+    NotEnoughStakeToWithdraw, every single time, for weeks."""
+
+    PAYLOAD = {
+        "stake_info": {
+            HK_A: [
+                {"netuid": 56, "stake_value": 102.7587},
+                {"netuid": 24, "stake_value": 0.0087},
+            ],
+            HK_B: [{"netuid": 56, "stake_value": 66.0317}],
+            "5FWqcodTKorML46bG67hccFJnj2KApAJgsKmiLgzRNp88crT": [
+                {"netuid": 24, "stake_value": 0.0104},
+            ],
+            "5Dyj6rv3C8atyk4X4kbbsa37LdcQrLWQE5UovytXybwxPjhF": [
+                {"netuid": 56, "stake_value": 0.0},
+            ],
+        }
+    }
+
+    def test_a_hotkey_staked_on_two_subnets_is_listed_once(self):
+        assert hotkeys_with_stake(self.PAYLOAD, 56) == [HK_A, HK_B]
+
+    def test_hotkeys_with_no_stake_here_are_left_out(self):
+        """They cost a ❌ line each in btcli's output and nothing else."""
+        found = hotkeys_with_stake(self.PAYLOAD, 56)
+        assert "5FWqcodTKorML46bG67hccFJnj2KApAJgsKmiLgzRNp88crT" not in found
+        assert "5Dyj6rv3C8atyk4X4kbbsa37LdcQrLWQE5UovytXybwxPjhF" not in found
+
+    def test_a_coldkey_with_nothing_here_yields_nothing(self):
+        assert hotkeys_with_stake(self.PAYLOAD, 99) == []
+
+    def test_missing_or_malformed_payload_is_not_a_crash(self):
+        """The signer must answer every request; a KeyError here would
+        leave the dashboard row pending forever."""
+        for payload in ({}, {"stake_info": None}, {"stake_info": {HK_A: None}}):
+            assert hotkeys_with_stake(payload, 56) == []
+
+    def test_reading_the_stake_needs_no_password(self):
+        argv = stake_hotkeys_argv("birong", WP)
+        assert argv[:3] == ["btcli", "stake", "list"]
+        assert "--json-output" in argv

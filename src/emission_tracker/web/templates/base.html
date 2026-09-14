@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}SUSnet Emission Tracker{% endblock %}</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-    <meta http-equiv="refresh" content="300">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
@@ -295,6 +294,21 @@
                 ? { ok: true, keys: Object.keys(answer.values || {}) }
                 : answer);
         };
+        // The dashboard refreshes itself every five minutes. This used
+        // to be <meta http-equiv="refresh">, which cannot be told to
+        // wait: a dialog open longer than five minutes — fifteen wallets
+        // to read, an amount to type, an unlock value to fetch from a
+        // password manager — was wiped mid-use, and from the operator's
+        // side that is a click that did nothing.
+        setInterval(() => {
+            if (dlg.open) return;                 // try again next tick
+            if (document.activeElement
+                && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+                return;                           // someone is typing
+            }
+            location.reload();
+        }, 300000);
+
         window.snAlert = function (message, opts = {}) {
             const { title = 'Notice', okText = 'OK', tone = 'info' } = opts;
             return new Promise(resolve => {

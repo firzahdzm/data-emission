@@ -543,6 +543,24 @@ _confirm.addEventListener('click', async () => {
         }
     }
 
+    // Never reload while a dialog is open. A balance refresh runs on
+    // every service start and takes minutes; when it finished, this
+    // reloaded the page out from under whoever was mid-dialog, wiping
+    // the wallets they had ticked and the value they had typed. From
+    // the operator's side that is a click that did nothing — and it is
+    // why an unstake attempt left no trace on the server at all.
+    function reloadWhenIdle(delay) {
+        const dlg = document.getElementById('sn-modal');
+        if (dlg && dlg.open) {
+            note.textContent = 'saldo diperbarui — halaman dimuat ulang '
+                             + 'setelah dialog ditutup';
+            dlg.addEventListener('close', () => location.reload(),
+                                 { once: true });
+            return;
+        }
+        setTimeout(() => location.reload(), delay || 600);
+    }
+
     function watch() {
         if (poller) return;
         poller = setInterval(async () => {
@@ -553,7 +571,7 @@ _confirm.addEventListener('click', async () => {
                     clearInterval(poller); poller = null;
                     if (fill) fill.style.width = '100%';
                     note.textContent = 'done — reloading';
-                    setTimeout(() => location.reload(), 600);
+                    reloadWhenIdle(600);
                 }
             } catch (e) { /* transient; keep polling */ }
         }, 5000);
@@ -602,7 +620,7 @@ _confirm.addEventListener('click', async () => {
         // /api/balances/refresh is admin-only, and it spends the
         // TaoStats quota. A fee payer reloads instead: the figures stay
         // as old as they were, which the card's age line already says.
-        if (!IS_ADMIN) { setTimeout(() => location.reload(), 800); return; }
+        if (!IS_ADMIN) { reloadWhenIdle(800); return; }
         setCardsBusy(ck);
         note.textContent = 'memperbarui saldo wallet ini…';
         try {

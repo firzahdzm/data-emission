@@ -546,3 +546,40 @@ def test_the_dialog_rows_outrank_picos_form_styling():
     css = (Path(rp.__file__).parent / "static" / "style.css").read_text()
     assert '#sn-modal .sn-row input[type="number"]' in css
     assert '#sn-modal .sn-row-check input[type="checkbox"]' in css
+
+
+class TestNothingReloadsOverAnOpenDialog:
+    """A page that reloads itself while someone is filling in a dialog
+    wipes the wallets they ticked and the value they typed. From their
+    side that is a click that did nothing — and it is why an unstake
+    attempt left no trace on the server at all."""
+
+    def _html(self, app, monkeypatch):
+        from types import SimpleNamespace
+
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        app.state.config = SimpleNamespace(
+            admin_users=["alice"], subnet_id=56, treasury_coldkey="",
+            tournament=SimpleNamespace(address="5Ef5", fees_tao={"text": 0.7}),
+        )
+        return TestClient(app).get("/", headers={"X-Remote-User": "alice"}).text
+
+    def test_the_five_minute_refresh_is_not_a_meta_tag(self, app, monkeypatch):
+        """<meta http-equiv="refresh"> cannot be told to wait."""
+        html = self._html(app, monkeypatch)
+        head = html[: html.index("</head>")]
+        assert "http-equiv" not in head
+        assert "300000" in html
+
+    def test_the_periodic_refresh_yields_to_an_open_dialog(
+        self, app, monkeypatch
+    ):
+        html = self._html(app, monkeypatch)
+        assert "if (dlg.open) return;" in html
+
+    def test_the_balance_watcher_yields_too(self, app, monkeypatch):
+        """It fires on every service start and takes minutes, so it
+        lands mid-dialog more often than anything else."""
+        html = self._html(app, monkeypatch)
+        assert "reloadWhenIdle" in html
+        assert "dlg.addEventListener('close', () => location.reload()" in html

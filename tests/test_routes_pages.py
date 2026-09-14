@@ -289,7 +289,8 @@ class TestBalancesShowTheirAge:
         self, app, monkeypatch
     ):
         """Reloading alone re-renders the same stored balances, so the
-        operator would see pre-transaction figures after a payment."""
+        operator would see pre-transaction figures after a payment.
+        The queue reloads once, when it drains."""
         from types import SimpleNamespace
 
         monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
@@ -301,7 +302,8 @@ class TestBalancesShowTheirAge:
             ),
         )
         html = TestClient(app).get("/", headers={"X-Remote-User": "alice"}).text
-        assert "refreshOneColdkey(coldkey)" in html
+        assert "location.reload();" in html
+        assert "if (jobQueue.length) { drain(); return; }" in html
 
 
 @pytest.mark.parametrize(
@@ -391,11 +393,12 @@ class TestBulkUnstake:
     def test_a_failure_does_not_stop_the_remaining_wallets(
         self, app, monkeypatch
     ):
-        """Continuing is the whole point of running them separately."""
+        """Continuing is the whole point of running them separately:
+        the queue records the outcome and moves on."""
         html = self._html(app, monkeypatch)
-        bulk = html[html.index("--- bulk unstake"):]
-        assert "failures.push" in bulk
-        assert "break" not in bulk.split("for (const [i, c] of chosen")[1][:1200]
+        drain = html[html.index("async function drain()"):]
+        assert "tally.failures.push" in drain
+        assert "break" not in drain[:drain.index("} finally")]
 
     def test_an_unknown_outcome_is_not_counted_as_a_failure(
         self, app, monkeypatch
@@ -478,8 +481,7 @@ class TestTreasuryButtons:
         self, app, monkeypatch
     ):
         html = self._html(app, monkeypatch)
-        treasury = html[html.index("--- treasury: sweep in"):]
-        assert "r.status === 409" in treasury
+        assert "r.status === 409 ? 'unknown' : 'failed'" in html
 
 
 def test_the_action_log_header_has_one_caret_and_is_not_a_link(app, monkeypatch):
@@ -591,8 +593,10 @@ class TestNothingReloadsOverAnOpenDialog:
         three, with nothing recorded as failed, because a background
         balance refresh finished and reloaded the page."""
         html = self._html(app, monkeypatch)
-        assert html.count("window.snBusyStart()") >= 3
-        assert html.count("window.snBusyEnd()") >= 3
+        # One queue, so one place marks the page busy — for as long as
+        # anything is still waiting in it.
+        assert "window.snBusyStart();" in html
+        assert "window.snBusyEnd();" in html
 
 
 def test_a_batch_marks_every_selected_card_before_it_starts(app, monkeypatch):
@@ -609,7 +613,7 @@ def test_a_batch_marks_every_selected_card_before_it_starts(app, monkeypatch):
     )
     html = TestClient(app).get("/", headers={"X-Remote-User": "alice"}).text
 
-    assert "status: 'queued'" in html
+    assert "claimCards(job, 'queued')" in html
     assert "menunggu giliran" in html
 
 
@@ -723,5 +727,53 @@ def test_a_distribution_shows_on_the_recipients_card_too(app, monkeypatch):
     html = TestClient(app).get("/", headers={"X-Remote-User": "alice"}).text
 
     assert "recipient: ck," in html
-    assert "for (const card of [j.cardColdkey, j.recipient])" in html
+    assert "for (const card of [job.cardColdkey, job.recipient])" in html
     assert "paintCardStatus(job.recipient" in html
+
+
+class TestWorkQueuesInsteadOfLocking:
+    """A run used to disable every money button until it finished, so a
+    wallet that needed its fee paid waited for someone to notice the
+    batch had ended. The signer still answers one request at a time —
+    the page queues instead of refusing."""
+
+    def _html(self, app, monkeypatch):
+        from types import SimpleNamespace
+
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        app.state.config = SimpleNamespace(
+            admin_users=["alice"], subnet_id=56, treasury_coldkey="5HER",
+            tournament=SimpleNamespace(address="5Ef5", fees_tao={"text": 0.7}),
+        )
+        return TestClient(app).get("/", headers={"X-Remote-User": "alice"}).text
+
+    def test_there_is_no_list_of_buttons_to_disable(self, app, monkeypatch):
+        html = self._html(app, monkeypatch)
+        assert "moneyButtons" not in html
+
+    def test_every_entry_point_feeds_the_same_queue(self, app, monkeypatch):
+        """Four ways to start work, one order of execution — otherwise
+        two of them race and the second gets a 409 it did not earn."""
+        html = self._html(app, monkeypatch)
+        assert "key: `pay:${ck}`" in html
+        assert "key: `unstake:${c.coldkey}`" in html
+        assert "key: `sweep:${coldkey}`" in html
+        assert "key: `distribute:${ck}`" in html
+
+    def test_a_wallet_cannot_be_queued_twice_for_the_same_thing(
+        self, app, monkeypatch
+    ):
+        """The server refuses a second pending action per coldkey, and
+        a queue that let one in would spend the wait to earn a 409."""
+        html = self._html(app, monkeypatch)
+        assert "if (queuedKeys.has(job.key)) continue;" in html
+        assert "sudah punya aksi dalam antrean" in html
+
+    def test_the_page_stays_busy_until_the_queue_is_empty(
+        self, app, monkeypatch
+    ):
+        """Anything that reloads mid-queue kills the remaining work:
+        eleven distributions were lost that way."""
+        html = self._html(app, monkeypatch)
+        assert "window.snBusyStart();" in html
+        assert "if (jobQueue.length) { drain(); return; }" in html

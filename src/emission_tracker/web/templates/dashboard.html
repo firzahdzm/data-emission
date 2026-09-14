@@ -848,9 +848,9 @@ _confirm.addEventListener('click', async () => {
         .catch(() => {});
 
     // --- tournament fees and unstake --------------------------------
-    const moneyButtons = Array.from(
-        document.querySelectorAll('.pay-fee, .unstake-all')
-    );
+    // No list of buttons to disable any more: work queues instead of
+    // locking the page, so the only button that turns itself off is
+    // Pay fee with nothing ticked.
 
     function totalFor(coldkey) {
         return Array.from(document.querySelectorAll(
@@ -883,56 +883,152 @@ _confirm.addEventListener('click', async () => {
     });
     refreshTotals();
 
-    async function runMoneyAction(url, body, button) {
-        const coldkey = button.dataset.coldkey;
-        window.snBusyStart();
-        moneyButtons.forEach(b => { b.disabled = true; });
-        const original = button.textContent;
-        button.textContent = 'Sending…';
-        // Say so on the card immediately. A real btcli call takes seconds,
-        // and the answer belongs next to the button that was pressed, not
-        // only in the status line up in the panel header.
-        paintCardStatus(coldkey, { status: 'pending', op: '', requested_by: '' });
-        note.textContent = 'mengirim…';
+    // --- one queue for every signed action ---------------------------
+    // The signer answers one request at a time, so the page sends them
+    // one at a time too. It used to enforce that by disabling every
+    // money button for the duration, which meant a wallet that needed
+    // its fee paid had to wait for someone to notice the run had
+    // finished. Clicks are accepted while work is in flight and take
+    // their turn instead; the card says which state each wallet is in.
+    const jobQueue = [];
+    const queuedKeys = new Set();
+    let draining = false;
+    let tally = null;
 
-        const settle = () => {
-            window.snBusyEnd();
-            button.textContent = original;
-            moneyButtons.forEach(b => { b.disabled = false; });
-            refreshTotals();
-            // Repaint from the server's audit table rather than from what
-            // we think happened — it is the record that actually counts.
-            loadActions();
-            // Re-read this wallet from the chain, whichever way it went.
-            // After a success the figures are stale by definition; after
-            // a failure they are suspect — "tidak ada stake untuk
-            // di-unstake" arrived on a card confidently showing 0.71 τ of
-            // stake, because the card was most of a day old.
-            refreshOneColdkey(coldkey);
-        };
+    function claimCards(job, state) {
+        for (const card of [job.cardColdkey, job.recipient]) {
+            if (!card) continue;
+            batchState.set(card, state);
+            paintCardStatus(card, { status: state === 'running' ? 'pending' : 'queued',
+                                    op: job.op, requested_by: '' });
+        }
+    }
 
+    function releaseCards(job) {
+        // Only once nothing still queued needs that card. The treasury
+        // signs every distribution, so its card stays claimed to the
+        // end of the run rather than flashing each result over the next
+        // one's spinner.
+        for (const card of [job.cardColdkey, job.recipient]) {
+            if (!card) continue;
+            if (jobQueue.some(j => j.cardColdkey === card || j.recipient === card)) {
+                continue;
+            }
+            batchState.delete(card);
+        }
+    }
+
+    function enqueue(jobs) {
+        let added = 0;
+        for (const job of jobs) {
+            if (queuedKeys.has(job.key)) continue;   // already waiting
+            queuedKeys.add(job.key);
+            jobQueue.push(job);
+            claimCards(job, 'queued');
+            added += 1;
+        }
+        if (added) drain();
+        return added;
+    }
+
+    async function runJob(job) {
         try {
-            const r = await fetch(url, {
+            const r = await fetch(job.url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: body ? JSON.stringify(body) : undefined,
+                body: JSON.stringify({ ...(job.body || {}), secret: job.secret }),
             });
             const payload = await r.json().catch(() => ({}));
-            if (!r.ok) {
-                note.textContent = payload.detail || `gagal (${r.status})`;
-                settle();
-                return;
-            }
-            note.textContent = 'berhasil — memperbarui saldo';
-            loadActions();
-            // Re-read the chain before reloading. The page renders stored
-            // balances, so reloading on its own would show the same
-            // pre-transaction figures back to the operator.
-            settle();
+            if (r.ok) return { state: 'ok' };
+            // 409 means the outcome is unknown, not that it failed:
+            // called a failure it invites the retry that pays twice.
+            return {
+                state: r.status === 409 ? 'unknown' : 'failed',
+                detail: payload.detail || `HTTP ${r.status}`,
+            };
         } catch (e) {
-            note.textContent = 'permintaan gagal';
-            settle();
+            return { state: 'failed', detail: 'permintaan gagal' };
         }
+    }
+
+    async function drain() {
+        if (draining) return;
+        draining = true;
+        window.snBusyStart();
+        tally = tally || { total: 0, done: 0, unknown: 0, failures: [] };
+
+        try {
+            while (jobQueue.length) {
+                const job = jobQueue.shift();
+                tally.total += 1;
+                const left = jobQueue.length;
+                note.textContent = left
+                    ? `${job.label} — ${left} lagi dalam antrean…`
+                    : `${job.label}…`;
+                claimCards(job, 'running');
+
+                const outcome = await runJob(job);
+                queuedKeys.delete(job.key);
+                if (outcome.state === 'ok') tally.done += 1;
+                else if (outcome.state === 'unknown') tally.unknown += 1;
+                if (outcome.state !== 'ok') {
+                    tally.failures.push(`${job.label}: ${outcome.detail}`);
+                }
+                if (job.recipient) {
+                    // A recipient writes no audit row of its own — the
+                    // row belongs to the wallet that signed — so its
+                    // card is painted from what just happened.
+                    paintCardStatus(job.recipient, outcome.state === 'ok'
+                        ? { status: 'ok', op: job.op, requested_by: '',
+                            amount_rao: job.body && job.body.amount_rao }
+                        : { status: 'failed', op: job.op, requested_by: '',
+                            outcome_unknown: outcome.state === 'unknown',
+                            error: outcome.detail });
+                }
+                releaseCards(job);
+                // The audit table is the record; repaint as we go so a
+                // long run is visibly progressing rather than frozen.
+                loadActions();
+                refreshTotals();
+            }
+        } finally {
+            draining = false;
+            window.snBusyEnd();
+        }
+
+        // A click that lands while the summary is on screen starts the
+        // queue again; the tally is only reported once it is truly idle.
+        if (jobQueue.length) { drain(); return; }
+
+        const finished = tally;
+        tally = null;
+        batchState.clear();
+        note.textContent = '';
+        resetActionButtons();
+
+        if (finished.total > 1 || finished.failures.length) {
+            const lines = [`${finished.done}/${finished.total} berhasil.`];
+            if (finished.unknown) {
+                lines.push(`${finished.unknown} hasilnya tidak pasti — periksa `
+                           + `chain sebelum mengulang.`);
+            }
+            if (finished.failures.length) {
+                lines.push('', 'Catatan:', ...finished.failures);
+            }
+            await snAlert(lines.join('\n'), {
+                title: 'Selesai',
+                tone: finished.failures.length ? 'error' : 'info',
+            });
+        }
+        // Balances are stale for every wallet touched, and the page
+        // renders stored figures.
+        location.reload();
+    }
+
+    function resetActionButtons() {
+        if (bulkBtn) bulkBtn.textContent = 'Unstake all';
+        if (sweepBtn) sweepBtn.textContent = 'Pooling balance';
+        if (distributeBtn) distributeBtn.textContent = 'Distribute balance';
     }
 
     document.querySelectorAll('.pay-fee').forEach(b => {
@@ -953,8 +1049,19 @@ _confirm.addEventListener('click', async () => {
                     secretLabel: `Unlock value wallet ${b.dataset.label || ck}:`,
                 });
             if (!ans || !ans.ok) return;
-            runMoneyAction(`/api/tournament/pay/${encodeURIComponent(ck)}`,
-                           { types, secret: ans.secret }, b);
+            const added = enqueue([{
+                key: `pay:${ck}`,
+                label: `fee ${b.dataset.label || shortKey(ck)}`,
+                url: `/api/tournament/pay/${encodeURIComponent(ck)}`,
+                body: { types },
+                secret: ans.secret,
+                cardColdkey: ck,
+                op: 'pay_tournament',
+            }]);
+            if (!added) {
+                await snAlert('Wallet ini sudah punya aksi dalam antrean.',
+                              { title: 'Sudah antre' });
+            }
         });
     });
 
@@ -980,37 +1087,11 @@ _confirm.addEventListener('click', async () => {
         stake: b.dataset.stake || '',
     }));
 
-    async function unstakeOne(coldkey, secret) {
-        paintCardStatus(coldkey, { status: 'pending', op: 'unstake_all',
-                                   requested_by: '' });
-        try {
-            const r = await fetch(
-                `/api/stake/unstake-all/${encodeURIComponent(coldkey)}`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ secret }),
-                });
-            const payload = await r.json().catch(() => ({}));
-            if (r.ok) return { state: 'ok' };
-            // 409 from this endpoint means the outcome is unknown, which
-            // is not the same as a failure and must not be counted as one.
-            return {
-                state: r.status === 409 ? 'unknown' : 'failed',
-                detail: payload.detail || `HTTP ${r.status}`,
-            };
-        } catch (e) {
-            return { state: 'failed', detail: 'permintaan gagal' };
-        }
-    }
-
     if (bulkBtn) {
         bulkBtn.addEventListener('click', async () => {
-          // Everything below is wrapped: an exception here used to end
-          // the click with no request, no message and nothing in the
-          // console the operator would think to open — indistinguishable
-          // from a dead button, and it cost an evening to establish that
-          // nothing had in fact been sent.
+          // Wrapped: an exception here used to end the click with no
+          // request, no message and nothing in a console the operator
+          // would think to open — indistinguishable from a dead button.
           try {
             const picked = await snPick(
                 'Pilih wallet yang stake subnet {{ subnet_id }}-nya mau '
@@ -1024,7 +1105,7 @@ _confirm.addEventListener('click', async () => {
                     hint: c.stake ? `stake tercatat ${c.stake}` : '',
                 })),
                 { title: 'Unstake all', okText: 'Lanjut' });
-            if (!picked || !picked.ok) return;        // cancelled
+            if (!picked || !picked.ok) return;          // cancelled
             if (!picked.keys.length) {
                 // Say so. Closing in silence looks identical to a
                 // button that does not work.
@@ -1051,65 +1132,19 @@ _confirm.addEventListener('click', async () => {
                 });
             if (!ans || !ans.ok) return;
 
-            window.snBusyStart();
-            moneyButtons.forEach(b => { b.disabled = true; });
-            bulkBtn.disabled = true;
-            // Mark the whole selection at once: which wallets are part
-            // of this run is the first thing to make visible, and a
-            // card left blank until its turn looks like one that was
-            // never selected.
-            chosen.forEach(c => {
-                batchState.set(c.coldkey, 'queued');
-                paintCardStatus(c.coldkey, {
-                    status: 'queued', op: 'unstake_all', requested_by: '' });
-            });
-
-            const failures = [];
-            let done = 0, unknown = 0;
-            for (const [i, c] of chosen.entries()) {
-                bulkBtn.textContent = `Unstake ${i + 1}/${chosen.length}…`;
-                note.textContent = `unstake ${c.label} (${i + 1}/${chosen.length})…`;
-                batchState.set(c.coldkey, 'running');
-                const outcome = await unstakeOne(c.coldkey, ans.secret);
-                // Released before the repaint, so the row this wallet
-                // just wrote is the one its card shows.
-                batchState.delete(c.coldkey);
-                if (outcome.state === 'ok') done += 1;
-                else if (outcome.state === 'unknown') unknown += 1;
-                else failures.push(`${c.label}: ${outcome.detail}`);
-                // The audit table is the record; repaint from it as we go
-                // so a long run is visibly progressing, not frozen.
-                loadActions();
+            const added = enqueue(chosen.map(c => ({
+                key: `unstake:${c.coldkey}`,
+                label: `unstake ${c.label}`,
+                url: `/api/stake/unstake-all/${encodeURIComponent(c.coldkey)}`,
+                secret: ans.secret,
+                cardColdkey: c.coldkey,
+                op: 'unstake_all',
+            })));
+            if (added < chosen.length) {
+                note.textContent = `${chosen.length - added} wallet sudah `
+                                 + `dalam antrean, dilewati`;
             }
-
-            window.snBusyEnd();
-            batchState.clear();
-            moneyButtons.forEach(b => { b.disabled = false; });
-            bulkBtn.disabled = false;
-            bulkBtn.textContent = 'Unstake all';
-            note.textContent = '';
-
-            const lines = [`${done}/${chosen.length} wallet berhasil.`];
-            if (unknown) {
-                lines.push(`${unknown} hasilnya tidak pasti — periksa chain `
-                           + `sebelum mencoba lagi.`);
-            }
-            if (failures.length) {
-                lines.push('', 'Gagal:', ...failures);
-            }
-            await snAlert(lines.join('\n'), {
-                title: 'Unstake all selesai',
-                tone: failures.length || unknown ? 'error' : 'info',
-            });
-            // Balances are stale for every wallet touched, and the page
-            // renders stored figures.
-            location.reload();
           } catch (err) {
-            window.snBusyEnd();
-            moneyButtons.forEach(b => { b.disabled = false; });
-            bulkBtn.disabled = false;
-            bulkBtn.textContent = 'Unstake all';
-            note.textContent = '';
             await snAlert(`Gagal di sisi halaman: ${err && err.message
                 ? err.message : err}\n\nTidak ada transaksi yang dikirim.`,
                 { title: 'Unstake all', tone: 'error' });
@@ -1144,98 +1179,15 @@ _confirm.addEventListener('click', async () => {
 
     // Both buttons drive the same loop: one request per wallet, in
     // order, a failure on one never stopping the rest.
-    async function runTreasuryBatch(button, jobs, secret) {
-        window.snBusyStart();
-        const others = [sweepBtn, distributeBtn, ...moneyButtons];
-        others.forEach(b => b && (b.disabled = true));
-        const original = button.textContent;
-
-        let done = 0, unknown = 0;
-        const failures = [];
-        // Both ends of every transfer. For a distribution the signing
-        // wallet is the treasury, so without this the eleven wallets
-        // about to receive money show nothing at all while it happens
-        // — and the card of the person waiting for it is the first
-        // place they look.
-        jobs.forEach(j => {
-            for (const card of [j.cardColdkey, j.recipient]) {
-                if (!card) continue;
-                batchState.set(card, 'queued');
-                paintCardStatus(card, {
-                    status: 'queued', op: j.op, requested_by: '' });
-            }
-        });
-        for (const [i, job] of jobs.entries()) {
-            button.textContent = `${i + 1}/${jobs.length}…`;
-            note.textContent = `${job.label} (${i + 1}/${jobs.length})…`;
-            for (const card of [job.cardColdkey, job.recipient]) {
-                if (!card) continue;
-                batchState.set(card, 'running');
-                paintCardStatus(card, { status: 'pending', op: job.op,
-                                        requested_by: '' });
-            }
-            let outcome = { state: 'ok' };
-            try {
-                const r = await fetch(job.url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ...(job.body || {}), secret }),
-                });
-                const payload = await r.json().catch(() => ({}));
-                if (r.ok) done += 1;
-                // 409 here means the outcome is unknown, not that it
-                // failed — counted apart so the summary never invites a
-                // retry of something that may already have moved.
-                else if (r.status === 409) {
-                    unknown += 1;
-                    outcome = { state: 'unknown', detail: payload.detail || 'tidak pasti' };
-                    failures.push(`${job.label}: ${outcome.detail}`);
-                } else {
-                    outcome = { state: 'failed',
-                                detail: payload.detail || `HTTP ${r.status}` };
-                    failures.push(`${job.label}: ${outcome.detail}`);
-                }
-            } catch (e) {
-                outcome = { state: 'failed', detail: 'permintaan gagal' };
-                failures.push(`${job.label}: permintaan gagal`);
-            }
-            if (job.recipient) {
-                // The recipient never writes an audit row of its own —
-                // the row belongs to the wallet that signed — so its
-                // card is painted from what just happened here.
-                paintCardStatus(job.recipient, outcome.state === 'ok'
-                    ? { status: 'ok', op: job.op, requested_by: '',
-                        amount_rao: job.body && job.body.amount_rao }
-                    : { status: 'failed', op: job.op, requested_by: '',
-                        outcome_unknown: outcome.state === 'unknown',
-                        error: outcome.detail });
-            }
-            // The treasury signs every distribution, so its card stays
-            // claimed until the whole run ends; releasing it per job
-            // would flash each result over the next one's "sedang
-            // proses". A recipient's card stays claimed too — it has no
-            // audit row of its own, so the table would repaint it with
-            // whatever that wallet last did on its own account.
-            if (job.cardColdkey !== TREASURY || job === jobs[jobs.length - 1]) {
-                batchState.delete(job.cardColdkey);
-            }
-            loadActions();
+    function runTreasuryBatch(button, jobs, secret) {
+        // Same queue as everything else, so a pooling run and a fee
+        // paid mid-run take their turn instead of locking each other
+        // out.
+        const added = enqueue(jobs.map(j => ({ ...j, secret })));
+        if (added < jobs.length) {
+            note.textContent = `${jobs.length - added} wallet sudah dalam `
+                             + `antrean, dilewati`;
         }
-
-        window.snBusyEnd();
-        batchState.clear();
-        button.textContent = original;
-        others.forEach(b => b && (b.disabled = false));
-        note.textContent = '';
-
-        const lines = [`${done}/${jobs.length} transfer berhasil.`];
-        if (unknown) lines.push(`${unknown} hasilnya tidak pasti — periksa chain sebelum mengulang.`);
-        if (failures.length) lines.push('', 'Catatan:', ...failures);
-        await snAlert(lines.join('\n'), {
-            title: 'Selesai',
-            tone: failures.length ? 'error' : 'info',
-        });
-        location.reload();
     }
 
     if (sweepBtn) {
@@ -1264,7 +1216,8 @@ _confirm.addEventListener('click', async () => {
                 if (amount <= 0) continue;
                 total += amount;
                 jobs.push({
-                    label: `${walletNames[coldkey] || shortKey(coldkey)} `
+                    key: `sweep:${coldkey}`,
+                    label: `pooling ${walletNames[coldkey] || shortKey(coldkey)} `
                          + `(${amount.toFixed(4)} τ)`,
                     url: `/api/treasury/sweep/${encodeURIComponent(coldkey)}`,
                     cardColdkey: coldkey,
@@ -1364,7 +1317,9 @@ _confirm.addEventListener('click', async () => {
             if (!ans || !ans.ok) return;
 
             const jobs = picked.map(([ck, v]) => ({
-                label: `${walletNames[ck] || shortKey(ck)} (${v.toFixed(4)} τ)`,
+                key: `distribute:${ck}`,
+                label: `distribusi ${walletNames[ck] || shortKey(ck)} `
+                     + `(${v.toFixed(4)} τ)`,
                 url: `/api/treasury/distribute/${encodeURIComponent(ck)}`,
                 body: { amount_rao: Math.round(v * 1e9) },
                 // The treasury signs, so its card shows the attempt —
@@ -1397,9 +1352,19 @@ _confirm.addEventListener('click', async () => {
                     secretLabel: `Unlock value wallet ${label}:`,
                 });
             if (!ans || !ans.ok) return;
-            runMoneyAction(
-                `/api/stake/unstake-all/${encodeURIComponent(b.dataset.coldkey)}`,
-                { secret: ans.secret }, b);
+            const ck = b.dataset.coldkey;
+            const added = enqueue([{
+                key: `unstake:${ck}`,
+                label: `unstake ${label}`,
+                url: `/api/stake/unstake-all/${encodeURIComponent(ck)}`,
+                secret: ans.secret,
+                cardColdkey: ck,
+                op: 'unstake_all',
+            }]);
+            if (!added) {
+                await snAlert('Wallet ini sudah punya aksi dalam antrean.',
+                              { title: 'Sudah antre' });
+            }
         });
     });
 })();

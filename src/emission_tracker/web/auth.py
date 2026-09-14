@@ -117,6 +117,22 @@ def is_admin(request: Request) -> bool:
     return user in admins
 
 
+def can_pay_fee(request: Request) -> bool:
+    """True for admins and for the fee-payer tier.
+
+    Paying a tournament fee is the one spend with a fixed destination
+    and a fixed price: the signer decides both, so the worst a fee payer
+    can do is pay a fee that was not due. Unstaking and treasury
+    transfers are open-ended by comparison, and stay with admins.
+    """
+    user = current_user(request)
+    if not user:
+        return False
+    config = getattr(request.app.state, "config", None)
+    payers = getattr(config, "fee_users", []) if config else []
+    return is_admin(request) or user in payers
+
+
 def require_admin(request: Request) -> str:
     """FastAPI dependency: 403s the request if the user isn't an admin.
     Returns the username on success so handlers can audit-log it."""
@@ -130,5 +146,18 @@ def require_admin(request: Request) -> str:
         raise HTTPException(
             status_code=403,
             detail=f"User {user!r} is not an admin",
+        )
+    return user
+
+
+def require_fee_payer(request: Request) -> str:
+    """FastAPI dependency for the fee-paying tier (admins included)."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not can_pay_fee(request):
+        raise HTTPException(
+            status_code=403,
+            detail=f"User {user!r} may not pay tournament fees",
         )
     return user

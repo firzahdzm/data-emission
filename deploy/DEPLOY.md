@@ -198,6 +198,35 @@ Leave `proxy_set_header X-Remote-User $remote_user;` in place or remove
 it — with `auth_basic` gone it forwards an empty value either way, and
 the session cookie is what the app reads first.
 
+### Tingkatan akses
+
+Tiga tingkat, ditentukan oleh dua daftar di `config.yaml`:
+
+| Tingkat | Di config | Boleh |
+|---|---|---|
+| Penonton | ada di `auth.users` saja | lihat semua halaman |
+| Pembayar fee | `fee_users` | + tombol Pay fee, riwayat aksi |
+| Admin | `admin_users` | + unstake, treasury, refresh saldo, tutup periode |
+
+```yaml
+admin_users:
+  - admin
+fee_users:
+  - susnet
+```
+
+Admin sudah otomatis boleh membayar fee, jadi tidak perlu ditulis dua
+kali.
+
+Pemisahannya bukan soal kepercayaan melainkan soal bentuk risikonya:
+pada pembayaran fee, signer yang menentukan tujuan **dan** harganya, jadi
+paling jauh yang bisa terjadi adalah membayar fee yang tidak perlu. Unstake
+dan transfer treasury menentukan jumlahnya saat eksekusi dan menjual ke
+pasar — itu tetap di tangan admin.
+
+Tombol yang tidak boleh dipakai tidak ditampilkan sama sekali, bukan
+ditampilkan lalu menjawab 403.
+
 ### Removing someone's access
 
 Delete their line from `auth.users` and restart. Their existing session

@@ -235,10 +235,13 @@ _confirm.addEventListener('click', async () => {
             </span>
             {% endif %}
         </span>
-        {% if is_admin %}
+        {% if can_pay %}
         <span style="display: flex; align-items: center; gap: 0.6rem;">
+            {# The progress line belongs to anyone who can start work.
+               The buttons beside it do not. #}
             <span id="balance-refresh-bar" class="refresh-bar" hidden><span id="balance-refresh-fill"></span></span>
             <span id="balance-refresh-note" class="text-muted" style="font-size: 0.75rem; font-weight: 400;"></span>
+            {% if is_admin %}
             <button id="balance-refresh-btn" class="btn-subtle">Refresh balances</button>
             {% if tournament %}
             <button id="bulk-unstake-btn" class="btn-subtle btn-danger">
@@ -248,6 +251,7 @@ _confirm.addEventListener('click', async () => {
             {% if treasury_coldkey %}
             <button id="sweep-btn" class="btn-subtle">Pooling balance</button>
             <button id="distribute-btn" class="btn-subtle">Distribute balance</button>
+            {% endif %}
             {% endif %}
         </span>
         {% endif %}
@@ -305,7 +309,7 @@ _confirm.addEventListener('click', async () => {
             <div class="coldkey-age" title="Saldo terakhir dibaca: {{ c.fetched_at | dt_s if c.fetched_at else 'belum pernah' }}">
                 {{ c.fetched_at | age }}
             </div>
-            {% if is_admin %}
+            {% if can_pay %}
             {% set la = c.last_action %}
             {# Always present so the script can repaint it after an action
                without a reload; hidden until this wallet has any history. #}
@@ -327,7 +331,7 @@ _confirm.addEventListener('click', async () => {
                 {% endif %}
             </div>
             {% endif %}
-            {% if is_admin and tournament %}
+            {% if can_pay and tournament %}
             <div class="coldkey-actions">
                 <div class="tournament-types">
                     {% for t, fee in tournament.fees_tao.items() %}
@@ -346,10 +350,15 @@ _confirm.addEventListener('click', async () => {
                             data-label="{{ c.name }}"
                             disabled>Pay fee</button>
                 </div>
+                {# Unstaking is open-ended — an amount the chain decides,
+                   sold at whatever the rate is. A fee is fixed in both
+                   destination and price, so the tiers part here. #}
+                {% if is_admin %}
                 <button class="btn-subtle unstake-all" data-coldkey="{{ c.coldkey }}"
                         data-label="{{ c.name }}"
                         data-stake="{% if c.stake_alpha_as_tao_rao is not none %}{{ c.stake_alpha_as_tao_rao | tao(2) }}{% endif %}"
                         >Unstake</button>
+                {% endif %}
             </div>
             {% endif %}
         </article>
@@ -360,7 +369,7 @@ _confirm.addEventListener('click', async () => {
     {% endif %}
 </section>
 
-{% if is_admin %}
+{% if can_pay %}
 <details class="panel panel-compact" id="actions-panel" hidden>
     <summary>Riwayat aksi</summary>
     <div class="actions-scroll">
@@ -477,14 +486,18 @@ _confirm.addEventListener('click', async () => {
 })();
 </script>
 
-{% if is_admin %}
+{% if can_pay %}
 <script>
 (function() {
+    // Runs for both tiers. A fee payer has the Pay fee buttons, the card
+    // status strips and the history panel; everything an admin-only
+    // element drives is guarded rather than split into a second script,
+    // because two copies of this logic would drift apart.
+    const IS_ADMIN = {{ 'true' if is_admin else 'false' }};
     const btn  = document.getElementById('balance-refresh-btn');
     const note = document.getElementById('balance-refresh-note');
     const bar  = document.getElementById('balance-refresh-bar');
     const fill = document.getElementById('balance-refresh-fill');
-    if (!btn) return;
 
     let poller = null;
     let ticker = null;
@@ -500,10 +513,9 @@ _confirm.addEventListener('click', async () => {
 
     function idle(message) {
         setCardsIdle();
-        btn.disabled = false;
-        btn.textContent = 'Refresh balances';
+        if (btn) { btn.disabled = false; btn.textContent = 'Refresh balances'; }
         note.textContent = message || '';
-        bar.hidden = true;
+        if (bar) bar.hidden = true;
         if (ticker) { clearInterval(ticker); ticker = null; }
     }
 
@@ -511,11 +523,10 @@ _confirm.addEventListener('click', async () => {
     // an identical result, and the server refuses it with 409 anyway.
     function busy(startedIso, estimateSeconds) {
         setCardsBusy(null);
-        btn.disabled = true;
-        btn.textContent = 'Fetching…';
+        if (btn) { btn.disabled = true; btn.textContent = 'Fetching…'; }
         startedAt = startedIso ? new Date(startedIso) : new Date();
         estimate = estimateSeconds || 0;
-        bar.hidden = false;
+        if (bar) bar.hidden = false;
         if (!ticker) ticker = setInterval(tick, 1000);
         tick();
     }
@@ -523,7 +534,7 @@ _confirm.addEventListener('click', async () => {
     function tick() {
         const elapsed = (Date.now() - startedAt.getTime()) / 1000;
         const pct = estimate > 0 ? Math.min(99, (elapsed / estimate) * 100) : 0;
-        fill.style.width = pct.toFixed(1) + '%';
+        if (fill) fill.style.width = pct.toFixed(1) + '%';
         if (estimate > 0 && elapsed < estimate) {
             note.textContent = `fetching {{ coldkeys | length }} coldkeys — ${fmt(estimate - elapsed)} left`;
         } else {
@@ -540,7 +551,7 @@ _confirm.addEventListener('click', async () => {
                 const s = await r.json();
                 if (!s.running) {
                     clearInterval(poller); poller = null;
-                    fill.style.width = '100%';
+                    if (fill) fill.style.width = '100%';
                     note.textContent = 'done — reloading';
                     setTimeout(() => location.reload(), 600);
                 }
@@ -548,7 +559,7 @@ _confirm.addEventListener('click', async () => {
         }, 5000);
     }
 
-    btn.addEventListener('click', async () => {
+    if (btn) btn.addEventListener('click', async () => {
         btn.disabled = true;
         btn.textContent = 'Starting…';
         note.textContent = '';
@@ -588,6 +599,10 @@ _confirm.addEventListener('click', async () => {
     // own button and by every money action, which must not leave the
     // operator looking at figures from before the transaction.
     async function refreshOneColdkey(ck) {
+        // /api/balances/refresh is admin-only, and it spends the
+        // TaoStats quota. A fee payer reloads instead: the figures stay
+        // as old as they were, which the card's age line already says.
+        if (!IS_ADMIN) { setTimeout(() => location.reload(), 800); return; }
         setCardsBusy(ck);
         note.textContent = 'memperbarui saldo wallet ini…';
         try {

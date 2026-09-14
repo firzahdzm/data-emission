@@ -14,7 +14,7 @@ from emission_tracker.signer.protocol import (
     SignRequest,
 )
 from emission_tracker.web import queries
-from emission_tracker.web.auth import require_admin
+from emission_tracker.web.auth import require_admin, require_fee_payer
 from emission_tracker.web.range_parse import parse_range
 from emission_tracker.web.signer_client import SignerUnavailable
 
@@ -559,7 +559,7 @@ def pay_tournament(
     request: Request,
     coldkey: str,
     body: TournamentPayBody,
-    user: str = Depends(require_admin),
+    user: str = Depends(require_fee_payer),
 ):
     _known_coldkey(request, coldkey)
     _require_secret(body)
@@ -738,7 +738,7 @@ def treasury_balances(request: Request, user: str = Depends(require_admin)):
 def recent_signed_actions(
     request: Request,
     limit: int = Query(default=20, ge=1, le=200),
-    user: str = Depends(require_admin),
+    user: str = Depends(require_fee_payer),
 ):
     """Audit trail of signed actions. Admin only.
 

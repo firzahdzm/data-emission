@@ -9,7 +9,7 @@ from fastapi.templating import Jinja2Templates
 
 from emission_tracker.units import format_alpha, format_tao, rao_to_alpha
 from emission_tracker.web import queries
-from emission_tracker.web.auth import current_user, is_admin
+from emission_tracker.web.auth import can_pay_fee, current_user, is_admin
 from emission_tracker.web.range_parse import parse_range
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -23,7 +23,11 @@ def _viewer(request: Request) -> dict:
     rendered a header missing both. A page added next month would have
     made the same mistake.
     """
-    return {"user": current_user(request), "is_admin": is_admin(request)}
+    return {
+        "user": current_user(request),
+        "is_admin": is_admin(request),
+        "can_pay": can_pay_fee(request),
+    }
 
 
 templates = Jinja2Templates(

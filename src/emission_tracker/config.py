@@ -99,6 +99,11 @@ class AppConfig(BaseModel):
     # that are allowed to settle/unsettle periods. Empty = nobody is admin
     # (settle button hidden, POST/DELETE endpoints return 403).
     admin_users: list[str] = Field(default_factory=list)
+    # A middle tier: may pay tournament fees and nothing else. Not
+    # admins — no unstaking, no treasury transfers, no closing a period.
+    # An admin is implicitly allowed everything a fee payer is, so
+    # nobody needs to be listed twice.
+    fee_users: list[str] = Field(default_factory=list)
     # Shared secret nginx sends as X-Auth-Proxy. Empty disables the check,
     # which is what a deployment without the matching nginx block needs.
     proxy_secret: str = ""

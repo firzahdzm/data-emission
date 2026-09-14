@@ -687,7 +687,15 @@ _confirm.addEventListener('click', async () => {
         el.hidden = false;
         el.title = [a.op, a.requested_by, a.error || a.tx_hash || '']
             .filter(Boolean).join(' · ');
-        if (a.status === 'pending') {
+        if (a.status === 'queued') {
+            // A batch runs one wallet at a time, so the rest are
+            // waiting rather than working. Showing all of them as "in
+            // progress" would be a lie the operator could act on —
+            // closing the tab believing everything was already in
+            // flight, when most of it had not been sent.
+            el.className = 'coldkey-last-action coldkey-last-pending';
+            el.textContent = '⏳ menunggu giliran';
+        } else if (a.status === 'pending') {
             el.innerHTML = '<span class="spinner-dot"></span> sedang proses…';
         } else if (a.status === 'ok') {
             const amt = a.amount_rao
@@ -1014,6 +1022,12 @@ _confirm.addEventListener('click', async () => {
 
             moneyButtons.forEach(b => { b.disabled = true; });
             bulkBtn.disabled = true;
+            // Mark the whole selection at once: which wallets are part
+            // of this run is the first thing to make visible, and a
+            // card left blank until its turn looks like one that was
+            // never selected.
+            chosen.forEach(c => paintCardStatus(c.coldkey, {
+                status: 'queued', op: 'unstake_all', requested_by: '' }));
 
             const failures = [];
             let done = 0, unknown = 0;
@@ -1092,6 +1106,8 @@ _confirm.addEventListener('click', async () => {
 
         let done = 0, unknown = 0;
         const failures = [];
+        jobs.forEach(j => paintCardStatus(j.cardColdkey, {
+            status: 'queued', op: j.op, requested_by: '' }));
         for (const [i, job] of jobs.entries()) {
             button.textContent = `${i + 1}/${jobs.length}…`;
             note.textContent = `${job.label} (${i + 1}/${jobs.length})…`;

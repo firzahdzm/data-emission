@@ -583,3 +583,21 @@ class TestNothingReloadsOverAnOpenDialog:
         html = self._html(app, monkeypatch)
         assert "reloadWhenIdle" in html
         assert "dlg.addEventListener('close', () => location.reload()" in html
+
+
+def test_a_batch_marks_every_selected_card_before_it_starts(app, monkeypatch):
+    """A batch runs one wallet at a time. Cards left blank until their
+    turn look like wallets that were never selected — and showing them
+    all as "in progress" would be a lie someone could act on, closing
+    the tab believing work was in flight that had not been sent."""
+    from types import SimpleNamespace
+
+    monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+    app.state.config = SimpleNamespace(
+        admin_users=["alice"], subnet_id=56, treasury_coldkey="5HER",
+        tournament=SimpleNamespace(address="5Ef5", fees_tao={"text": 0.7}),
+    )
+    html = TestClient(app).get("/", headers={"X-Remote-User": "alice"}).text
+
+    assert "status: 'queued'" in html
+    assert "menunggu giliran" in html

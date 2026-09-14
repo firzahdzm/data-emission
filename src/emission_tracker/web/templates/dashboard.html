@@ -555,13 +555,15 @@ _confirm.addEventListener('click', async () => {
     // the operator's side that is a click that did nothing — and it is
     // why an unstake attempt left no trace on the server at all.
     function reloadWhenIdle(delay) {
-        const dlg = document.getElementById('sn-modal');
-        if (dlg && dlg.open) {
+        // Not while a dialog is open, and not while a batch is
+        // running. The batch loop lives in this tab: reloading ends it
+        // mid-run, which is how fourteen distributions stopped after
+        // three with nothing recorded as failed — a background balance
+        // refresh had finished and reloaded the page.
+        if (!window.snCanReload || !window.snCanReload()) {
             note.textContent = 'saldo diperbarui — halaman dimuat ulang '
-                             + 'setelah dialog ditutup';
-            dlg.addEventListener('close', () => location.reload(),
-                                 { once: true });
-            return;
+                             + 'setelah ini selesai';
+            return;                     // the batch reloads when it ends
         }
         setTimeout(() => location.reload(), delay || 600);
     }
@@ -883,6 +885,7 @@ _confirm.addEventListener('click', async () => {
 
     async function runMoneyAction(url, body, button) {
         const coldkey = button.dataset.coldkey;
+        window.snBusyStart();
         moneyButtons.forEach(b => { b.disabled = true; });
         const original = button.textContent;
         button.textContent = 'Sending…';
@@ -893,6 +896,7 @@ _confirm.addEventListener('click', async () => {
         note.textContent = 'mengirim…';
 
         const settle = () => {
+            window.snBusyEnd();
             button.textContent = original;
             moneyButtons.forEach(b => { b.disabled = false; });
             refreshTotals();
@@ -1047,6 +1051,7 @@ _confirm.addEventListener('click', async () => {
                 });
             if (!ans || !ans.ok) return;
 
+            window.snBusyStart();
             moneyButtons.forEach(b => { b.disabled = true; });
             bulkBtn.disabled = true;
             // Mark the whole selection at once: which wallets are part
@@ -1077,6 +1082,7 @@ _confirm.addEventListener('click', async () => {
                 loadActions();
             }
 
+            window.snBusyEnd();
             batchState.clear();
             moneyButtons.forEach(b => { b.disabled = false; });
             bulkBtn.disabled = false;
@@ -1099,6 +1105,7 @@ _confirm.addEventListener('click', async () => {
             // renders stored figures.
             location.reload();
           } catch (err) {
+            window.snBusyEnd();
             moneyButtons.forEach(b => { b.disabled = false; });
             bulkBtn.disabled = false;
             bulkBtn.textContent = 'Unstake all';
@@ -1138,6 +1145,7 @@ _confirm.addEventListener('click', async () => {
     // Both buttons drive the same loop: one request per wallet, in
     // order, a failure on one never stopping the rest.
     async function runTreasuryBatch(button, jobs, secret) {
+        window.snBusyStart();
         const others = [sweepBtn, distributeBtn, ...moneyButtons];
         others.forEach(b => b && (b.disabled = true));
         const original = button.textContent;
@@ -1181,6 +1189,7 @@ _confirm.addEventListener('click', async () => {
             loadActions();
         }
 
+        window.snBusyEnd();
         batchState.clear();
         button.textContent = original;
         others.forEach(b => b && (b.disabled = false));

@@ -571,18 +571,28 @@ class TestNothingReloadsOverAnOpenDialog:
         assert "http-equiv" not in head
         assert "300000" in html
 
-    def test_the_periodic_refresh_yields_to_an_open_dialog(
+    def test_the_periodic_refresh_yields_to_a_dialog_or_a_batch(
         self, app, monkeypatch
     ):
         html = self._html(app, monkeypatch)
-        assert "if (dlg.open) return;" in html
+        assert "if (!window.snCanReload()) return;" in html
+        assert "window.snCanReload = () => !dlg.open && !window.snBusy;" in html
 
     def test_the_balance_watcher_yields_too(self, app, monkeypatch):
         """It fires on every service start and takes minutes, so it
-        lands mid-dialog more often than anything else."""
+        lands mid-run more often than anything else."""
         html = self._html(app, monkeypatch)
         assert "reloadWhenIdle" in html
-        assert "dlg.addEventListener('close', () => location.reload()" in html
+        assert "!window.snCanReload || !window.snCanReload()" in html
+
+    def test_a_running_batch_marks_the_page_busy(self, app, monkeypatch):
+        """The loop that sends the transfers lives in this tab, so a
+        reload ends it mid-run: fourteen distributions stopped after
+        three, with nothing recorded as failed, because a background
+        balance refresh finished and reloaded the page."""
+        html = self._html(app, monkeypatch)
+        assert html.count("window.snBusyStart()") >= 3
+        assert html.count("window.snBusyEnd()") >= 3
 
 
 def test_a_batch_marks_every_selected_card_before_it_starts(app, monkeypatch):

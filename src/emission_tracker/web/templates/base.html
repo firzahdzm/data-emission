@@ -313,6 +313,17 @@
                 ? { ok: true, keys: Object.keys(answer.values || {}) }
                 : answer);
         };
+        // Set while a batch of transfers is running. Nothing may
+        // reload the page then: the loop that sends them lives in this
+        // tab, so a reload ends it mid-run — fourteen distributions
+        // stopped after three that way, with no error anywhere,
+        // because a background balance refresh finished and reloaded
+        // the page out from under it.
+        window.snBusy = 0;
+        window.snBusyStart = () => { window.snBusy += 1; };
+        window.snBusyEnd = () => { window.snBusy = Math.max(0, window.snBusy - 1); };
+        window.snCanReload = () => !dlg.open && !window.snBusy;
+
         // The dashboard refreshes itself every five minutes. This used
         // to be <meta http-equiv="refresh">, which cannot be told to
         // wait: a dialog open longer than five minutes — fifteen wallets
@@ -320,7 +331,7 @@
         // password manager — was wiped mid-use, and from the operator's
         // side that is a click that did nothing.
         setInterval(() => {
-            if (dlg.open) return;                 // try again next tick
+            if (!window.snCanReload()) return;    // try again next tick
             if (document.activeElement
                 && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
                 return;                           // someone is typing

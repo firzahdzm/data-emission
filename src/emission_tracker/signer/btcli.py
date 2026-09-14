@@ -65,6 +65,38 @@ def transfer_argv(
     ]
 
 
+def balance_all_argv(wallet_path: str) -> list[str]:
+    """Every wallet's balance in one call.
+
+    One connection instead of fifteen, and that matters more than the
+    time it saves: the public finney endpoint refuses connections that
+    arrive back to back — four in a row is enough — and btcli then exits
+    0 having printed nothing at all, so a whole refresh came back empty
+    with no error anywhere. Measured on the host: 15 wallets in ~1s.
+    """
+    return [
+        BTCLI, "wallet", "balance",
+        "--all",
+        "--wallet-path", wallet_path,
+        "--json-output",
+    ]
+
+
+def free_balances_all(payload: dict) -> dict:
+    """wallet name -> free balance in rao, for every wallet btcli listed.
+
+    A wallet whose figure cannot be read is left out entirely rather
+    than reported as zero; the caller treats absence as "unknown".
+    """
+    out = {}
+    for name, entry in (payload.get("balances") or {}).items():
+        free = (entry or {}).get("free")
+        if isinstance(free, bool) or not isinstance(free, (int, float)):
+            continue
+        out[name] = round(free * RAO)
+    return out
+
+
 def balance_argv(wallet_name: str, wallet_path: str) -> list[str]:
     """Read one wallet's balance. No password: it is public chain data,
     and a read that asked for the unlock value would carry it down a

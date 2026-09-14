@@ -7,7 +7,9 @@ import pytest
 from emission_tracker.signer.btcli import (
     BtcliError,
     UNSTAKE_PROMPTS,
+    balance_all_argv,
     balance_argv,
+    free_balances_all,
     base_env,
     free_balance_rao,
     hotkeys_with_stake,
@@ -999,3 +1001,40 @@ def test_an_empty_result_says_what_btcli_put_on_stderr():
 
     with pytest.raises(BtcliError, match="unreachable"):
         run_btcli(["btcli", "x"], env={}, timeout=5, run=lambda *a, **k: R())
+
+
+class TestReadingEveryBalanceInOneCall:
+    """The public finney endpoint refuses connections that arrive back
+    to back — four in a row was enough on the host — and btcli then
+    exits 0 having printed nothing, so a whole refresh came back empty
+    with no error to show for it. One call for fifteen wallets stays
+    well under that."""
+
+    PAYLOAD = {
+        "balances": {
+            "goy": {"free": 1.709312021, "staked": 0.0},
+            "prj1": {"free": 0.5961, "staked": 0.0},
+            "rusak": {"staked": 0.0},
+        },
+        "totals": {"free": 2.3054},
+    }
+
+    def test_one_argv_covers_every_wallet(self):
+        argv = balance_all_argv(WP)
+        assert argv[:3] == ["btcli", "wallet", "balance"]
+        assert "--all" in argv
+        assert "--wallet-name" not in argv
+
+    def test_every_readable_wallet_comes_back_in_rao(self):
+        assert free_balances_all(self.PAYLOAD) == {
+            "goy": 1_709_312_021, "prj1": 596_100_000,
+        }
+
+    def test_an_unreadable_wallet_is_absent_rather_than_zero(self):
+        """Absent means "unknown" to the caller; zero would mean empty,
+        and a sweep treats those differently."""
+        assert "rusak" not in free_balances_all(self.PAYLOAD)
+
+    def test_a_malformed_payload_yields_nothing_rather_than_raising(self):
+        for payload in ({}, {"balances": None}, {"balances": {"x": None}}):
+            assert free_balances_all(payload) == {}

@@ -31,7 +31,13 @@ OP_DISTRIBUTE = "distribute"
 # only reason to send a secret down a path that cannot use it is to find
 # out where it ends up.
 OP_BALANCES = "balances"
-OPS = (OP_PAY, OP_UNSTAKE, OP_SWEEP, OP_DISTRIBUTE, OP_BALANCES)
+# One coldkey's stake on the configured subnet. Separate from balances
+# because the chain endpoint refuses connections that arrive back to
+# back, so these have to be spaced — and the pacing belongs in the
+# caller, not inside a signer call that would then hold the socket for
+# a minute while a tournament payment waited behind it.
+OP_STAKE = "stake"
+OPS = (OP_PAY, OP_UNSTAKE, OP_SWEEP, OP_DISTRIBUTE, OP_BALANCES, OP_STAKE)
 
 TOURNAMENT_TYPES = ("text", "image", "env")
 
@@ -116,10 +122,13 @@ class SignRequest:
                 raise ProtocolError(f"{op} takes no amount_rao")
 
         secret = raw.get("secret")
-        if op == OP_BALANCES:
+        if op in (OP_BALANCES, OP_STAKE):
+            # Reads. Nothing here can use an unlock value, so a request
+            # carrying one is either a mistake or someone finding out
+            # where secrets end up.
             if secret:
-                raise ProtocolError("balances takes no wallet secret")
-            return cls(op=op, coldkey="")
+                raise ProtocolError(f"{op} takes no wallet secret")
+            return cls(op=op, coldkey=coldkey)
         # Stripped here as well as in the web tier: the signer has to be
         # defensible on its own, and whitespace reaches btcli as an unset
         # variable, which makes it prompt — and --no-prompt turns that into

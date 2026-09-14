@@ -176,16 +176,24 @@ class TestChainFirstBalances:
     on a card beside a working unstake button."""
 
     class _Signer:
-        def __init__(self, balances=None, boom=None, ok=True):
-            self.balances, self.boom, self.ok = balances, boom, ok
+        """Answers the two read ops, and records what it was asked."""
+
+        def __init__(self, free=None, stake=None, boom=None, ok=True):
+            self.free, self.stake, self.boom, self.ok = free, stake, boom, ok
+            self.ops = []
 
         def send(self, request):
+            self.ops.append((request.op, request.coldkey))
             if self.boom:
                 raise self.boom
-            from emission_tracker.signer.protocol import SignResult
+            from emission_tracker.signer.protocol import OP_BALANCES, SignResult
 
-            return SignResult(self.ok, request.op, "", balances=self.balances,
-                              error=None if self.ok else "nope")
+            if not self.ok:
+                return SignResult(False, request.op, "", error="nope")
+            if request.op == OP_BALANCES:
+                return SignResult(True, request.op, "", balances=self.free or {})
+            return SignResult(True, request.op, request.coldkey,
+                              balances={request.coldkey: self.stake})
 
     def _run(self, conn, signer):
         ts, gr = _FakeTaoStats(), _FakeGradients()
@@ -193,16 +201,18 @@ class TestChainFirstBalances:
             conn=conn, taostats=ts, gradients=gr,
             rate_limiter=TokenBucket(capacity=100, refill_per_second=100),
             request_interval_seconds=0, subnet_id=56, signer=signer,
+            chain_pace_seconds=0,
         )
         return ts
 
     def test_the_chain_reading_is_used_and_taostats_is_not_called(self, memory_db):
         _seed(memory_db)
-        chain = {ck: {"free_rao": 3_000_000_000,
-                      "stake_alpha_rao": 44_000_000_000,
-                      "stake_alpha_as_tao_rao": 700_000_000}
-                 for ck in (CK_A, CK_B)}
-        ts = self._run(memory_db, self._Signer(chain))
+        signer = self._Signer(
+            free={CK_A: 3_000_000_000, CK_B: 1_000_000_000},
+            stake={"stake_alpha_rao": 44_000_000_000,
+                   "stake_alpha_as_tao_rao": 700_000_000},
+        )
+        ts = self._run(memory_db, signer)
 
         row = memory_db.execute(
             "SELECT * FROM coldkey_balances WHERE coldkey_ss58 = ?", (CK_A,)
@@ -210,6 +220,14 @@ class TestChainFirstBalances:
         assert row["balance_free_rao"] == 3_000_000_000
         assert row["stake_alpha_rao"] == 44_000_000_000
         assert ts.asked == []                       # quota untouched
+
+    def test_balances_are_read_once_for_everyone(self, memory_db):
+        """One connection, not one per wallet: the endpoint refuses a
+        burst of them and btcli then says nothing at all."""
+        _seed(memory_db)
+        signer = self._Signer(free={CK_A: 1, CK_B: 2}, stake=None)
+        self._run(memory_db, signer)
+        assert [op for op, _ in signer.ops].count("balances") == 1
 
     def test_a_signer_that_is_down_falls_back_rather_than_failing(self, memory_db):
         """A missing signer must slow the refresh back to the API, not
@@ -222,10 +240,7 @@ class TestChainFirstBalances:
         """A coldkey with no wallet on this host still has figures worth
         showing, and the other wallets still skip the API."""
         _seed(memory_db)
-        chain = {CK_A: {"free_rao": 5, "stake_alpha_rao": 0,
-                        "stake_alpha_as_tao_rao": 0},
-                 CK_B: None}
-        ts = self._run(memory_db, self._Signer(chain))
+        ts = self._run(memory_db, self._Signer(free={CK_A: 5}, stake=None))
         assert ts.asked == [CK_B]
 
     def test_the_subnet_wide_columns_are_left_unknown_not_guessed(self, memory_db):
@@ -233,11 +248,23 @@ class TestChainFirstBalances:
         others. Writing the subnet figure into a column that means
         "everywhere" would be a wrong number rather than a missing one."""
         _seed(memory_db)
-        self._run(memory_db, self._Signer({CK_A: {
-            "free_rao": 1, "stake_alpha_rao": 2, "stake_alpha_as_tao_rao": 3,
-        }}))
+        self._run(memory_db, self._Signer(
+            free={CK_A: 1, CK_B: 1},
+            stake={"stake_alpha_rao": 2, "stake_alpha_as_tao_rao": 3},
+        ))
         row = memory_db.execute(
             "SELECT * FROM coldkey_balances WHERE coldkey_ss58 = ?", (CK_A,)
         ).fetchone()
         assert row["balance_staked_rao"] is None
         assert row["balance_total_rao"] is None
+
+    def test_a_failed_stake_read_does_not_lose_the_balance(self, memory_db):
+        """They are separate calls now, and one going quiet must not
+        take the other's answer with it."""
+        _seed(memory_db)
+        self._run(memory_db, self._Signer(free={CK_A: 7, CK_B: 8}, stake=None))
+        row = memory_db.execute(
+            "SELECT * FROM coldkey_balances WHERE coldkey_ss58 = ?", (CK_A,)
+        ).fetchone()
+        assert row["balance_free_rao"] == 7
+        assert row["stake_alpha_rao"] is None

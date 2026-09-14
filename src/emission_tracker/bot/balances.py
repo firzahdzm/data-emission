@@ -22,18 +22,18 @@ class _ChainAccount:
     wrong number rather than a missing one.
     """
 
-    def __init__(self, entry: dict):
-        self.free_rao = entry.get("free_rao")
-        self.stake_alpha_rao = entry.get("stake_alpha_rao")
-        self.stake_alpha_as_tao_rao = entry.get("stake_alpha_as_tao_rao")
+    def __init__(self, free_rao, stake: dict | None):
+        self.free_rao = free_rao
+        self.stake_alpha_rao = (stake or {}).get("stake_alpha_rao")
+        self.stake_alpha_as_tao_rao = (stake or {}).get("stake_alpha_as_tao_rao")
         self.staked_rao = None
         self.total_rao = None
 
 
-def _chain_balances(signer) -> dict:
-    """Every wallet's figures from the signer, or {} if it cannot answer.
+def _chain_free_balances(signer) -> dict:
+    """Every wallet's free balance from the signer, or {} if it cannot.
 
-    Never raises: a signer that is down must slow the refresh back to
+    Never raises: a signer that is down must send the refresh back to
     the TaoStats path, not stop it.
     """
     from emission_tracker.signer.protocol import OP_BALANCES, SignRequest
@@ -46,7 +46,22 @@ def _chain_balances(signer) -> dict:
     if not result.ok:
         log.warning("chain balances refused: %s", result.error)
         return {}
-    return {k: v for k, v in (result.balances or {}).items() if v}
+    return {k: v for k, v in (result.balances or {}).items() if v is not None}
+
+
+def _chain_stake(signer, coldkey: str) -> dict | None:
+    """One coldkey's subnet stake, or None when it cannot be read."""
+    from emission_tracker.signer.protocol import OP_STAKE, SignRequest
+
+    try:
+        result = signer.send(SignRequest(OP_STAKE, coldkey))
+    except Exception as exc:
+        log.warning("coldkey=%s chain stake unavailable: %s", coldkey, exc)
+        return None
+    if not result.ok:
+        log.warning("coldkey=%s chain stake refused: %s", coldkey, result.error)
+        return None
+    return (result.balances or {}).get(coldkey)
 
 
 @dataclass
@@ -69,6 +84,7 @@ def refresh_balances(
     subnet_id: int,
     coldkeys: list[str] | None = None,
     signer=None,
+    chain_pace_seconds: float = 3.0,
 ) -> BalanceRefreshResult:
     """Fetch wallet and tournament balances for known coldkeys.
 
@@ -114,15 +130,22 @@ def refresh_balances(
     wallet_ok = wallet_fail = 0
     tourn_ok = tourn_absent = tourn_fail = 0
 
-    # One call for every wallet, rather than one per coldkey in the loop
-    # below: reading the chain is not rate limited, and asking once
-    # keeps the whole set consistent with a single moment.
-    from_chain = _chain_balances(signer) if signer is not None else {}
+    # One call for every wallet's free balance, not one per coldkey: the
+    # public chain endpoint refuses connections that arrive back to back
+    # — four in a row was enough on the host — and btcli then exits 0
+    # having printed nothing, so fifteen separate reads lost a whole
+    # refresh with no error to show for it. Stake still needs a call per
+    # coldkey, and the loop below spaces those out.
+    free_by_coldkey = _chain_free_balances(signer) if signer is not None else {}
 
     for i, coldkey in enumerate(coldkeys):
-        chain = from_chain.get(coldkey)
-        if chain and chain.get("free_rao") is not None:
-            account = _ChainAccount(chain)
+        free_rao = free_by_coldkey.get(coldkey)
+        if free_rao is not None:
+            if i > 0 and chain_pace_seconds > 0:
+                # Spacing, not rate limiting: the endpoint tolerates a
+                # steady trickle and refuses a burst.
+                time.sleep(chain_pace_seconds)
+            account = _ChainAccount(free_rao, _chain_stake(signer, coldkey))
             wallet_ok += 1
         else:
             if i > 0 and request_interval_seconds > 0:
@@ -211,9 +234,11 @@ class BalanceRunner:
         request_interval_seconds: float,
         subnet_id: int,
         signer=None,
+        chain_pace_seconds: float = 3.0,
     ):
         self._conn_factory = conn_factory
         self._signer = signer
+        self._chain_pace_seconds = chain_pace_seconds
         self._taostats = taostats
         self._gradients = gradients
         self._rate_limiter = rate_limiter
@@ -242,9 +267,9 @@ class BalanceRunner:
         """
         return self._target
 
-    # Measured on the host: one wallet balance and one stake list take
-    # about 2.4s together over the chain, and nothing paces them.
-    CHAIN_SECONDS_PER_COLDKEY = 2.4
+    # Measured on the host: one stake read takes about 1.3s, and the
+    # spacing between them dominates.
+    CHAIN_SECONDS_PER_COLDKEY = 1.3
 
     def estimate_seconds(self, coldkey_count: int) -> int:
         """Roughly how long a run takes.
@@ -257,9 +282,10 @@ class BalanceRunner:
         if coldkey_count <= 0:
             return 0
         if self._signer is not None:
-            # Plus the tournament call per coldkey, which still goes out
-            # over HTTP and is paced with the rest.
-            return int(coldkey_count * (self.CHAIN_SECONDS_PER_COLDKEY + 1.0))
+            # One balance call for all of them, then a spaced stake read
+            # and a tournament call per coldkey.
+            per = self.CHAIN_SECONDS_PER_COLDKEY + self._chain_pace_seconds + 1.0
+            return int(2 + coldkey_count * per)
         gaps = (coldkey_count - 1) * self._request_interval_seconds
         return int(gaps + coldkey_count * 1.5)
 
@@ -306,6 +332,7 @@ class BalanceRunner:
                 subnet_id=self._subnet_id,
                 coldkeys=coldkeys,
                 signer=self._signer,
+                chain_pace_seconds=self._chain_pace_seconds,
             )
         except Exception:
             log.exception("manual balance refresh failed")

@@ -1113,15 +1113,10 @@ _confirm.addEventListener('click', async () => {
             const body = await r.json().catch(() => ({}));
             throw new Error(body.detail || `gagal membaca saldo (${r.status})`);
         }
-        // The signer answers with the whole picture per wallet; these
-        // dialogs only move free balance. null stays null — a wallet
-        // that could not be read is not a wallet with nothing in it.
-        const raw = (await r.json()).balances || {};
-        const free = {};
-        for (const [ck, entry] of Object.entries(raw)) {
-            free[ck] = entry ? entry.free_rao : null;
-        }
-        return free;
+        // Free balance per coldkey, in rao. null stays null — a
+        // wallet that could not be read is not a wallet with nothing
+        // in it, and these dialogs move money on the difference.
+        return (await r.json()).balances || {};
     }
 
     // Both buttons drive the same loop: one request per wallet, in

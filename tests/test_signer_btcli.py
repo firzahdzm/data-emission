@@ -16,6 +16,7 @@ from emission_tracker.signer.btcli import (
     coldkey_password_env_var,
     list_wallets,
     parse_unstake_output,
+    read_with_retry,
     run_btcli,
     run_btcli_pty,
     strip_ansi,
@@ -947,3 +948,54 @@ class TestReadingAFreeBalance:
         do not know". Collapsing the second into the first would make a
         failed read look like a wallet that needed no attention."""
         assert free_balance_rao(payload, "goy") is None
+
+
+class TestAnEmptyReadIsRetriedOnce:
+    """btcli occasionally exits 0 having printed nothing. Seen in
+    production on `wallet list`, on the second call in a row, where it
+    cost a whole balance refresh — fifteen cards blank because one
+    process said nothing once."""
+
+    def test_a_second_attempt_is_made(self):
+        calls = []
+
+        def flaky():
+            calls.append(1)
+            if len(calls) == 1:
+                raise BtcliError("btcli printed no JSON result: ")
+            return {"wallets": []}
+
+        assert read_with_retry(flaky, pause=0) == {"wallets": []}
+        assert len(calls) == 2
+
+    def test_a_real_refusal_is_not_retried(self):
+        """Retrying something btcli actively refused only repeats the
+        refusal, and hides how long it took to fail."""
+        calls = []
+
+        def refused():
+            calls.append(1)
+            raise BtcliError("❌ Not enough balance")
+
+        with pytest.raises(BtcliError):
+            read_with_retry(refused, pause=0)
+        assert len(calls) == 1
+
+    def test_it_gives_up_and_reports_the_last_error(self):
+        def always_empty():
+            raise BtcliError("btcli printed no JSON result: ")
+
+        with pytest.raises(BtcliError, match="no JSON"):
+            read_with_retry(always_empty, pause=0)
+
+
+def test_an_empty_result_says_what_btcli_put_on_stderr():
+    """The first production occurrence logged an empty message, which
+    said only that something had gone wrong."""
+    class R:
+        returncode = 0
+        stdout = ""
+        stderr = "❌ Network finney is unreachable"
+
+    with pytest.raises(BtcliError, match="unreachable"):
+        run_btcli(["btcli", "x"], env={}, timeout=5, run=lambda *a, **k: R())

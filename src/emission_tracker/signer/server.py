@@ -22,6 +22,7 @@ from emission_tracker.signer.btcli import (
     free_balance_rao,
     hotkeys_with_stake,
     list_wallets,
+    read_with_retry,
     subnet_stake,
     unlisted_stake,
     run_btcli,
@@ -265,10 +266,10 @@ class Signer:
         return set(self._config.hotkeys or {})
 
     def _free_rao(self, wallet_name: str) -> int | None:
-        payload = run_btcli(
+        payload = read_with_retry(lambda: run_btcli(
             balance_argv(wallet_name, self._config.wallet_path),
             env=base_env(), timeout=BALANCE_TIMEOUT, run=self._run,
-        )
+        ))
         return free_balance_rao(payload, wallet_name)
 
     def balances(self) -> dict:
@@ -289,7 +290,10 @@ class Signer:
         never as zero: zero means empty and None means unknown, and the
         two lead to different actions.
         """
-        wallets = list_wallets(run=self._run, wallet_path=self._config.wallet_path)
+        wallets = read_with_retry(
+            lambda: list_wallets(run=self._run,
+                                 wallet_path=self._config.wallet_path)
+        )
         out = {}
         for coldkey in self._roster():
             name = wallets.get(coldkey)

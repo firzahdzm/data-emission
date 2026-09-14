@@ -362,7 +362,11 @@ def run_btcli(
         # No JSON object anywhere usually means btcli stopped at a prompt
         # we did not answer, which must not be mistaken for success.
         raise BtcliError(
-            f"btcli printed no JSON result: {tidy(proc.stdout or '')}"
+            "btcli printed no JSON result: "
+            # stderr as well as stdout: the first time this happened in
+            # production the message was empty, which said only that
+            # something had gone wrong and nothing about what.
+            f"{tidy(((proc.stdout or '') + ' ' + (proc.stderr or '')).strip())}"
         )
 
     # btcli reports a refused transfer as {"success": false} and still exits
@@ -393,6 +397,30 @@ def run_btcli(
         raise BtcliError(detail)
 
     return payload
+
+
+def read_with_retry(call, attempts: int = 2, pause: float = 1.0):
+    """Run a read that may come back empty, once more before giving up.
+
+    Only for reads. btcli occasionally exits 0 having printed nothing —
+    seen in production on `wallet list`, on the second call in a row,
+    where it cost a whole balance refresh. A retry is free there because
+    nothing is signed and nothing moves; the same forgiveness applied to
+    a transfer would be how a payment gets made twice.
+    """
+    last = None
+    for attempt in range(attempts):
+        try:
+            return call()
+        except BtcliError as exc:
+            last = exc
+            if "printed no JSON result" not in str(exc):
+                raise            # a real refusal, not an empty read
+            log.warning("empty btcli read (attempt %d/%d): %s",
+                        attempt + 1, attempts, exc)
+            if attempt + 1 < attempts:
+                time.sleep(pause)
+    raise last
 
 
 def list_wallets(wallet_path: str, run=subprocess.run, timeout: int = 30) -> dict:

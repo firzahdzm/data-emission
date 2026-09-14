@@ -982,20 +982,59 @@ details.panel > summary:not([role]):hover { color: var(--sn-text); }
 
 #bulk-unstake-btn:disabled { opacity: 0.45; }
 
-/* One amount per wallet, inside the shared dialog. */
-.sn-row {
+/* One amount per wallet, inside the shared dialog.
+   Selectors are id-prefixed on purpose: pico styles form fields through
+   a chain of :not() selectors that outranks a plain `.sn-row input`, so
+   the rows rendered at full form height — five wallets filled the
+   dialog and the rest were a scroll away. */
+#sn-modal .sn-row {
     display: grid;
-    grid-template-columns: 1fr 7.5rem;
+    grid-template-columns: 1fr 6.5rem;
     align-items: center;
-    gap: 0.6rem;
-    padding: 0.2rem 0;
+    gap: 0.75rem;
+    padding: 0.25rem 0;
+    border-bottom: 1px solid var(--sn-border);
 }
-.sn-row label { margin: 0; font-size: 0.8rem; }
-.sn-row-hint {
+#sn-modal .sn-row:last-child { border-bottom: none; }
+#sn-modal .sn-row label {
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.2;
+}
+#sn-modal .sn-row-hint {
     display: block;
     font-size: 0.68rem;
     color: var(--sn-text-dim);
 }
-.sn-row input { margin: 0; padding: 0.3rem 0.5rem; font-size: 0.85rem; }
-.sn-row-check { grid-template-columns: 1.2rem 1fr; }
-.sn-row-check input { justify-self: start; width: 1rem; height: 1rem; }
+#sn-modal .sn-row input[type="number"] {
+    margin: 0;
+    padding: 0.25rem 0.45rem;
+    height: auto;
+    font-size: 0.82rem;
+    text-align: right;
+}
+/* The stepper arrows eat a third of a narrow field and nobody nudges a
+   transfer by 0.0001 with a mouse. */
+#sn-modal .sn-row input[type="number"]::-webkit-inner-spin-button,
+#sn-modal .sn-row input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+#sn-modal .sn-row input[type="number"] { -moz-appearance: textfield; }
+
+#sn-modal .sn-row-check { grid-template-columns: 1.15rem 1fr; gap: 0.6rem; }
+#sn-modal .sn-row-check input[type="checkbox"] {
+    margin: 0;
+    width: 1rem;
+    height: 1rem;
+    justify-self: start;
+}
+/* Scroll inside the dialog, not the page, and leave room for the
+   buttons: the list is fifteen wallets long and the confirm button must
+   never be the thing that scrolls out of reach. */
+#sn-modal-rows {
+    margin: 0 0 1rem;
+    max-height: min(22rem, 45vh);
+    overflow-y: auto;
+    padding-right: 0.4rem;
+}

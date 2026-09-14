@@ -514,3 +514,17 @@ class TestEveryPageKnowsWhoIsLookingAtIt:
         r = self._client(app, monkeypatch).get(path)
         assert r.status_code == 200
         assert 'action="/logout"' not in r.text
+
+
+def test_the_dialog_rows_outrank_picos_form_styling():
+    """pico styles form fields through a chain of :not() selectors that
+    outranks a plain `.sn-row input`, so the amount fields rendered at
+    full form height — five wallets filled the dialog and the other ten
+    were a scroll away. The overrides have to be id-prefixed to win."""
+    from pathlib import Path
+
+    import emission_tracker.web.routes_pages as rp
+
+    css = (Path(rp.__file__).parent / "static" / "style.css").read_text()
+    assert '#sn-modal .sn-row input[type="number"]' in css
+    assert '#sn-modal .sn-row-check input[type="checkbox"]' in css

@@ -166,3 +166,78 @@ def test_subnet_stake_is_stored_and_scoped_to_the_tracked_subnet(memory_db):
     assert row["stake_alpha_as_tao_rao"] == 12_400_000_000
     # Kept separately from the all-subnet total, not conflated with it.
     assert row["balance_staked_rao"] == 2
+
+
+class TestChainFirstBalances:
+    """Wallet figures come from the chain through the signer when one
+    answers. TaoStats stays as the fallback: it is capped at five calls
+    a minute — four minutes for one refresh — and it reported an empty
+    alpha position for a wallet that held 44 α, which put a stale zero
+    on a card beside a working unstake button."""
+
+    class _Signer:
+        def __init__(self, balances=None, boom=None, ok=True):
+            self.balances, self.boom, self.ok = balances, boom, ok
+
+        def send(self, request):
+            if self.boom:
+                raise self.boom
+            from emission_tracker.signer.protocol import SignResult
+
+            return SignResult(self.ok, request.op, "", balances=self.balances,
+                              error=None if self.ok else "nope")
+
+    def _run(self, conn, signer):
+        ts, gr = _FakeTaoStats(), _FakeGradients()
+        refresh_balances(
+            conn=conn, taostats=ts, gradients=gr,
+            rate_limiter=TokenBucket(capacity=100, refill_per_second=100),
+            request_interval_seconds=0, subnet_id=56, signer=signer,
+        )
+        return ts
+
+    def test_the_chain_reading_is_used_and_taostats_is_not_called(self, memory_db):
+        _seed(memory_db)
+        chain = {ck: {"free_rao": 3_000_000_000,
+                      "stake_alpha_rao": 44_000_000_000,
+                      "stake_alpha_as_tao_rao": 700_000_000}
+                 for ck in (CK_A, CK_B)}
+        ts = self._run(memory_db, self._Signer(chain))
+
+        row = memory_db.execute(
+            "SELECT * FROM coldkey_balances WHERE coldkey_ss58 = ?", (CK_A,)
+        ).fetchone()
+        assert row["balance_free_rao"] == 3_000_000_000
+        assert row["stake_alpha_rao"] == 44_000_000_000
+        assert ts.asked == []                       # quota untouched
+
+    def test_a_signer_that_is_down_falls_back_rather_than_failing(self, memory_db):
+        """A missing signer must slow the refresh back to the API, not
+        leave every card blank."""
+        _seed(memory_db)
+        ts = self._run(memory_db, self._Signer(boom=OSError("no socket")))
+        assert sorted(ts.asked) == sorted([CK_A, CK_B])
+
+    def test_a_wallet_the_signer_cannot_read_falls_back_on_its_own(self, memory_db):
+        """A coldkey with no wallet on this host still has figures worth
+        showing, and the other wallets still skip the API."""
+        _seed(memory_db)
+        chain = {CK_A: {"free_rao": 5, "stake_alpha_rao": 0,
+                        "stake_alpha_as_tao_rao": 0},
+                 CK_B: None}
+        ts = self._run(memory_db, self._Signer(chain))
+        assert ts.asked == [CK_B]
+
+    def test_the_subnet_wide_columns_are_left_unknown_not_guessed(self, memory_db):
+        """The chain read covers one subnet; a wallet can hold stake on
+        others. Writing the subnet figure into a column that means
+        "everywhere" would be a wrong number rather than a missing one."""
+        _seed(memory_db)
+        self._run(memory_db, self._Signer({CK_A: {
+            "free_rao": 1, "stake_alpha_rao": 2, "stake_alpha_as_tao_rao": 3,
+        }}))
+        row = memory_db.execute(
+            "SELECT * FROM coldkey_balances WHERE coldkey_ss58 = ?", (CK_A,)
+        ).fetchone()
+        assert row["balance_staked_rao"] is None
+        assert row["balance_total_rao"] is None

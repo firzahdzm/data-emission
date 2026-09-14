@@ -140,6 +140,24 @@ def hotkeys_with_stake(
     return found
 
 
+def subnet_stake(payload: dict, netuid: int) -> tuple[int, int]:
+    """Total stake on one subnet: (alpha in rao, its value in tao rao).
+
+    btcli's own field names read backwards: `stake_value` is the alpha
+    amount and `value` is what it is worth in TAO. Verified against a
+    wallet whose figures were known — reading them the other way round
+    is how a 44 α position was once reported as 0.71 α.
+    """
+    alpha = tao = 0.0
+    for rows in (payload.get("stake_info") or {}).values():
+        for row in rows or []:
+            if row.get("netuid") != netuid:
+                continue
+            alpha += float(row.get("stake_value") or 0)
+            tao += float(row.get("value") or 0)
+    return round(alpha * RAO), round(tao * RAO)
+
+
 def unlisted_stake(payload: dict, netuid: int, allowed: list[str]) -> list[str]:
     """Hotkeys holding stake here that the roster does not mention.
 

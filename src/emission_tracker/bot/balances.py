@@ -12,6 +12,43 @@ from emission_tracker.taostats_client import TaoStatsClient
 log = logging.getLogger(__name__)
 
 
+class _ChainAccount:
+    """Shapes a signer reading like a TaoStats account.
+
+    Only the fields the row below writes. `staked_rao` and `total_rao`
+    are left unknown rather than guessed: the chain read covers the
+    configured subnet, and a wallet can hold stake on others — writing
+    the subnet figure into a column that means "everywhere" would be a
+    wrong number rather than a missing one.
+    """
+
+    def __init__(self, entry: dict):
+        self.free_rao = entry.get("free_rao")
+        self.stake_alpha_rao = entry.get("stake_alpha_rao")
+        self.stake_alpha_as_tao_rao = entry.get("stake_alpha_as_tao_rao")
+        self.staked_rao = None
+        self.total_rao = None
+
+
+def _chain_balances(signer) -> dict:
+    """Every wallet's figures from the signer, or {} if it cannot answer.
+
+    Never raises: a signer that is down must slow the refresh back to
+    the TaoStats path, not stop it.
+    """
+    from emission_tracker.signer.protocol import OP_BALANCES, SignRequest
+
+    try:
+        result = signer.send(SignRequest(OP_BALANCES, ""))
+    except Exception as exc:
+        log.warning("chain balances unavailable, falling back to TaoStats: %s", exc)
+        return {}
+    if not result.ok:
+        log.warning("chain balances refused: %s", result.error)
+        return {}
+    return {k: v for k, v in (result.balances or {}).items() if v}
+
+
 @dataclass
 class BalanceRefreshResult:
     fetched_at: datetime
@@ -31,6 +68,7 @@ def refresh_balances(
     request_interval_seconds: float,
     subnet_id: int,
     coldkeys: list[str] | None = None,
+    signer=None,
 ) -> BalanceRefreshResult:
     """Fetch wallet and tournament balances for known coldkeys.
 
@@ -42,6 +80,18 @@ def refresh_balances(
     Runs on its own schedule, well apart from the emission snapshot: balances
     move slowly and the snapshot loop is already long, so folding these
     requests into it would stretch it for no gain.
+
+    Wallet figures come from the chain through the signer when one is
+    reachable, and from TaoStats otherwise. The chain is both faster —
+    thirty-five seconds for fifteen wallets against four minutes
+    against a five-per-minute limit — and authoritative: TaoStats
+    reported an empty alpha position for a wallet that held 44 α, which
+    put a stale zero on a card next to a working unstake button. The
+    TaoStats path stays for deployments with no signer, and for a
+    coldkey whose wallet is not on this host.
+
+    Tournament balances have no second source and always come from the
+    Gradients API.
 
     Every coldkey gets a row, even when a fetch fails — the row then carries
     NULLs, which keeps the dashboard honest about what is missing instead of
@@ -64,20 +114,29 @@ def refresh_balances(
     wallet_ok = wallet_fail = 0
     tourn_ok = tourn_absent = tourn_fail = 0
 
-    for i, coldkey in enumerate(coldkeys):
-        if i > 0 and request_interval_seconds > 0:
-            time.sleep(request_interval_seconds)
+    # One call for every wallet, rather than one per coldkey in the loop
+    # below: reading the chain is not rate limited, and asking once
+    # keeps the whole set consistent with a single moment.
+    from_chain = _chain_balances(signer) if signer is not None else {}
 
-        # TaoStats is the rate-limited one; Gradients needs no key and is
-        # only throttled by the same pacing loop.
-        rate_limiter.acquire()
-        try:
-            account = taostats.get_account(coldkey, subnet_id=subnet_id)
+    for i, coldkey in enumerate(coldkeys):
+        chain = from_chain.get(coldkey)
+        if chain and chain.get("free_rao") is not None:
+            account = _ChainAccount(chain)
             wallet_ok += 1
-        except Exception as exc:
-            log.warning("coldkey=%s wallet fetch failed: %s", coldkey, exc)
-            account = None
-            wallet_fail += 1
+        else:
+            if i > 0 and request_interval_seconds > 0:
+                time.sleep(request_interval_seconds)
+            # TaoStats is the rate-limited one; Gradients needs no key and is
+            # only throttled by the same pacing loop.
+            rate_limiter.acquire()
+            try:
+                account = taostats.get_account(coldkey, subnet_id=subnet_id)
+                wallet_ok += 1
+            except Exception as exc:
+                log.warning("coldkey=%s wallet fetch failed: %s", coldkey, exc)
+                account = None
+                wallet_fail += 1
 
         try:
             tournament = gradients.get_tournament_balance(coldkey)
@@ -151,8 +210,10 @@ class BalanceRunner:
         rate_limiter: TokenBucket,
         request_interval_seconds: float,
         subnet_id: int,
+        signer=None,
     ):
         self._conn_factory = conn_factory
+        self._signer = signer
         self._taostats = taostats
         self._gradients = gradients
         self._rate_limiter = rate_limiter
@@ -181,11 +242,24 @@ class BalanceRunner:
         """
         return self._target
 
+    # Measured on the host: one wallet balance and one stake list take
+    # about 2.4s together over the chain, and nothing paces them.
+    CHAIN_SECONDS_PER_COLDKEY = 2.4
+
     def estimate_seconds(self, coldkey_count: int) -> int:
-        """Roughly how long a run takes: the pacing gaps plus per-coldkey
-        request time (two APIs, measured at ~1.5s together)."""
+        """Roughly how long a run takes.
+
+        With a signer the chain answers at its own speed — no pacing
+        gaps, no rate limit — and the old estimate would have promised
+        four minutes for a thirty-five second job, which is its own kind
+        of wrong: it decides how long the progress bar claims to need.
+        """
         if coldkey_count <= 0:
             return 0
+        if self._signer is not None:
+            # Plus the tournament call per coldkey, which still goes out
+            # over HTTP and is paced with the rest.
+            return int(coldkey_count * (self.CHAIN_SECONDS_PER_COLDKEY + 1.0))
         gaps = (coldkey_count - 1) * self._request_interval_seconds
         return int(gaps + coldkey_count * 1.5)
 
@@ -231,6 +305,7 @@ class BalanceRunner:
                 request_interval_seconds=self._request_interval_seconds,
                 subnet_id=self._subnet_id,
                 coldkeys=coldkeys,
+                signer=self._signer,
             )
         except Exception:
             log.exception("manual balance refresh failed")

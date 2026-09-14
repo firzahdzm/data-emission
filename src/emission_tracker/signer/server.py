@@ -22,6 +22,7 @@ from emission_tracker.signer.btcli import (
     free_balance_rao,
     hotkeys_with_stake,
     list_wallets,
+    subnet_stake,
     unlisted_stake,
     run_btcli,
     stake_hotkeys_argv,
@@ -271,18 +272,51 @@ class Signer:
         return free_balance_rao(payload, wallet_name)
 
     def balances(self) -> dict:
-        """Free balance per rostered coldkey, straight from the chain.
+        """Everything the dashboard shows about a wallet, from the chain.
 
-        Signs nothing and takes no unlock value: it exists so the sweep
-        and distribute dialogs can show figures fresher than the
-        dashboard's once-a-day TaoStats read. A wallet that cannot be
-        read comes back as None, never as zero.
+        Per rostered coldkey: free balance, stake on the configured
+        subnet, and what that stake is worth. Signs nothing and takes no
+        unlock value.
+
+        This replaced a TaoStats read that was rate-limited to five
+        calls a minute — four minutes for one refresh — and that
+        intermittently reported an empty alpha position for a wallet
+        that held one. Reading the chain directly takes about
+        thirty-five seconds for the same fifteen wallets and cannot
+        disagree with it.
+
+        A wallet that cannot be read comes back as None throughout,
+        never as zero: zero means empty and None means unknown, and the
+        two lead to different actions.
         """
         wallets = list_wallets(run=self._run, wallet_path=self._config.wallet_path)
         out = {}
         for coldkey in self._roster():
             name = wallets.get(coldkey)
-            out[coldkey] = self._free_rao(name) if name else None
+            if not name:
+                out[coldkey] = None
+                continue
+            entry = {"free_rao": self._free_rao(name),
+                     "stake_alpha_rao": None, "stake_alpha_as_tao_rao": None}
+            try:
+                payload = run_btcli(
+                    stake_hotkeys_argv(name, self._config.wallet_path),
+                    env=base_env(), timeout=STAKE_LIST_TIMEOUT, run=self._run,
+                )
+                alpha, as_tao = subnet_stake(payload, self._config.netuid)
+                entry["stake_alpha_rao"] = alpha
+                entry["stake_alpha_as_tao_rao"] = as_tao
+            except BtcliError as exc:
+                # A coldkey with no stake anywhere makes btcli print
+                # "No stakes found" and exit non-zero. That is a real
+                # zero, not a failed read, and calling it unknown would
+                # leave the card blank for every wallet that is empty.
+                if "no stakes found" in str(exc).lower():
+                    entry["stake_alpha_rao"] = 0
+                    entry["stake_alpha_as_tao_rao"] = 0
+                else:
+                    log.warning("stake read failed for %s: %s", coldkey, exc)
+            out[coldkey] = entry
         return out
 
     def _sweep(self, request, name, env) -> SignResult:

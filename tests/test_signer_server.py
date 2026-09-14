@@ -623,24 +623,72 @@ class TestDistribute:
 
 
 class TestReadingEveryBalance:
-    """What fills both dialogs. It signs nothing, so it takes no unlock
-    value — and the dialogs are worth having only if their figures are
-    fresher than the dashboard's once-a-day read."""
+    """What fills both treasury dialogs and, now, the coldkey cards.
+    It signs nothing, so it takes no unlock value — and it replaced a
+    TaoStats read that was capped at five calls a minute and that
+    intermittently reported an empty alpha position for a wallet that
+    held one."""
 
-    def test_it_reports_each_rostered_coldkey(self, tmp_path):
-        rec = _Recorder(results={"balance": {
-            "balances": {"prj1": {"free": 3.25}}
-        }})
+    def test_it_reports_balance_and_subnet_stake_per_coldkey(self, tmp_path):
+        rec = _Recorder(results={
+            "balance": {"balances": {"prj1": {"free": 3.25}}},
+            "stake": {"stake_info": {HK: [
+                # btcli's field names read backwards: stake_value is the
+                # alpha amount, value is what it is worth in TAO.
+                {"netuid": 56, "stake_value": 44.0212, "value": 0.7077},
+                {"netuid": 24, "stake_value": 0.0087, "value": 0.00004},
+            ]}},
+        })
         signer = _signer(rec, tmp_path, hotkeys={CK: [HK]})
-        out = signer.balances()
-        assert out == {CK: 3_250_000_000}
+
+        assert signer.balances() == {CK: {
+            "free_rao": 3_250_000_000,
+            "stake_alpha_rao": 44_021_200_000,
+            "stake_alpha_as_tao_rao": 707_700_000,
+        }}
+
+    def test_stake_from_other_subnets_is_left_out(self, tmp_path):
+        rec = _Recorder(results={
+            "balance": {"balances": {"prj1": {"free": 1.0}}},
+            "stake": {"stake_info": {HK: [
+                {"netuid": 24, "stake_value": 9.0, "value": 0.04},
+            ]}},
+        })
+        got = _signer(rec, tmp_path, hotkeys={CK: [HK]}).balances()
+        assert got[CK]["stake_alpha_rao"] == 0
 
     def test_a_wallet_that_cannot_be_read_is_reported_as_unknown(
         self, tmp_path
     ):
+        """None, never zero: zero means empty and None means we could
+        not tell, and a sweep treats them differently."""
         rec = _Recorder(results={"balance": {"balances": {}}})
-        signer = _signer(rec, tmp_path, hotkeys={CK: [HK]})
-        assert signer.balances() == {CK: None}
+        got = _signer(rec, tmp_path, hotkeys={CK: [HK]}).balances()
+        assert got[CK]["free_rao"] is None
+
+    def test_a_coldkey_with_no_wallet_on_this_host_is_none(self, tmp_path):
+        rec = _Recorder()
+        got = _signer(rec, tmp_path, hotkeys={"5Stranger": []}).balances()
+        assert got == {"5Stranger": None}
+
+    def test_a_wallet_with_no_stake_anywhere_reads_as_zero(self, tmp_path):
+        """btcli prints "No stakes found" and exits non-zero for an
+        empty coldkey. Read as a failure it would blank the card of
+        every wallet that has nothing staked."""
+        def run(argv, **kwargs):
+            class R:
+                returncode = 0 if argv[1:3] != ["stake", "list"] else 1
+                stderr = "❌ No stakes found for coldkey ss58: 5Fnh"
+                stdout = (json.dumps(WALLETS) if argv[1:3] == ["wallet", "list"]
+                          else json.dumps({"balances": {"prj1": {"free": 2.0}}}))
+            return R()
+
+        got = _signer(run, tmp_path, hotkeys={CK: [HK]}).balances()
+        assert got[CK] == {
+            "free_rao": 2_000_000_000,
+            "stake_alpha_rao": 0,
+            "stake_alpha_as_tao_rao": 0,
+        }
 
 
 def test_the_balance_op_is_answered_without_touching_a_wallet(tmp_path):
@@ -653,5 +701,5 @@ def test_the_balance_op_is_answered_without_touching_a_wallet(tmp_path):
     res = signer.handle(SignRequest(OP_BALANCES, ""))
 
     assert res.ok
-    assert res.balances == {CK: 1_500_000_000}
+    assert res.balances[CK]["free_rao"] == 1_500_000_000
     assert not any("transfer" in c for c in rec.calls)

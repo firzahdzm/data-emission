@@ -20,6 +20,7 @@ def build_scheduler(
     client: TaoStatsClient,
     rate_limiter: TokenBucket,
     gradients: GradientsClient | None = None,
+    signer=None,
 ) -> BackgroundScheduler:
     scheduler = BackgroundScheduler()
 
@@ -58,6 +59,7 @@ def build_scheduler(
                     rate_limiter=rate_limiter,
                     request_interval_seconds=config.polling.request_interval_seconds,
                     subnet_id=config.subnet_id,
+                    signer=signer,
                 )
             except Exception:
                 log.exception("balance refresh failed")

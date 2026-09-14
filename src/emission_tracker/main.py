@@ -99,6 +99,7 @@ def create_app(
 
         # One runner for both the admin button and the startup seed, so a
         # click can never overlap a run already in flight.
+        app.state.signer = SignerClient(config.signer_socket)
         app.state.balance_runner = BalanceRunner(
             conn_factory=conn_factory,
             taostats=client,
@@ -106,11 +107,14 @@ def create_app(
             rate_limiter=rate_limiter,
             request_interval_seconds=config.polling.request_interval_seconds,
             subnet_id=config.subnet_id,
+            # Wallet figures come from the chain through the signer when
+            # it answers, and from TaoStats when it does not.
+            signer=app.state.signer,
         )
-        app.state.signer = SignerClient(config.signer_socket)
 
         scheduler = build_scheduler(
-            config, conn_factory, client, rate_limiter, gradients=gradients
+            config, conn_factory, client, rate_limiter, gradients=gradients,
+            signer=app.state.signer,
         )
         scheduler.start()
 

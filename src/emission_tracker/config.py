@@ -53,7 +53,12 @@ class PollingConfig(BaseModel):
     run_on_startup: bool = True
     # Wallet and tournament balances move slowly and are read on their own
     # schedule, so they never lengthen the emission snapshot loop.
-    balance_interval_hours: int = Field(default=24, gt=0)
+    # Hourly by default. It was daily because a refresh cost fifteen
+    # TaoStats calls against a five-per-minute limit and took four
+    # minutes; read from the chain it takes about thirty-five seconds
+    # and costs no quota at all, so the figures on a card no longer
+    # need to be most of a day old.
+    balance_interval_hours: int = Field(default=1, gt=0)
 
 
 class DatabaseConfig(BaseModel):

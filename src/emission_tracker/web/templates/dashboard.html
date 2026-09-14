@@ -323,7 +323,12 @@ _confirm.addEventListener('click', async () => {
                 {% elif la.outcome_unknown %}
                     ⚠ tidak pasti — periksa chain: {{ (la.error or '')[:50] }}
                 {% elif la.status == 'ok' %}
-                    ✓ {{ la.op == 'unstake_all' and 'unstake' or 'fee' }} berhasil
+                    {# Same names as OP_LABEL in the script below; the
+                       server renders this first and the script repaints
+                       it, so a mismatch would show one word then another. #}
+                    ✓ {{ {'pay_tournament': 'fee', 'unstake_all': 'unstake',
+                          'sweep': 'pooling', 'distribute': 'distribusi'}
+                         .get(la.op, la.op) }} berhasil
                     {% if la.amount_rao %}({{ la.amount_rao | tao(2) }}){% endif %}
                 {% else %}
                     ✕ gagal — {{ (la.error or 'tanpa keterangan')[:60] }}
@@ -686,6 +691,17 @@ _confirm.addEventListener('click', async () => {
     // Repaint one card's outcome strip. Server-rendered on load, then kept
     // current from here — without this the strip still showed the previous
     // attempt after a click, which reads as "nothing happened".
+    // What each operation is called on a card. There are four now, and
+    // the strip used to say "fee" for anything that was not an unstake
+    // — so a wallet that had just been swept into the treasury
+    // reported a tournament fee it never paid.
+    const OP_LABEL = {
+        pay_tournament: 'fee',
+        unstake_all: 'unstake',
+        sweep: 'pooling',
+        distribute: 'distribusi',
+    };
+
     function paintCardStatus(coldkey, a) {
         const el = document.querySelector(
             `.coldkey-last-action[data-coldkey="${coldkey}"]`);
@@ -701,7 +717,7 @@ _confirm.addEventListener('click', async () => {
             // progress" would be a lie the operator could act on —
             // closing the tab believing everything was already in
             // flight, when most of it had not been sent.
-            el.className = 'coldkey-last-action coldkey-last-pending';
+            el.className = 'coldkey-last-action coldkey-last-queued';
             el.textContent = '⏳ menunggu giliran';
         } else if (a.status === 'pending') {
             el.innerHTML = '<span class="spinner-dot"></span> sedang proses…';
@@ -709,7 +725,7 @@ _confirm.addEventListener('click', async () => {
             const amt = a.amount_rao
                 ? ` (${(a.amount_rao / 1e9).toFixed(2)} τ)` : '';
             el.textContent =
-                `✓ ${a.op === 'unstake_all' ? 'unstake' : 'fee'} berhasil${amt}`;
+                `✓ ${OP_LABEL[a.op] || a.op || 'aksi'} berhasil${amt}`;
         } else if (a.outcome_unknown) {
             // Never "gagal": a failure reads as "nothing happened" and
             // invites a retry, and a retry here can pay twice.

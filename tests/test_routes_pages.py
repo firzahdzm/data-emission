@@ -646,3 +646,53 @@ def test_queued_cards_are_not_repainted_from_yesterdays_history(
 
     assert "const batchState = new Map();" in html
     assert "if (batchState.has(a.coldkey_ss58)) continue;" in html
+
+
+class TestCardStripNamesTheRightOperation:
+    """The strip said "fee" for anything that was not an unstake, so a
+    wallet that had just been swept into the treasury reported a
+    tournament fee it never paid — on the one surface people read to
+    find out what happened to their money."""
+
+    def _html(self, app, monkeypatch):
+        from types import SimpleNamespace
+
+        monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+        app.state.config = SimpleNamespace(
+            admin_users=["alice"], subnet_id=56, treasury_coldkey="5HER",
+            tournament=SimpleNamespace(address="5Ef5", fees_tao={"text": 0.7}),
+        )
+        return TestClient(app).get("/", headers={"X-Remote-User": "alice"}).text
+
+    def test_every_operation_has_its_own_word(self, app, monkeypatch):
+        html = self._html(app, monkeypatch)
+        for op, word in (("pay_tournament", "fee"), ("unstake_all", "unstake"),
+                         ("sweep", "pooling"), ("distribute", "distribusi")):
+            assert f"{op}: '{word}'" in html
+
+    def test_the_server_and_the_script_use_the_same_words(
+        self, app, monkeypatch
+    ):
+        """The server renders the strip and the script repaints it; a
+        mismatch shows one word and then another. The template's map is
+        evaluated server-side, so it is checked in the source."""
+        from pathlib import Path
+
+        import emission_tracker.web.routes_pages as rp
+
+        template = (Path(rp.__file__).parent / "templates"
+                    / "dashboard.html").read_text()
+        assert "'sweep': 'pooling'" in template      # rendered by Jinja
+        assert "sweep: 'pooling'" in template        # used by the script
+
+    def test_waiting_and_working_look_different(self, app, monkeypatch):
+        """They shared a colour, so a run looked like every wallet was
+        already in flight — which is exactly what tells someone it is
+        safe to close the tab."""
+        from pathlib import Path
+
+        import emission_tracker.web.routes_pages as rp
+
+        assert "coldkey-last-queued" in self._html(app, monkeypatch)
+        css = (Path(rp.__file__).parent / "static" / "style.css").read_text()
+        assert ".coldkey-last-queued" in css

@@ -1050,3 +1050,12 @@ details.panel > summary:not([role]):hover { color: var(--sn-text); }
     text-transform: none;
     color: var(--sn-text-dim);
 }
+
+/* Waiting is not working. They were the same colour, so a run looked
+   like every wallet was already in flight — the one thing the strip
+   must never imply, since it is what tells someone it is safe to close
+   the tab. */
+.coldkey-last-queued {
+    color: var(--sn-text-dim);
+    background: #64748b18;
+}

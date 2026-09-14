@@ -136,8 +136,8 @@ class TestLoggingOut:
         assert client.get("/").status_code == 200
 
         r = client.post("/logout")
-        assert r.status_code == 200
-        assert "sudah keluar" in r.text.lower()
+        assert r.status_code == 303
+        assert r.headers["location"] == "/login"
 
         assert client.get("/").status_code == 303
 
@@ -261,3 +261,17 @@ def test_the_proxy_header_is_ignored_once_our_own_login_exists(client):
         "/api/tournament/pay/5Abc", headers={"X-Remote-User": "admin"}
     )
     assert r.status_code == 401
+
+
+def test_logout_lands_on_the_login_page_not_on_a_notice(client):
+    """The click's whole purpose is to get back to the login screen.
+    An interstitial that says "you are logged out" and then asks to be
+    clicked again is a step nobody wants; it existed only while nginx
+    Basic Auth made a redirect bounce straight back to the dashboard."""
+    _login(client)
+    r = client.post("/logout")
+
+    assert r.status_code == 303
+    assert r.headers["location"] == "/login"
+    # And the cookie is gone in the same response, not on the next one.
+    assert "sn_session=" in r.headers.get("set-cookie", "")

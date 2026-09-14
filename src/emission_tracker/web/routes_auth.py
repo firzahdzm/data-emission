@@ -264,24 +264,29 @@ def register_auth(app: FastAPI) -> None:
     @app.post("/logout")
     @app.get("/logout")
     def logout(request: Request):
-        # A page, not a redirect to /login. Redirecting looks broken in
-        # the one case that matters most: while nginx Basic Auth is still
-        # in front, the browser re-sends its credentials, /login sees an
-        # authenticated visitor and bounces straight back to the
-        # dashboard — the click appears to do nothing at all. A page says
-        # what happened, and says the part the app cannot do anything
-        # about: only the browser can forget Basic Auth credentials.
-        still_basic_auth = not login_required(request) and bool(
-            request.headers.get("x-remote-user")
-        )
-        message = (
-            "Sesi di aplikasi sudah dihapus. Tapi situs ini masih dijaga "
-            "login bawaan browser, dan hanya browser yang bisa melupakan "
-            "itu — tutup semua jendela browser untuk keluar sepenuhnya."
-            if still_basic_auth
-            else "Kamu sudah keluar."
-        )
-        response = _render_logged_out(request, message)
+        response = None
+        if login_required(request):
+            # Straight back to the login page: the session is this
+            # app's to end, so ending it has a visible result and no
+            # caveat to explain.
+            response = RedirectResponse("/login", status_code=303)
+        else:
+            # No login of our own configured — nginx Basic Auth is
+            # still in front, or this is a dev box. Redirecting would
+            # look broken: the browser re-sends its credentials, /login
+            # sees an authenticated visitor and bounces straight back to
+            # the dashboard, so the click appears to do nothing. A page
+            # says what happened, including the part the app cannot do:
+            # only the browser can forget Basic Auth credentials.
+            response = _render_logged_out(
+                request,
+                "Sesi di aplikasi sudah dihapus. Tapi situs ini masih "
+                "dijaga login bawaan browser, dan hanya browser yang bisa "
+                "melupakan itu — tutup semua jendela browser untuk keluar "
+                "sepenuhnya."
+                if request.headers.get("x-remote-user")
+                else "Kamu sudah keluar.",
+            )
         response.delete_cookie(sessions.COOKIE_NAME, path="/")
         return response
 

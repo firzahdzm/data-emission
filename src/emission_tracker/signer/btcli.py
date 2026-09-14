@@ -361,12 +361,15 @@ def run_btcli(
     if payload is None:
         # No JSON object anywhere usually means btcli stopped at a prompt
         # we did not answer, which must not be mistaken for success.
+        # Everything known about the call, because the first two
+        # occurrences in production left a message that said only that
+        # something had gone wrong: the command, how it exited, and
+        # what it wrote on each stream.
+        detail = tidy(((proc.stdout or "") + " " + (proc.stderr or "")).strip())
         raise BtcliError(
-            "btcli printed no JSON result: "
-            # stderr as well as stdout: the first time this happened in
-            # production the message was empty, which said only that
-            # something had gone wrong and nothing about what.
-            f"{tidy(((proc.stdout or '') + ' ' + (proc.stderr or '')).strip())}"
+            f"btcli printed no JSON result (exit {proc.returncode}, "
+            f"out {len(proc.stdout or '')}B, err {len(proc.stderr or '')}B) "
+            f"for `{' '.join(argv[1:4])}`: {detail or '(kosong)'}"
         )
 
     # btcli reports a refused transfer as {"success": false} and still exits

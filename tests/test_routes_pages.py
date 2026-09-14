@@ -624,3 +624,25 @@ def test_a_dialog_that_opens_another_one_is_not_cancelled_by_the_first(
     html = TestClient(app).get("/", headers={"X-Remote-User": "alice"}).text
 
     assert "if (dlg.open) return;" in html
+
+
+def test_queued_cards_are_not_repainted_from_yesterdays_history(
+    app, monkeypatch
+):
+    """After each wallet finishes, the page repaints every card from the
+    audit table. A wallet still queued has no row of its own yet, so it
+    was painted with its newest older row — and the moment the first
+    transfer succeeded, every remaining card flashed "berhasil". That
+    reads as transfers that never happened, on the one screen that has
+    to be trusted about money."""
+    from types import SimpleNamespace
+
+    monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+    app.state.config = SimpleNamespace(
+        admin_users=["alice"], subnet_id=56, treasury_coldkey="5HER",
+        tournament=SimpleNamespace(address="5Ef5", fees_tao={"text": 0.7}),
+    )
+    html = TestClient(app).get("/", headers={"X-Remote-User": "alice"}).text
+
+    assert "const batchState = new Map();" in html
+    assert "if (batchState.has(a.coldkey_ss58)) continue;" in html

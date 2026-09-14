@@ -675,6 +675,14 @@ _confirm.addEventListener('click', async () => {
         return '<span class="badge badge-warn">gagal</span>';
     }
 
+    // What this page believes about each wallet in a running batch:
+    // 'queued' or 'running'. While a wallet is in here, the audit table
+    // must not repaint its card — its newest row is still yesterday's,
+    // and painting it made every queued wallet flash "berhasil" the
+    // moment the first one finished, which reads as fifteen transfers
+    // that never happened.
+    const batchState = new Map();
+
     // Repaint one card's outcome strip. Server-rendered on load, then kept
     // current from here — without this the strip still showed the previous
     // attempt after a click, which reads as "nothing happened".
@@ -748,6 +756,9 @@ _confirm.addEventListener('click', async () => {
         for (const a of data.actions) {
             if (painted.has(a.coldkey_ss58)) continue;
             painted.add(a.coldkey_ss58);
+            // A wallet still queued in this batch has no row of its own
+            // yet; its newest one belongs to an earlier run.
+            if (batchState.has(a.coldkey_ss58)) continue;
             paintCardStatus(a.coldkey_ss58, a);
         }
         actionsBody.innerHTML = '';
@@ -1026,15 +1037,22 @@ _confirm.addEventListener('click', async () => {
             // of this run is the first thing to make visible, and a
             // card left blank until its turn looks like one that was
             // never selected.
-            chosen.forEach(c => paintCardStatus(c.coldkey, {
-                status: 'queued', op: 'unstake_all', requested_by: '' }));
+            chosen.forEach(c => {
+                batchState.set(c.coldkey, 'queued');
+                paintCardStatus(c.coldkey, {
+                    status: 'queued', op: 'unstake_all', requested_by: '' });
+            });
 
             const failures = [];
             let done = 0, unknown = 0;
             for (const [i, c] of chosen.entries()) {
                 bulkBtn.textContent = `Unstake ${i + 1}/${chosen.length}…`;
                 note.textContent = `unstake ${c.label} (${i + 1}/${chosen.length})…`;
+                batchState.set(c.coldkey, 'running');
                 const outcome = await unstakeOne(c.coldkey, ans.secret);
+                // Released before the repaint, so the row this wallet
+                // just wrote is the one its card shows.
+                batchState.delete(c.coldkey);
                 if (outcome.state === 'ok') done += 1;
                 else if (outcome.state === 'unknown') unknown += 1;
                 else failures.push(`${c.label}: ${outcome.detail}`);
@@ -1043,6 +1061,7 @@ _confirm.addEventListener('click', async () => {
                 loadActions();
             }
 
+            batchState.clear();
             moneyButtons.forEach(b => { b.disabled = false; });
             bulkBtn.disabled = false;
             bulkBtn.textContent = 'Unstake all';
@@ -1106,11 +1125,15 @@ _confirm.addEventListener('click', async () => {
 
         let done = 0, unknown = 0;
         const failures = [];
-        jobs.forEach(j => paintCardStatus(j.cardColdkey, {
-            status: 'queued', op: j.op, requested_by: '' }));
+        jobs.forEach(j => {
+            batchState.set(j.cardColdkey, 'queued');
+            paintCardStatus(j.cardColdkey, {
+                status: 'queued', op: j.op, requested_by: '' });
+        });
         for (const [i, job] of jobs.entries()) {
             button.textContent = `${i + 1}/${jobs.length}…`;
             note.textContent = `${job.label} (${i + 1}/${jobs.length})…`;
+            batchState.set(job.cardColdkey, 'running');
             paintCardStatus(job.cardColdkey, { status: 'pending', op: job.op,
                                                requested_by: '' });
             try {
@@ -1129,9 +1152,17 @@ _confirm.addEventListener('click', async () => {
             } catch (e) {
                 failures.push(`${job.label}: permintaan gagal`);
             }
+            // Distribution signs every transfer from the treasury, so
+            // that one card stays claimed until the whole run ends;
+            // releasing it per job would flash each result over the
+            // next one's "sedang proses".
+            if (job.cardColdkey !== TREASURY || job === jobs[jobs.length - 1]) {
+                batchState.delete(job.cardColdkey);
+            }
             loadActions();
         }
 
+        batchState.clear();
         button.textContent = original;
         others.forEach(b => b && (b.disabled = false));
         note.textContent = '';

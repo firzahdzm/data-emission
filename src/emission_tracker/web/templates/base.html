@@ -232,13 +232,32 @@
             else if (typed) setTimeout(() => inputEl.focus(), 0);
             else if (pw) setTimeout(() => pwEl.focus(), 0);
         }
+        // The close event is queued, not synchronous. When one dialog
+        // leads straight into another — pick wallets, then confirm —
+        // the first dialog's close fires AFTER the second has opened.
+        // Handled naively it settles the SECOND dialog with "cancelled"
+        // and clears the fields the operator is about to fill, which is
+        // exactly what made the bulk unstake look dead: the confirm
+        // dialog appeared, took the typed word and the unlock value,
+        // and its button did nothing, because its promise had already
+        // been resolved by the previous dialog's stale event.
+        //
+        // `dlg.open` tells the two apart with no bookkeeping: a close
+        // event arriving while the dialog is showing again belongs to
+        // an open that has already been superseded.
         dlg.addEventListener('close', () => {
-            // Cleared on every exit — Escape, backdrop, Cancel, and OK alike.
-            // The value must not sit in the DOM after the dialog is gone.
+            if (dlg.open) return;                       // superseded
+            // Cleared on every real exit — Escape, backdrop, Cancel and
+            // OK alike. The unlock value must not sit in the DOM after
+            // the dialog is gone.
             pwEl.value = '';
             inputEl.value = '';
             rowsEl.innerHTML = '';
-            if (currentResolve) { const r = currentResolve; currentResolve = null; r(false); }
+            if (currentResolve) {
+                const r = currentResolve;
+                currentResolve = null;
+                r(false);
+            }
         });
 
         // Authorise: an action that needs the wallet's unlock value, and

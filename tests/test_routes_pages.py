@@ -601,3 +601,26 @@ def test_a_batch_marks_every_selected_card_before_it_starts(app, monkeypatch):
 
     assert "status: 'queued'" in html
     assert "menunggu giliran" in html
+
+
+def test_a_dialog_that_opens_another_one_is_not_cancelled_by_the_first(
+    app, monkeypatch
+):
+    """The <dialog> close event is queued, not synchronous. Pick wallets
+    → confirm means the first dialog's close arrives after the second
+    has opened; handled naively it resolved the SECOND dialog with
+    "cancelled" and wiped its fields. The confirm button then did
+    nothing at all, and no request ever reached the server — three
+    rounds of looking for the fault in the wrong place.
+
+    `dlg.open` separates a real close from a superseded one."""
+    from types import SimpleNamespace
+
+    monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+    app.state.config = SimpleNamespace(
+        admin_users=["alice"], subnet_id=56, treasury_coldkey="5HER",
+        tournament=SimpleNamespace(address="5Ef5", fees_tao={"text": 0.7}),
+    )
+    html = TestClient(app).get("/", headers={"X-Remote-User": "alice"}).text
+
+    assert "if (dlg.open) return;" in html

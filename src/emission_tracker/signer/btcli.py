@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import subprocess
+import threading
 import time
 
 log = logging.getLogger("emission_signer.btcli")
@@ -348,6 +349,40 @@ def extract_json(text: str) -> dict | None:
     return found
 
 
+# Every chain call in this process goes through one pacer.
+#
+# The public finney endpoint refuses connections that arrive back to
+# back, and btcli answers that refusal with silence: exit 0, no output,
+# no error. Spacing one caller's calls is not enough, because the
+# callers do not know about each other — an hourly balance refresh, a
+# treasury dialog reading balances, and a transfer going out can all
+# land in the same second. A single chokepoint is the only place that
+# can see all three.
+#
+# 3s was measured on the host: six calls at that spacing all succeeded,
+# where six back to back failed after the fourth.
+MIN_CHAIN_GAP_SECONDS = 3.0
+
+_chain_lock = threading.Lock()
+_last_chain_call = 0.0
+
+
+def touches_chain(argv: list[str]) -> bool:
+    """`wallet list` reads keyfiles off disk; everything else dials out."""
+    return argv[1:3] != ["wallet", "list"]
+
+
+def pace_chain(argv: list[str], sleep=time.sleep, clock=time.monotonic) -> None:
+    global _last_chain_call
+    if not touches_chain(argv):
+        return
+    with _chain_lock:
+        wait = MIN_CHAIN_GAP_SECONDS - (clock() - _last_chain_call)
+        if wait > 0:
+            sleep(wait)
+        _last_chain_call = clock()
+
+
 def run_btcli(
     argv: list[str],
     env: dict,
@@ -364,6 +399,7 @@ def run_btcli(
     inherited: from a shell btcli would otherwise get a terminal and an
     unanticipated prompt would block until the timeout.
     """
+    pace_chain(argv)
     try:
         stdin_kw = (
             {"input": answers} if answers is not None
@@ -817,6 +853,7 @@ def run_btcli_pty(
     import pty
     import select
 
+    pace_chain(argv)
     pending = [_normalise(p) for p in prompts]
     answered: dict[str, int] = {}
     answered_password = 0

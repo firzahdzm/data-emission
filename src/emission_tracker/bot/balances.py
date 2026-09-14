@@ -84,7 +84,7 @@ def refresh_balances(
     subnet_id: int,
     coldkeys: list[str] | None = None,
     signer=None,
-    chain_pace_seconds: float = 3.0,
+    chain_pace_seconds: float = 0.0,
 ) -> BalanceRefreshResult:
     """Fetch wallet and tournament balances for known coldkeys.
 
@@ -142,8 +142,9 @@ def refresh_balances(
         free_rao = free_by_coldkey.get(coldkey)
         if free_rao is not None:
             if i > 0 and chain_pace_seconds > 0:
-                # Spacing, not rate limiting: the endpoint tolerates a
-                # steady trickle and refuses a burst.
+                # Normally zero: the signer paces every chain call in
+                # one place, where it can also see the transfers and
+                # dialog reads this loop knows nothing about.
                 time.sleep(chain_pace_seconds)
             account = _ChainAccount(free_rao, _chain_stake(signer, coldkey))
             wallet_ok += 1
@@ -234,7 +235,7 @@ class BalanceRunner:
         request_interval_seconds: float,
         subnet_id: int,
         signer=None,
-        chain_pace_seconds: float = 3.0,
+        chain_pace_seconds: float = 0.0,
     ):
         self._conn_factory = conn_factory
         self._signer = signer
@@ -284,7 +285,8 @@ class BalanceRunner:
         if self._signer is not None:
             # One balance call for all of them, then a spaced stake read
             # and a tournament call per coldkey.
-            per = self.CHAIN_SECONDS_PER_COLDKEY + self._chain_pace_seconds + 1.0
+            # The signer's own 3s gap dominates; see MIN_CHAIN_GAP_SECONDS.
+            per = self.CHAIN_SECONDS_PER_COLDKEY + 3.0 + 1.0
             return int(2 + coldkey_count * per)
         gaps = (coldkey_count - 1) * self._request_interval_seconds
         return int(gaps + coldkey_count * 1.5)

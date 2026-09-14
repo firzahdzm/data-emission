@@ -1038,3 +1038,68 @@ class TestReadingEveryBalanceInOneCall:
     def test_a_malformed_payload_yields_nothing_rather_than_raising(self):
         for payload in ({}, {"balances": None}, {"balances": {"x": None}}):
             assert free_balances_all(payload) == {}
+
+
+class TestOneChainPacerForEverything:
+    """The endpoint refuses connections that arrive back to back, and
+    btcli answers that refusal with silence — exit 0, no output, no
+    error. Spacing one caller's calls is not enough: an hourly balance
+    refresh, a treasury dialog reading balances, and a transfer going
+    out do not know about each other and can land in the same second.
+    One chokepoint is the only place that sees all three."""
+
+    def _pacer(self, monkeypatch, gap=3.0):
+        from emission_tracker.signer import btcli as mod
+
+        monkeypatch.setattr(mod, "MIN_CHAIN_GAP_SECONDS", gap)
+        monkeypatch.setattr(mod, "_last_chain_call", 0.0)
+        slept, now = [], [1000.0]
+
+        def sleep(seconds):
+            slept.append(seconds)
+            now[0] += seconds
+
+        return mod, slept, (lambda: now[0]), sleep, now
+
+    def test_a_second_call_waits_out_the_gap(self, monkeypatch):
+        mod, slept, clock, sleep, now = self._pacer(monkeypatch)
+        argv = ["btcli", "wallet", "balance", "--all"]
+
+        mod.pace_chain(argv, sleep=sleep, clock=clock)
+        mod.pace_chain(argv, sleep=sleep, clock=clock)
+
+        assert slept == [3.0]
+
+    def test_a_call_after_a_long_pause_does_not_wait(self, monkeypatch):
+        mod, slept, clock, sleep, now = self._pacer(monkeypatch)
+        argv = ["btcli", "stake", "list"]
+
+        mod.pace_chain(argv, sleep=sleep, clock=clock)
+        now[0] += 60
+        mod.pace_chain(argv, sleep=sleep, clock=clock)
+
+        assert slept == []
+
+    def test_transfers_are_paced_alongside_reads(self, monkeypatch):
+        """A transfer that lands inside a refresh is the case that
+        matters: btcli reports the refusal as "Unable to connect", the
+        action is recorded failed, and the operator sees a payment that
+        did not go out for no reason they can act on."""
+        mod, slept, clock, sleep, now = self._pacer(monkeypatch)
+
+        mod.pace_chain(["btcli", "stake", "list"], sleep=sleep, clock=clock)
+        mod.pace_chain(["btcli", "wallet", "transfer"], sleep=sleep, clock=clock)
+
+        assert slept == [3.0]
+
+    def test_reading_the_local_keyfiles_is_not_paced(self, monkeypatch):
+        """`wallet list` never dials out; making it wait would add three
+        seconds to the front of every operation for nothing."""
+        mod, slept, clock, sleep, now = self._pacer(monkeypatch)
+
+        mod.pace_chain(["btcli", "wallet", "list"], sleep=sleep, clock=clock)
+        mod.pace_chain(["btcli", "wallet", "list"], sleep=sleep, clock=clock)
+
+        assert slept == []
+        assert not mod.touches_chain(["btcli", "wallet", "list"])
+        assert mod.touches_chain(["btcli", "wallet", "balance"])

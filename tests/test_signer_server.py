@@ -672,14 +672,17 @@ class TestReadingEveryBalance:
         assert got == {"5Stranger": None}
 
     def test_a_wallet_with_no_stake_anywhere_reads_as_zero(self, tmp_path):
-        """btcli prints "No stakes found" and exits non-zero for an
-        empty coldkey. Read as a failure it would blank the card of
-        every wallet that has nothing staked."""
+        """btcli prints nothing at all, and exits 0, for a coldkey that
+        holds no stake. Read as a failure it blanked the card of every
+        empty wallet and sent the refresh back to TaoStats for nothing —
+        which is how this surfaced in production ten minutes after the
+        chain-first change went out."""
         def run(argv, **kwargs):
             class R:
-                returncode = 0 if argv[1:3] != ["stake", "list"] else 1
-                stderr = "❌ No stakes found for coldkey ss58: 5Fnh"
-                stdout = (json.dumps(WALLETS) if argv[1:3] == ["wallet", "list"]
+                returncode = 0
+                stderr = ""
+                stdout = ("" if argv[1:3] == ["stake", "list"]
+                          else json.dumps(WALLETS) if argv[1:3] == ["wallet", "list"]
                           else json.dumps({"balances": {"prj1": {"free": 2.0}}}))
             return R()
 
@@ -689,6 +692,20 @@ class TestReadingEveryBalance:
             "stake_alpha_rao": 0,
             "stake_alpha_as_tao_rao": 0,
         }
+
+    def test_a_stake_read_that_truly_fails_stays_unknown(self, tmp_path):
+        """Empty output means zero only because btcli exited cleanly. A
+        non-zero exit is a failure, and must not be rounded to zero."""
+        def run(argv, **kwargs):
+            class R:
+                returncode = 1 if argv[1:3] == ["stake", "list"] else 0
+                stderr = "connection refused"
+                stdout = (json.dumps(WALLETS) if argv[1:3] == ["wallet", "list"]
+                          else json.dumps({"balances": {"prj1": {"free": 2.0}}}))
+            return R()
+
+        got = _signer(run, tmp_path, hotkeys={CK: [HK]}).balances()
+        assert got[CK]["stake_alpha_rao"] is None
 
 
 def test_the_balance_op_is_answered_without_touching_a_wallet(tmp_path):

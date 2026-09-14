@@ -302,20 +302,18 @@ class Signer:
                 payload = run_btcli(
                     stake_hotkeys_argv(name, self._config.wallet_path),
                     env=base_env(), timeout=STAKE_LIST_TIMEOUT, run=self._run,
+                    # A coldkey holding no stake anywhere makes btcli
+                    # print nothing at all and exit 0. That is zero, not
+                    # a failed read; treated as a failure it left every
+                    # empty wallet's card blank and sent the refresh
+                    # back to TaoStats for no reason.
+                    allow_empty=True,
                 )
                 alpha, as_tao = subnet_stake(payload, self._config.netuid)
                 entry["stake_alpha_rao"] = alpha
                 entry["stake_alpha_as_tao_rao"] = as_tao
             except BtcliError as exc:
-                # A coldkey with no stake anywhere makes btcli print
-                # "No stakes found" and exit non-zero. That is a real
-                # zero, not a failed read, and calling it unknown would
-                # leave the card blank for every wallet that is empty.
-                if "no stakes found" in str(exc).lower():
-                    entry["stake_alpha_rao"] = 0
-                    entry["stake_alpha_as_tao_rao"] = 0
-                else:
-                    log.warning("stake read failed for %s: %s", coldkey, exc)
+                log.warning("stake read failed for %s: %s", coldkey, exc)
             out[coldkey] = entry
         return out
 

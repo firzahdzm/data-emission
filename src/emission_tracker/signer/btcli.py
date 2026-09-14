@@ -322,6 +322,7 @@ def run_btcli(
     timeout: int,
     run=subprocess.run,
     answers: str | None = None,
+    allow_empty: bool = False,
 ) -> dict:
     """Run one btcli command and return its JSON payload.
 
@@ -350,6 +351,13 @@ def run_btcli(
     # Not json.loads on the whole stream: btcli prints its prompts to
     # stdout before the JSON, so the stream as a whole never parses.
     payload = extract_json(proc.stdout)
+    if payload is None and allow_empty and not (proc.stdout or "").strip():
+        # `stake list --json-output` prints nothing at all, and exits 0,
+        # for a coldkey that holds no stake anywhere. Only the caller
+        # knows whether that is an answer or a failure — for a stake
+        # read it means zero, and treating it as a failed read left
+        # every empty wallet's card blank.
+        return {}
     if payload is None:
         # No JSON object anywhere usually means btcli stopped at a prompt
         # we did not answer, which must not be mistaken for success.

@@ -1038,3 +1038,15 @@ details.panel > summary:not([role]):hover { color: var(--sn-text); }
     overflow-y: auto;
     padding-right: 0.4rem;
 }
+
+/* Secondary text inside a panel header. The header itself is uppercase
+   and letter-spaced, and anything inheriting that reads as a second
+   title — a timestamp and a progress line were competing with the panel
+   name for attention. */
+.panel-subnote {
+    font-size: 0.66rem;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    text-transform: none;
+    color: var(--sn-text-dim);
+}

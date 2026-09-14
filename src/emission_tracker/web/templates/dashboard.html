@@ -230,7 +230,7 @@ _confirm.addEventListener('click', async () => {
         <span>
             Coldkey wallets
             {% if coldkey_fetched_at %}
-            <span class="text-muted" style="font-weight: 400; font-size: 0.78rem;">
+            <span class="panel-subnote">
                 &middot; balances read {{ coldkey_fetched_at | dt_s }}
             </span>
             {% endif %}
@@ -240,7 +240,7 @@ _confirm.addEventListener('click', async () => {
             {# The progress line belongs to anyone who can start work.
                The buttons beside it do not. #}
             <span id="balance-refresh-bar" class="refresh-bar" hidden><span id="balance-refresh-fill"></span></span>
-            <span id="balance-refresh-note" class="text-muted" style="font-size: 0.75rem; font-weight: 400;"></span>
+            <span id="balance-refresh-note" class="panel-subnote"></span>
             {% if is_admin %}
             <button id="balance-refresh-btn" class="btn-subtle">Refresh balances</button>
             {% if tournament %}

@@ -242,7 +242,7 @@ _confirm.addEventListener('click', async () => {
             <button id="balance-refresh-btn" class="btn-subtle">Refresh balances</button>
             {% if tournament %}
             <button id="bulk-unstake-btn" class="btn-subtle btn-danger">
-                Unstake massal
+                Unstake all
             </button>
             {% endif %}
             {% if treasury_coldkey %}
@@ -349,7 +349,7 @@ _confirm.addEventListener('click', async () => {
                 <button class="btn-subtle unstake-all" data-coldkey="{{ c.coldkey }}"
                         data-label="{{ c.name }}"
                         data-stake="{% if c.stake_alpha_as_tao_rao is not none %}{{ c.stake_alpha_as_tao_rao | tao(2) }}{% endif %}"
-                        >Unstake all</button>
+                        >Unstake</button>
             </div>
             {% endif %}
         </article>
@@ -945,7 +945,7 @@ _confirm.addEventListener('click', async () => {
                     // execution; this is only here to help choose.
                     hint: c.stake ? `stake tercatat ${c.stake}` : '',
                 })),
-                { title: 'Unstake massal', okText: 'Lanjut' });
+                { title: 'Unstake all', okText: 'Lanjut' });
             if (!picked || !picked.ok || !picked.keys.length) return;
 
             const chosen = unstakeCandidates.filter(
@@ -985,7 +985,7 @@ _confirm.addEventListener('click', async () => {
 
             moneyButtons.forEach(b => { b.disabled = false; });
             bulkBtn.disabled = false;
-            bulkBtn.textContent = 'Unstake massal';
+            bulkBtn.textContent = 'Unstake all';
             note.textContent = '';
 
             const lines = [`${done}/${chosen.length} wallet berhasil.`];
@@ -997,7 +997,7 @@ _confirm.addEventListener('click', async () => {
                 lines.push('', 'Gagal:', ...failures);
             }
             await snAlert(lines.join('\n'), {
-                title: 'Unstake massal selesai',
+                title: 'Unstake all selesai',
                 tone: failures.length || unknown ? 'error' : 'info',
             });
             // Balances are stale for every wallet touched, and the page
@@ -1224,7 +1224,7 @@ _confirm.addEventListener('click', async () => {
                 `Unstake SEMUA stake subnet {{ subnet_id }} dari wallet ${label}?\n`
                 + `Tidak bisa dibatalkan dan kena slippage.`,
                 {
-                    title: 'Unstake all',
+                    title: 'Unstake',
                     okText: 'Unstake',
                     cancelText: 'Batal',
                     required: 'unstake',

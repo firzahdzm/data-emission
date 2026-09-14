@@ -706,3 +706,22 @@ class TestCardStripNamesTheRightOperation:
         assert "coldkey-last-queued" in self._html(app, monkeypatch)
         css = (Path(rp.__file__).parent / "static" / "style.css").read_text()
         assert ".coldkey-last-queued" in css
+
+
+def test_a_distribution_shows_on_the_recipients_card_too(app, monkeypatch):
+    """Every distribution is signed by the treasury, so only its card
+    moved while eleven wallets waited for money — and the card of the
+    person waiting is the first place they look. The recipient writes
+    no audit row of its own, so the page paints that card itself."""
+    from types import SimpleNamespace
+
+    monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+    app.state.config = SimpleNamespace(
+        admin_users=["alice"], subnet_id=56, treasury_coldkey="5HER",
+        tournament=SimpleNamespace(address="5Ef5", fees_tao={"text": 0.7}),
+    )
+    html = TestClient(app).get("/", headers={"X-Remote-User": "alice"}).text
+
+    assert "recipient: ck," in html
+    assert "for (const card of [j.cardColdkey, j.recipient])" in html
+    assert "paintCardStatus(job.recipient" in html

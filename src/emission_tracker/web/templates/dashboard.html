@@ -1152,17 +1152,29 @@ _confirm.addEventListener('click', async () => {
 
         let done = 0, unknown = 0;
         const failures = [];
+        // Both ends of every transfer. For a distribution the signing
+        // wallet is the treasury, so without this the eleven wallets
+        // about to receive money show nothing at all while it happens
+        // — and the card of the person waiting for it is the first
+        // place they look.
         jobs.forEach(j => {
-            batchState.set(j.cardColdkey, 'queued');
-            paintCardStatus(j.cardColdkey, {
-                status: 'queued', op: j.op, requested_by: '' });
+            for (const card of [j.cardColdkey, j.recipient]) {
+                if (!card) continue;
+                batchState.set(card, 'queued');
+                paintCardStatus(card, {
+                    status: 'queued', op: j.op, requested_by: '' });
+            }
         });
         for (const [i, job] of jobs.entries()) {
             button.textContent = `${i + 1}/${jobs.length}…`;
             note.textContent = `${job.label} (${i + 1}/${jobs.length})…`;
-            batchState.set(job.cardColdkey, 'running');
-            paintCardStatus(job.cardColdkey, { status: 'pending', op: job.op,
-                                               requested_by: '' });
+            for (const card of [job.cardColdkey, job.recipient]) {
+                if (!card) continue;
+                batchState.set(card, 'running');
+                paintCardStatus(card, { status: 'pending', op: job.op,
+                                        requested_by: '' });
+            }
+            let outcome = { state: 'ok' };
             try {
                 const r = await fetch(job.url, {
                     method: 'POST',
@@ -1174,15 +1186,36 @@ _confirm.addEventListener('click', async () => {
                 // 409 here means the outcome is unknown, not that it
                 // failed — counted apart so the summary never invites a
                 // retry of something that may already have moved.
-                else if (r.status === 409) { unknown += 1; failures.push(`${job.label}: ${payload.detail || 'tidak pasti'}`); }
-                else failures.push(`${job.label}: ${payload.detail || `HTTP ${r.status}`}`);
+                else if (r.status === 409) {
+                    unknown += 1;
+                    outcome = { state: 'unknown', detail: payload.detail || 'tidak pasti' };
+                    failures.push(`${job.label}: ${outcome.detail}`);
+                } else {
+                    outcome = { state: 'failed',
+                                detail: payload.detail || `HTTP ${r.status}` };
+                    failures.push(`${job.label}: ${outcome.detail}`);
+                }
             } catch (e) {
+                outcome = { state: 'failed', detail: 'permintaan gagal' };
                 failures.push(`${job.label}: permintaan gagal`);
             }
-            // Distribution signs every transfer from the treasury, so
-            // that one card stays claimed until the whole run ends;
-            // releasing it per job would flash each result over the
-            // next one's "sedang proses".
+            if (job.recipient) {
+                // The recipient never writes an audit row of its own —
+                // the row belongs to the wallet that signed — so its
+                // card is painted from what just happened here.
+                paintCardStatus(job.recipient, outcome.state === 'ok'
+                    ? { status: 'ok', op: job.op, requested_by: '',
+                        amount_rao: job.body && job.body.amount_rao }
+                    : { status: 'failed', op: job.op, requested_by: '',
+                        outcome_unknown: outcome.state === 'unknown',
+                        error: outcome.detail });
+            }
+            // The treasury signs every distribution, so its card stays
+            // claimed until the whole run ends; releasing it per job
+            // would flash each result over the next one's "sedang
+            // proses". A recipient's card stays claimed too — it has no
+            // audit row of its own, so the table would repaint it with
+            // whatever that wallet last did on its own account.
             if (job.cardColdkey !== TREASURY || job === jobs[jobs.length - 1]) {
                 batchState.delete(job.cardColdkey);
             }
@@ -1334,9 +1367,12 @@ _confirm.addEventListener('click', async () => {
                 label: `${walletNames[ck] || shortKey(ck)} (${v.toFixed(4)} τ)`,
                 url: `/api/treasury/distribute/${encodeURIComponent(ck)}`,
                 body: { amount_rao: Math.round(v * 1e9) },
-                // The treasury signs, so its card is the one that shows
-                // the attempt.
+                // The treasury signs, so its card shows the attempt —
+                // and the recipient's card says money is on its way,
+                // because that is the card the person waiting for it
+                // looks at.
                 cardColdkey: TREASURY,
+                recipient: ck,
                 op: 'distribute',
             }));
             await runTreasuryBatch(distributeBtn, jobs, ans.secret);

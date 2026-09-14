@@ -68,6 +68,8 @@
             <input id="sn-modal-pw" type="password" autocomplete="off" spellcheck="false"
                    style="margin: 0;">
         </div>
+        <p id="sn-modal-hint" hidden
+           style="margin: 0 0 0.6rem; font-size: 0.75rem; color: var(--sn-text-dim);"></p>
         <footer id="sn-modal-actions" style="display: flex; gap: 0.5rem; justify-content: flex-end; margin: 0;"></footer>
     </article>
 </dialog>
@@ -84,6 +86,7 @@
         const pwEl = document.getElementById('sn-modal-pw');
         const pwLabel = document.getElementById('sn-modal-pw-label');
         const rowsEl = document.getElementById('sn-modal-rows');
+        const hintEl = document.getElementById('sn-modal-hint');
         let currentResolve = null;
         // One labelled number field per row, for dialogs that ask for a
         // figure per wallet. Returns a function that reads them back.
@@ -156,6 +159,8 @@
             // `typed` turns the shared dialog into a type-to-confirm: the OK
             // button stays disabled until the exact word is entered, so a
             // destructive action cannot be completed by reflex.
+            hintEl.hidden = true;
+            hintEl.textContent = '';
             inputWrap.hidden = !typed;
             inputEl.value = '';
             if (typed) {
@@ -199,7 +204,19 @@
                         // round trip to be told 400.
                         const pwOk = !pw || pwEl.value.trim().length > 0;
                         b.disabled = !(wordOk && pwOk);
+                        // Say why it is disabled. A confirm button that
+                        // does nothing when pressed is indistinguishable
+                        // from a broken one, and this is the last step
+                        // before money moves — the worst possible place
+                        // to leave someone guessing.
+                        const missing = [];
+                        if (!wordOk) missing.push(`ketik "${typed.required}"`);
+                        if (!pwOk) missing.push('isi unlock value');
+                        hintEl.hidden = missing.length === 0;
+                        hintEl.textContent = missing.length
+                            ? `Untuk melanjutkan: ${missing.join(' dan ')}.` : '';
                     };
+                    sync();
                     const onEnter = (e) => {
                         if (e.key === 'Enter' && !b.disabled) { e.preventDefault(); b.click(); }
                     };

@@ -365,10 +365,28 @@ class TestBulkUnstake:
         assert "secretLabel" in bulk
 
     def test_cancelling_the_picker_sends_nothing(self, app, monkeypatch):
-        """Escape and Cancel both resolve falsy, and an empty selection
-        must be treated the same way."""
+        """Escape and Cancel both resolve falsy."""
         bulk = self._html(app, monkeypatch)
-        assert "!picked.ok || !picked.keys.length) return" in bulk
+        assert "!picked || !picked.ok) return" in bulk
+
+    def test_an_empty_selection_says_so_instead_of_closing_quietly(
+        self, app, monkeypatch
+    ):
+        """Closing in silence is indistinguishable from a dead button —
+        an evening went into establishing that a click which appeared to
+        do nothing had in fact sent nothing."""
+        bulk = self._html(app, monkeypatch)
+        assert "Belum ada wallet yang dicentang." in bulk
+
+    def test_a_script_error_surfaces_instead_of_vanishing(
+        self, app, monkeypatch
+    ):
+        """An exception mid-flow ended the click with no request, no
+        message, and nothing in a console the operator would think to
+        open."""
+        bulk = self._html(app, monkeypatch)
+        assert "Gagal di sisi halaman" in bulk
+        assert "Tidak ada transaksi yang dikirim" in bulk
 
     def test_a_failure_does_not_stop_the_remaining_wallets(
         self, app, monkeypatch

@@ -949,6 +949,12 @@ _confirm.addEventListener('click', async () => {
 
     if (bulkBtn) {
         bulkBtn.addEventListener('click', async () => {
+          // Everything below is wrapped: an exception here used to end
+          // the click with no request, no message and nothing in the
+          // console the operator would think to open — indistinguishable
+          // from a dead button, and it cost an evening to establish that
+          // nothing had in fact been sent.
+          try {
             const picked = await snPick(
                 'Pilih wallet yang stake subnet {{ subnet_id }}-nya mau '
                 + 'ditarik semua.',
@@ -961,7 +967,14 @@ _confirm.addEventListener('click', async () => {
                     hint: c.stake ? `stake tercatat ${c.stake}` : '',
                 })),
                 { title: 'Unstake all', okText: 'Lanjut' });
-            if (!picked || !picked.ok || !picked.keys.length) return;
+            if (!picked || !picked.ok) return;        // cancelled
+            if (!picked.keys.length) {
+                // Say so. Closing in silence looks identical to a
+                // button that does not work.
+                await snAlert('Belum ada wallet yang dicentang.',
+                              { title: 'Unstake all' });
+                return;
+            }
 
             const chosen = unstakeCandidates.filter(
                 c => picked.keys.includes(c.coldkey));
@@ -1018,6 +1031,15 @@ _confirm.addEventListener('click', async () => {
             // Balances are stale for every wallet touched, and the page
             // renders stored figures.
             location.reload();
+          } catch (err) {
+            moneyButtons.forEach(b => { b.disabled = false; });
+            bulkBtn.disabled = false;
+            bulkBtn.textContent = 'Unstake all';
+            note.textContent = '';
+            await snAlert(`Gagal di sisi halaman: ${err && err.message
+                ? err.message : err}\n\nTidak ada transaksi yang dikirim.`,
+                { title: 'Unstake all', tone: 'error' });
+          }
         });
     }
 

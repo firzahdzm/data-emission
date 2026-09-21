@@ -974,23 +974,38 @@ _confirm.addEventListener('click', async () => {
                 if (outcome.state !== 'ok') {
                     tally.failures.push(`${job.label}: ${outcome.detail}`);
                 }
-                if (job.recipient) {
-                    // A recipient writes no audit row of its own — the
-                    // row belongs to the wallet that signed — so its
-                    // card is painted from what just happened.
-                    paintCardStatus(job.recipient, outcome.state === 'ok'
-                        ? { status: 'ok', op: job.op, requested_by: '',
-                            amount_rao: job.body && job.body.amount_rao }
-                        : { status: 'failed', op: job.op, requested_by: '',
-                            outcome_unknown: outcome.state === 'unknown',
-                            error: outcome.detail });
+                // Painting is cosmetic; the transfer already happened.
+                // Left unguarded, one bad element reference would throw
+                // out of the loop and leave the queue half-run with no
+                // summary and no reload — a page that looks frozen for
+                // a reason that has nothing to do with the money.
+                try {
+                    if (job.recipient) {
+                        // A recipient writes no audit row of its own —
+                        // the row belongs to the wallet that signed —
+                        // so its card is painted from what just
+                        // happened.
+                        paintCardStatus(job.recipient, outcome.state === 'ok'
+                            ? { status: 'ok', op: job.op, requested_by: '',
+                                amount_rao: job.body && job.body.amount_rao }
+                            : { status: 'failed', op: job.op, requested_by: '',
+                                outcome_unknown: outcome.state === 'unknown',
+                                error: outcome.detail });
+                    }
+                    releaseCards(job);
+                    // The audit table is the record; repaint as we go so
+                    // a long run is visibly progressing, not frozen.
+                    loadActions();
+                    refreshTotals();
+                } catch (err) {
+                    console.error('gagal memperbarui tampilan', err);
                 }
-                releaseCards(job);
-                // The audit table is the record; repaint as we go so a
-                // long run is visibly progressing rather than frozen.
-                loadActions();
-                refreshTotals();
             }
+        } catch (err) {
+            // The queue itself broke. Say so, rather than stopping
+            // silently with cards stuck on "sedang proses".
+            tally.failures.push(`antrean berhenti: ${err && err.message
+                ? err.message : err}`);
         } finally {
             draining = false;
             window.snBusyEnd();

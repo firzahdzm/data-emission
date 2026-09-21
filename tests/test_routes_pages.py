@@ -777,3 +777,22 @@ class TestWorkQueuesInsteadOfLocking:
         html = self._html(app, monkeypatch)
         assert "window.snBusyStart();" in html
         assert "if (jobQueue.length) { drain(); return; }" in html
+
+
+def test_a_painting_error_cannot_strand_the_queue(app, monkeypatch):
+    """Painting a card is cosmetic — the transfer already happened. Left
+    unguarded, one bad element reference throws out of the loop and
+    leaves the queue half-run with no summary and no reload: a page that
+    looks frozen for a reason that has nothing to do with the money."""
+    from types import SimpleNamespace
+
+    monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+    app.state.config = SimpleNamespace(
+        admin_users=["alice"], subnet_id=56, treasury_coldkey="5HER",
+        tournament=SimpleNamespace(address="5Ef5", fees_tao={"text": 0.7}),
+    )
+    html = TestClient(app).get("/", headers={"X-Remote-User": "alice"}).text
+
+    drain = html[html.index("async function drain()"):]
+    assert "console.error('gagal memperbarui tampilan', err)" in drain
+    assert "antrean berhenti:" in drain

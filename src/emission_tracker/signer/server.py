@@ -215,6 +215,18 @@ class Signer:
             return self._distribute(request, name,
                                     env=self._env_for(name, request.secret))
 
+        # A tournament with no fee here is closed — dropping its line from
+        # fees_tao is how one is frozen. Refused by name, before anything
+        # is computed, rather than as a KeyError from the sum below.
+        closed = [t for t in request.types if t not in self._config.fees_tao]
+        if closed:
+            log.warning("refused: coldkey=%s wallet=%s tournament %s is closed",
+                        request.coldkey, name, ",".join(closed))
+            return SignResult(
+                False, request.op, request.coldkey,
+                error=f"turnamen {', '.join(closed)} sudah ditutup",
+            )
+
         amount_rao = sum(
             round(self._config.fees_tao[t] * RAO) for t in request.types
         )

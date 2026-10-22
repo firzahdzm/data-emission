@@ -163,6 +163,19 @@ def test_payment_uses_the_signers_own_fee_table(tmp_path):
     assert transfer[transfer.index("--amount") + 1] == "1.300000000"
 
 
+def test_a_tournament_without_a_fee_here_is_closed_not_a_crash(tmp_path):
+    """Dropping a type from fees_tao is how a tournament is frozen. The
+    signer's table is the authoritative one, so it must refuse the type
+    by name before any transfer — not fall over on a KeyError."""
+    rec = _Recorder()
+    signer = _signer(rec, tmp_path, fees_tao={"text": 0.7, "image": 0.4})
+    res = signer.handle(_req(OP_PAY, CK, ("text", "env")))
+    assert not res.ok
+    assert not res.unknown
+    assert "env" in res.error and "ditutup" in res.error
+    assert not [c for c in rec.calls if "transfer" in c]
+
+
 def test_destination_is_the_configured_one_and_cannot_be_influenced(tmp_path):
     rec = _Recorder()
     _signer(rec, tmp_path).handle(_req(OP_PAY, CK, ("text",)))

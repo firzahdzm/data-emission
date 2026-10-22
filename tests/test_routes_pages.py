@@ -249,6 +249,31 @@ class TestDashboardAdminScripts:
         assert "/api/stake/unstake-all/" not in html
 
 
+def test_a_tournament_without_a_fee_shows_as_closed(app, monkeypatch):
+    """A closed tournament stays on the card, greyed out, so its absence
+    reads as "closed" rather than as something missing. It must not be
+    tickable: the API and the signer would both refuse it."""
+    from types import SimpleNamespace
+
+    monkeypatch.delenv("EMISSION_DEV_USER", raising=False)
+    app.state.config = SimpleNamespace(
+        admin_users=["alice"],
+        tournament=SimpleNamespace(
+            address="5Ef5", fees_tao={"text": 0.7, "image": 0.4}
+        ),
+    )
+    html = TestClient(app).get("/", headers={"X-Remote-User": "alice"}).text
+
+    assert 'value="text"' in html
+    assert 'value="image"' in html
+    assert 'value="env"' not in html
+    assert 'class="tournament-type is-closed"' in html
+    closed = html[html.index('class="tournament-type is-closed"'):]
+    closed = closed[:closed.index("</label>")]
+    assert "env" in closed and "ditutup" in closed
+    assert "disabled" in closed
+
+
 def test_the_action_log_starts_collapsed(app, monkeypatch):
     """A log panel that renders open eats a third of the dashboard on
     every page load; it is worth a glance after a click, not standing

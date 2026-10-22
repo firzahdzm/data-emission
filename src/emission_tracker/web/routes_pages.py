@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from emission_tracker.signer.protocol import TOURNAMENT_TYPES
 from emission_tracker.units import format_alpha, format_tao, rao_to_alpha
 from emission_tracker.web import queries
 from emission_tracker.web.auth import can_pay_fee, current_user, is_admin
@@ -210,6 +211,9 @@ def register_pages(app: FastAPI) -> None:
                 "coldkey_fetched_at": coldkey_fetched_at,
                 "subnet_id": subnet_id,
                 "tournament": tournament,
+                # Every type the signer knows, priced or not: one without a
+                # fee in the config renders as closed instead of vanishing.
+                "tournament_types": TOURNAMENT_TYPES,
                 "treasury_coldkey": getattr(
                     getattr(request.app.state, "config", None),
                     "treasury_coldkey", "",

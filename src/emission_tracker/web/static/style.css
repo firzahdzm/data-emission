@@ -776,6 +776,7 @@ a:hover {
     cursor: pointer;
 }
 .tournament-type input { margin: 0; }
+.tournament-type.is-closed { opacity: 0.45; cursor: default; }
 .coldkey-action-row {
     display: flex;
     align-items: center;

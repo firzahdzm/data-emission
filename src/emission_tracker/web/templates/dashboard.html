@@ -339,12 +339,23 @@ _confirm.addEventListener('click', async () => {
             {% if can_pay and tournament %}
             <div class="coldkey-actions">
                 <div class="tournament-types">
-                    {% for t, fee in tournament.fees_tao.items() %}
+                    {% for t in tournament_types %}
+                    {% if t in tournament.fees_tao %}
+                    {% set fee = tournament.fees_tao[t] %}
                     <label class="tournament-type">
                         <input type="checkbox" data-coldkey="{{ c.coldkey }}"
                                data-fee="{{ fee }}" value="{{ t }}">
                         {{ t }} <span class="text-muted">{{ fee }} τ</span>
                     </label>
+                    {% else %}
+                    {# No fee configured = closed. Left off the coldkey and
+                       value so no selector can ever count it. #}
+                    <label class="tournament-type is-closed"
+                           title="Turnamen {{ t }} sudah ditutup">
+                        <input type="checkbox" disabled>
+                        {{ t }} <span class="text-muted">ditutup</span>
+                    </label>
+                    {% endif %}
                     {% endfor %}
                 </div>
                 <div class="coldkey-action-row">

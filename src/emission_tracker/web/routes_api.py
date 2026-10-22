@@ -572,8 +572,9 @@ def pay_tournament(
         if t not in TOURNAMENT_TYPES:
             raise HTTPException(status_code=400, detail=f"Unknown type {t!r}")
         if t not in tournament.fees_tao:
+            # No fee configured is how a tournament is closed.
             raise HTTPException(
-                status_code=400, detail=f"Type {t!r} has no configured fee"
+                status_code=400, detail=f"Turnamen {t} sudah ditutup"
             )
     if not body.types or len(set(body.types)) != len(body.types):
         raise HTTPException(status_code=400, detail="Pick each type at most once")

@@ -5,10 +5,47 @@ import respx
 from emission_tracker.taostats_client import NeuronInfo, TaoStatsClient
 
 
-# Verified against live TaoStats API on 2026-05-17
+# Verified against live TaoStats API on 2026-11-20. The old
+# /api/neuron/latest/v1 answers 410 Gone since 2026-11-16.
 BASE_URL = "https://api.taostats.io"
-NEURON_PATH = "/api/neuron/latest/v1"
+NEURON_PATH = "/v1/subnets/metagraph"
 HOTKEY = "5AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1"
+
+
+@respx.mock
+def test_get_neuron_reads_one_hotkey_on_one_subnet():
+    """The metagraph endpoint lists a whole subnet unless filtered; an
+    unfiltered first row would be some other miner's emission."""
+    route = respx.get(f"{BASE_URL}{NEURON_PATH}").mock(
+        return_value=httpx.Response(200, json={"data": []})
+    )
+    client = TaoStatsClient(api_key="test", base_url=BASE_URL)
+    client.get_neuron(subnet_id=56, hotkey=HOTKEY)
+    params = route.calls.last.request.url.params
+    assert params["netuid"] == "56"
+    assert params["hotkey"] == HOTKEY
+
+
+@respx.mock
+def test_get_neuron_parses_the_live_metagraph_row():
+    # Trimmed from a live response, 2026-11-20. Emission is rao per
+    # epoch as a decimal string: daily_mining_alpha is exactly 20x it.
+    respx.get(f"{BASE_URL}{NEURON_PATH}").mock(
+        return_value=httpx.Response(200, json={
+            "pagination": {"current_page": 1, "total_items": 1},
+            "data": [{
+                "block_number": 9548600,
+                "netuid": 56,
+                "uid": 59,
+                "hotkey": HOTKEY,
+                "emission": "2399144392",
+                "daily_mining_alpha": "47982887840",
+            }],
+        })
+    )
+    client = TaoStatsClient(api_key="test", base_url=BASE_URL)
+    info = client.get_neuron(subnet_id=56, hotkey=HOTKEY)
+    assert info == NeuronInfo(uid=59, emission=2399144392.0, block=9548600)
 
 
 @respx.mock

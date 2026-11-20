@@ -4,11 +4,16 @@ from dataclasses import dataclass
 import httpx
 
 
-# Verified against live TaoStats API on 2026-05-17. Response shape:
+# TaoStats retired its whole /api/<name>/v1 API on 2026-11-16: every old
+# path answers 410 Gone. The /v1/ paths below were verified against the
+# live API on 2026-11-20. Metagraph response shape:
 #   {"pagination": {...}, "data": [{"uid", "emission" (string), "block_number", ...}]}
-# Emission is returned as a string; _parse_neuron converts to float.
+# Emission is rao per epoch as a decimal string (the row's daily figure is
+# exactly 20x it), the same meaning the old neuron endpoint gave it, so
+# snapshots on either side of the switch add up; _parse_neuron converts it
+# to float.
 DEFAULT_BASE_URL = "https://api.taostats.io"
-NEURON_PATH = "/api/neuron/latest/v1"
+NEURON_PATH = "/v1/subnets/metagraph"
 ACCOUNT_PATH = "/api/account/latest/v1"
 POOL_PATH = "/api/dtao/pool/latest/v1"
 TAO_PRICE_PATH = "/api/price/latest/v1"

@@ -5,9 +5,11 @@ from emission_tracker.rate_limiter import TokenBucket
 from emission_tracker.taostats_client import AlphaPrice, TaoStatsClient
 from emission_tracker.web.price import AlphaPriceCache
 
-# Shapes verified against the live TaoStats API on 2026-09-11.
-POOL_OK = {"data": [{"price": 0.016145951, "name": "Gradients", "symbol": "ج"}]}
-MARKET_OK = {"data": [{"price": 236.898689707984, "symbol": "TAO"}]}
+# Shapes trimmed from the live /v1 TaoStats API on 2026-11-20. Prices
+# come back as decimal strings, and the pool row no longer names the
+# subnet.
+POOL_OK = {"data": [{"netuid": 56, "price": "0.013982223", "symbol": "ج"}]}
+MARKET_OK = {"data": [{"price": "185.785020335653", "symbol": "TAO"}]}
 
 
 def _client(handler) -> TaoStatsClient:
@@ -27,10 +29,25 @@ def _both_ok(request: httpx.Request) -> httpx.Response:
 class TestAlphaPriceFetch:
     def test_multiplies_the_two_quotes(self):
         price = _client(_both_ok).get_alpha_price(56)
-        assert price.alpha_in_tao == pytest.approx(0.016145951)
-        assert price.tao_in_usd == pytest.approx(236.898689707984)
-        assert price.alpha_in_usd == pytest.approx(3.8249, abs=1e-4)
-        assert price.subnet_name == "Gradients"
+        assert price.alpha_in_tao == pytest.approx(0.013982223)
+        assert price.tao_in_usd == pytest.approx(185.785020335653)
+        assert price.alpha_in_usd == pytest.approx(2.5977, abs=1e-4)
+        assert price.subnet_name is None
+
+    def test_asks_the_v1_pool_and_price_paths(self):
+        """The old /api/dtao/pool/latest/v1 and /api/price/latest/v1 answer
+        410 Gone since TaoStats retired that API on 2026-11-16."""
+        seen = []
+
+        def handler(request):
+            seen.append((request.url.path, dict(request.url.params)))
+            return _both_ok(request)
+
+        _client(handler).get_alpha_price(56)
+        assert seen == [
+            ("/v1/subnets/pools", {"netuid": "56"}),
+            ("/v1/price", {"asset": "TAO"}),
+        ]
 
     def test_asks_for_the_subnet_it_was_given(self):
         seen = []

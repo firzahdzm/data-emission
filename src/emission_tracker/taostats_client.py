@@ -15,8 +15,8 @@ import httpx
 DEFAULT_BASE_URL = "https://api.taostats.io"
 NEURON_PATH = "/v1/subnets/metagraph"
 ACCOUNT_PATH = "/api/account/latest/v1"
-POOL_PATH = "/api/dtao/pool/latest/v1"
-TAO_PRICE_PATH = "/api/price/latest/v1"
+POOL_PATH = "/v1/subnets/pools"
+TAO_PRICE_PATH = "/v1/price"
 AUTH_HEADER = "Authorization"
 
 # One token refills every 12s at the configured 5/min. Retrying a 429 any
@@ -134,7 +134,7 @@ class TaoStatsClient:
             return None
 
         market = self._request_with_retry(
-            "GET", TAO_PRICE_PATH, params={"asset": "tao"}
+            "GET", TAO_PRICE_PATH, params={"asset": "TAO"}
         )
         market.raise_for_status()
         market_rows = (market.json() or {}).get("data") or []
@@ -148,6 +148,7 @@ class TaoStatsClient:
         return AlphaPrice(
             alpha_in_tao=float(alpha_in_tao),
             tao_in_usd=float(tao_in_usd),
+            # The /v1 pool row has no name; nothing on screen reads it.
             subnet_name=pool_rows[0].get("name"),
         )
 

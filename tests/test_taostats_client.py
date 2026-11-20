@@ -2,7 +2,7 @@ import httpx
 import pytest
 import respx
 
-from emission_tracker.taostats_client import NeuronInfo, TaoStatsClient
+from emission_tracker.taostats_client import AccountInfo, NeuronInfo, TaoStatsClient
 
 
 # Verified against live TaoStats API on 2026-11-20. The old
@@ -139,6 +139,47 @@ def test_get_neuron_sends_auth_header():
     client.get_neuron(subnet_id=56, hotkey=HOTKEY)
     sent = route.calls.last.request
     assert sent.headers["Authorization"] == "secret-key"
+
+
+COLDKEY = "5CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC1"
+
+
+@respx.mock
+def test_get_account_reads_the_v1_account_path():
+    """The address is part of the /v1 path; the old
+    /api/account/latest/v1?address= answers 410 Gone since 2026-11-16."""
+    # Trimmed from a live response, 2026-11-20.
+    route = respx.get(f"{BASE_URL}/v1/accounts/{COLDKEY}").mock(
+        return_value=httpx.Response(200, json={"data": [{
+            "address": COLDKEY,
+            "balance_free": "8502249111",
+            "balance_staked": "41013735",
+            "balance_total": "8543262846",
+            "alpha_balances": [
+                {"netuid": 56, "balance": "2933277185", "balance_as_tao": "41013735"},
+                {"netuid": 3, "balance": "5", "balance_as_tao": "1"},
+            ],
+        }]})
+    )
+    client = TaoStatsClient(api_key="test", base_url=BASE_URL)
+    account = client.get_account(COLDKEY, subnet_id=56)
+    assert route.called
+    assert account == AccountInfo(
+        free_rao=8502249111,
+        staked_rao=41013735,
+        total_rao=8543262846,
+        stake_alpha_rao=2933277185,
+        stake_alpha_as_tao_rao=41013735,
+    )
+
+
+@respx.mock
+def test_get_account_returns_none_for_an_unknown_address():
+    respx.get(f"{BASE_URL}/v1/accounts/{COLDKEY}").mock(
+        return_value=httpx.Response(404, json={"error": "not found"})
+    )
+    client = TaoStatsClient(api_key="test", base_url=BASE_URL)
+    assert client.get_account(COLDKEY) is None
 
 
 def test_a_429_backs_off_past_the_token_refill_interval(monkeypatch):

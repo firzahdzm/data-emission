@@ -14,7 +14,7 @@ import httpx
 # to float.
 DEFAULT_BASE_URL = "https://api.taostats.io"
 NEURON_PATH = "/v1/subnets/metagraph"
-ACCOUNT_PATH = "/api/account/latest/v1"
+ACCOUNT_PATH = "/v1/accounts/{address}"
 POOL_PATH = "/v1/subnets/pools"
 TAO_PRICE_PATH = "/v1/price"
 AUTH_HEADER = "Authorization"
@@ -111,7 +111,7 @@ class TaoStatsClient:
         zero.
         """
         response = self._request_with_retry(
-            "GET", ACCOUNT_PATH, params={"address": coldkey}
+            "GET", ACCOUNT_PATH.format(address=coldkey)
         )
         if response.status_code == 404:
             return None
